@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/001-db-schema-explorer/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 
-**Tests**: Tests are NOT explicitly requested in the feature specification, so test tasks are omitted. Focus is on implementation.
+**Tests**: Following Constitution Principle III (Test-First Development), each user story includes test tasks that MUST be completed before implementation tasks. Tests define the contract; implementation fulfills it.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
@@ -38,7 +38,7 @@
 
 - [ ] T005 Create Connection data model in src/models/schema.py
 - [ ] T006 Create Schema, Table, Column, Index data models in src/models/schema.py
-- [ ] T007 Create Relationship data model in src/models/relationship.py
+- [ ] T007 Create Relationship base data model and DeclaredFK subtype in src/models/relationship.py
 - [ ] T008 [P] Implement ConnectionManager with SQLAlchemy pooling in src/db/connection.py
 - [ ] T009 [P] Implement MetadataService base class with inspector setup in src/db/metadata.py
 - [ ] T010 Configure FastMCP server initialization in src/mcp_server/server.py
@@ -48,22 +48,51 @@
 
 ---
 
+## Phase 2B: Test Infrastructure (Parallel with Foundational)
+
+**Purpose**: Set up testing framework before user story implementation begins
+
+- [ ] T011A [P] Create pytest.ini with async test configuration
+- [ ] T011B [P] Create test database fixture scripts in tests/fixtures/test_db_schema.sql
+- [ ] T011C [P] Create connection fixture for test database in tests/conftest.py
+- [ ] T011D [P] Create base test utilities (mock connection, sample metadata) in tests/utils.py
+
+**Checkpoint**: Test infrastructure ready for TDD workflow
+
+---
+
 ## Phase 3: User Story 1 - Initial Database Discovery (Priority: P1) 🎯 MVP
 
 **Goal**: Enable AI agent to quickly understand database structure (schemas, tables, row counts) within configurable token budget
 
 **Independent Test**: Connect to test database and verify structured overview of schemas and tables is returned with row counts and relevance sorting
 
-### Implementation for User Story 1
+### Implementation for User Story 1 (TDD Workflow)
 
-- [ ] T012 [P] [US1] Implement list_schemas query in src/db/metadata.py using sys.schemas DMV
-- [ ] T013 [P] [US1] Implement list_tables query in src/db/metadata.py using sys.tables and sys.dm_db_partition_stats
-- [ ] T014 [US1] Implement list_schemas MCP tool in src/mcp_server/server.py with schema grouping
-- [ ] T015 [US1] Implement list_tables MCP tool in src/mcp_server/server.py with filtering (schema_filter, name_pattern, min_row_count)
-- [ ] T016 [US1] Add sorting logic (by name, row_count, last_modified) to list_tables in src/mcp_server/server.py
-- [ ] T017 [US1] Add output_mode (summary vs detailed) for token efficiency in src/mcp_server/server.py
-- [ ] T018 [US1] Add limit parameter enforcement (default 100, max 1000) in src/mcp_server/server.py
-- [ ] T019 [US1] Handle access_denied case for tables without SELECT permission in src/db/metadata.py
+**Test Phase (Write Failing Tests First):**
+
+- [ ] T012A [US1-TEST] Write test for list_schemas query in tests/unit/test_metadata.py (expect sys.schemas DMV query, verify schema list returned)
+- [ ] T013A [US1-TEST] Write test for list_tables query in tests/unit/test_metadata.py (expect row counts, verify table metadata)
+- [ ] T014A [US1-TEST] Write test for list_schemas MCP tool in tests/integration/test_discovery.py (verify schema grouping response format)
+- [ ] T015A [US1-TEST] Write test for list_tables MCP tool filtering in tests/integration/test_discovery.py (verify schema_filter, name_pattern, min_row_count work)
+- [ ] T016A [US1-TEST] Write test for sorting logic in tests/unit/test_metadata.py (verify sort by name, row_count, last_modified)
+- [ ] T017A [US1-TEST] Write test for output_mode in tests/integration/test_discovery.py (verify summary mode reduces token size vs detailed)
+- [ ] T018A [US1-TEST] Write test for limit enforcement in tests/integration/test_discovery.py (verify default 100, max 1000, error on exceeding)
+- [ ] T019A [US1-TEST] Write test for access_denied handling in tests/unit/test_metadata.py (mock permission error, verify marker returned)
+
+**Implementation Phase (Make Tests Pass):**
+
+- [ ] T012 [P] [US1] Implement list_schemas query in src/db/metadata.py using sys.schemas DMV (run T012A to verify)
+- [ ] T013 [P] [US1] Implement list_tables query in src/db/metadata.py using sys.tables and sys.dm_db_partition_stats (run T013A to verify)
+- [ ] T014 [US1] Implement list_schemas MCP tool in src/mcp_server/server.py with schema grouping (run T014A to verify)
+- [ ] T015 [US1] Implement list_tables MCP tool in src/mcp_server/server.py with filtering (schema_filter, name_pattern, min_row_count) (run T015A to verify)
+- [ ] T016 [US1] Add sorting logic (by name, row_count, last_modified) to list_tables in src/mcp_server/server.py (run T016A to verify)
+- [ ] T017 [US1] Add output_mode (summary vs detailed) for token efficiency in src/mcp_server/server.py (run T017A to verify)
+- [ ] T018 [US1] Add limit parameter enforcement (default 100, max 1000) in src/mcp_server/server.py (run T018A to verify)
+- [ ] T019 [US1] Handle access_denied case for tables without SELECT permission in src/db/metadata.py (run T019A to verify)
+
+**Verification:**
+- [ ] T019B [US1-VERIFY] Run all US1 tests and confirm 100% pass rate before moving to next story
 
 **Checkpoint**: User Story 1 should be fully functional - agent can discover database structure efficiently
 
@@ -112,8 +141,20 @@
 - [ ] T039 [US3] Implement infer_relationships MCP tool in src/mcp_server/server.py
 - [ ] T040 [US3] Add confidence_threshold parameter (default 0.50) in src/mcp_server/server.py
 - [ ] T041 [US3] Add max_candidates parameter (default 20) in src/mcp_server/server.py
-- [ ] T042 [US3] Add include_value_overlap flag (Phase 2 feature, initially False) in src/mcp_server/server.py
+- [ ] T042 [US3] Add include_value_overlap flag in src/mcp_server/server.py (Phase 2 feature, initially returns NotImplementedError with message "Value overlap analysis available in Phase 2")
+- [ ] T042A [US3-TEST] Write test verifying include_value_overlap=true raises NotImplementedError in tests/unit/test_relationships.py
 - [ ] T043 [US3] Track analysis_time_ms and total_candidates_evaluated metrics in src/mcp_server/server.py
+- [ ] T043A [US3] Add parameter validation for infer_relationships tool in src/mcp_server/server.py:
+  - confidence_threshold: float between 0.0 and 1.0 (default 0.50)
+  - max_candidates: int between 1 and 1000 (default 20)
+  - include_value_overlap: bool (must be False in Phase 1, raise NotImplementedError if True)
+  - Return actionable error messages for invalid parameters
+- [ ] T043B [US3-TEST] Write parameter validation tests in tests/unit/test_mcp_tools.py:
+  - Test confidence_threshold < 0.0 raises ValueError
+  - Test confidence_threshold > 1.0 raises ValueError
+  - Test max_candidates = 0 raises ValueError
+  - Test max_candidates > 1000 raises ValueError
+  - Test include_value_overlap=True raises NotImplementedError
 
 **Checkpoint**: All P1 user stories should now be independently functional - core MCP server complete
 
@@ -129,7 +170,10 @@
 
 - [ ] T044 [P] [US4] Create SampleData entity in src/models/schema.py
 - [ ] T045 [P] [US4] Implement TOP sampling method (SELECT TOP N) in src/db/query.py
-- [ ] T046 [US4] Implement distributed sampling method (TABLESAMPLE or modulo) in src/db/query.py
+- [ ] T046 [US4] Implement distributed sampling methods in src/db/query.py:
+  - TABLESAMPLE strategy: Use SQL Server TABLESAMPLE (N ROWS) for statistical sampling
+  - Modulo strategy: Use WHERE ID % interval = 0 for deterministic repeatable sampling
+  - Add sampling_method parameter validation (allowed: "top", "tablesample", "modulo")
 - [ ] T047 [US4] Implement binary column truncation (first 32 bytes as hex + size) in src/db/query.py
 - [ ] T048 [US4] Implement large text truncation (>1000 chars) in src/db/query.py
 - [ ] T049 [US4] Track truncated_columns list in sample response in src/db/query.py
@@ -200,6 +244,10 @@
 - [ ] T088 [US6] Implement check_drift MCP tool in src/mcp_server/server.py
 - [ ] T089 [US6] Return drift_detected flag and changes breakdown in src/mcp_server/server.py
 - [ ] T090 [US6] Auto-trigger drift check on connect (default behavior) in src/mcp_server/server.py
+  - Add auto_check_drift flag to connect_database (default True)
+  - Perform hash comparison on connect if cached docs exist
+  - Return has_drift flag and summary in connect response
+  - NO background polling - agent manually calls check_drift for periodic checks
 
 **Checkpoint**: User Story 6 complete - documentation caching and drift detection working
 
@@ -242,7 +290,20 @@
 - [ ] T108 [P] Write unit tests for type compatibility checks in tests/unit/test_relationships.py
 - [ ] T109 [P] Write unit tests for column purpose inference in tests/unit/test_columns.py
 - [ ] T110 [P] Write integration test for full discovery workflow in tests/integration/test_discovery.py
-- [ ] T111 [P] Write integration test for FK inference accuracy in tests/integration/test_fk_inference.py
+- [ ] T111 [P] Create FK inference accuracy test suite in tests/integration/test_fk_inference.py
+  - Subtask 1: Create ground truth test database with 50 tables, 80 known relationships (40 declared FKs, 40 undeclared but valid joins) in tests/fixtures/fk_ground_truth.sql
+  - Subtask 2: Run ForeignKeyInferencer on ground truth database with confidence_threshold=0.50
+  - Subtask 3: Calculate precision: (true positives) / (true positives + false positives)
+  - Subtask 4: Calculate recall: (true positives) / (true positives + false negatives)
+  - Subtask 5: Calculate F1 score: 2 * (precision * recall) / (precision + recall)
+  - Subtask 6: Assert F1 score >= 0.80 to meet SC-003 requirement (80%+ accuracy)
+  - Subtask 7: Generate detailed report showing missed relationships and false positives
+- [ ] T111A [P] Write test for name similarity edge cases in tests/unit/test_relationships.py
+  - Test cases: OrderID vs Order_ID (high similarity), CustomerNo vs CustNum (medium), ID vs Identifier (low)
+- [ ] T111B [P] Write test for type compatibility groupings in tests/unit/test_relationships.py
+  - Test cases: int/bigint compatible, varchar(50)/nvarchar(100) compatible, date/datetime incompatible
+- [ ] T111C Document inference algorithm accuracy baseline in docs/inference_accuracy.md
+  - Include: test methodology, ground truth database schema, precision/recall/F1 scores, known limitations
 - [ ] T112 [P] Write integration test for caching and drift detection in tests/integration/test_caching.py
 - [ ] T113 Add connection pooling configuration tuning (pool_size, max_overflow) in src/db/connection.py
 - [ ] T114 Update quickstart.md with actual implementation details (if needed)
@@ -251,7 +312,25 @@
 - [ ] T117 Validate quickstart.md examples work end-to-end
 - [ ] T118 Run pytest test suite and ensure all tests pass
 - [ ] T119 Run ruff linting and fix any issues
-- [ ] T120 Perform performance validation (metadata queries <30s for 1000 tables per NFR-001)
+- [ ] T120 Run comprehensive performance validation suite (T121-T130) and verify all NFRs pass
+- [ ] T121 [P] Create performance test fixture: Generate SQL script creating test DB with 1000 tables (varying sizes 0-100K rows) in tests/fixtures/perf_test_db.sql
+- [ ] T122 [P] Create performance benchmarking utility in tests/performance/benchmark.py (tracks query timing, memory usage)
+- [ ] T123 Validate NFR-001: Run list_tables on 1000-table database, verify metadata retrieval <30s in tests/performance/test_nfr001.py
+- [ ] T124 Validate NFR-002: Run get_sample_data on tables ranging 100-1M rows, verify all complete <10s in tests/performance/test_nfr002.py
+- [ ] T125 Validate NFR-003: Generate documentation for 500-table database, verify output <1MB in tests/performance/test_nfr003.py
+- [ ] T126 Profile FK inference algorithm: Measure time complexity on databases with 50, 100, 250, 500 tables in tests/performance/test_inference_scaling.py
+- [ ] T127 [P] Add performance metrics logging (p50, p95, p99 latencies) to MetadataService in src/db/metadata.py
+- [ ] T128 [P] Add performance metrics logging to ForeignKeyInferencer in src/inference/relationships.py
+- [ ] T129 Create performance dashboard markdown report generator in tests/performance/report.py
+- [ ] T130 Run full performance suite and generate baseline report (baseline.md) for future regression testing
+- [ ] T131 [P] Add edge case handling tasks: Implement connection timeout (EC-001) in src/db/connection.py
+- [ ] T132 [P] Add pagination support for list_tables (EC-002) in src/mcp_server/server.py
+- [ ] T133 [P] Add object_type filtering for views (EC-006) in src/db/metadata.py
+- [ ] T134 [P] Add inference timeout with partial results (EC-007) in src/inference/relationships.py
+- [ ] T135 [P] Verify NFR-003 compliance: Add documentation size check to export_documentation tool in src/cache/storage.py (warn if >1MB for 500 tables)
+- [ ] T136 [P] Verify NFR-004 compliance: Add integration test for write operation blocking in tests/integration/test_query_execution.py
+- [ ] T137 [P] Verify NFR-005 compliance: Add credential leak detection test in tests/unit/test_connection.py (scan logs for password patterns)
+- [ ] T138 Create NFR compliance validation suite in tests/compliance/ running all NFR checks together
 
 ---
 
@@ -408,6 +487,33 @@ With multiple developers:
 | **SC-005**: Docs usable by different agent | US6 tasks (T067-T090) | Markdown export + load |
 | **SC-006**: 60% token reduction | US1 (T017) + US6 | Summary mode + caching |
 | **SC-007**: Query execution <10s | US7 tasks (T091-T102) + NFR-002 | Row limit enforcement |
+
+---
+
+---
+
+## Phase 11: Value Overlap Analysis (Phase 2 Feature - DEFERRED)
+
+**Status**: NOT in initial MVP. Implement only after Phase 10 complete and deployed.
+
+**Goal**: Enable FK inference based on actual data overlap, not just naming/structure
+
+### Value Overlap Implementation
+
+- [ ] T139 [P] Create ValueOverlapAnalyzer class in src/inference/value_overlap.py
+- [ ] T140 [P] Implement full_comparison strategy (hash distinct values, Jaccard similarity) in src/inference/value_overlap.py
+- [ ] T141 [P] Implement sampling strategy (random N values, default N=1000) in src/inference/value_overlap.py
+- [ ] T142 Integrate overlap scoring into ForeignKeyInferencer (5th factor, 20% weight) in src/inference/relationships.py
+- [ ] T143 Add overlap_threshold parameter (default 0.30) to infer_relationships tool in src/mcp_server/server.py
+- [ ] T144 Add strategy parameter (full_comparison vs sampling) to infer_relationships tool in src/mcp_server/server.py
+- [ ] T145 Remove NotImplementedError from include_value_overlap flag in src/mcp_server/server.py
+- [ ] T146 Add performance tracking for overlap analysis (track query time per column pair) in src/inference/value_overlap.py
+- [ ] T147 Write unit tests for both overlap strategies in tests/unit/test_value_overlap.py
+- [ ] T148 Write integration test measuring accuracy improvement with overlap in tests/integration/test_fk_inference_overlap.py
+
+**Performance Target**: Overlap analysis must not exceed 10s per table pair (configurable timeout)
+
+**Success Metric**: Inference accuracy improves from 75-80% (Phase 1) to 85-90% (Phase 2) with value overlap enabled
 
 ---
 

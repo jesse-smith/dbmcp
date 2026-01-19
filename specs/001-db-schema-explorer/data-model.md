@@ -165,9 +165,28 @@ A database index on one or more columns.
 
 ---
 
-### 6. Relationship
+### 6. Relationship (Base Entity)
 
-A join relationship between tables (declared FK or inferred).
+Base representation of a join relationship between tables. Contains source table/column, target table/column, and relationship type.
+
+**Hierarchy:**
+```
+Relationship (abstract base)
+├── DeclaredFK (schema-defined foreign key)
+│   ├── constraint_name: str
+│   ├── on_delete: str (CASCADE, SET NULL, etc.)
+│   └── on_update: str
+└── InferredFK (algorithm-inferred relationship)
+    ├── confidence_score: float (0.0-1.0)
+    ├── reasoning: str (explanation of why inferred)
+    └── inference_factors: dict (name_score, type_score, structural_score)
+```
+
+**Implementation Note**: In Python, both can be dataclasses with a `relationship_type` discriminator field rather than true inheritance.
+
+---
+
+#### 6a. Relationship (Base Fields)
 
 **Fields:**
 | Field | Type | Required | Validation | Description |
@@ -178,24 +197,67 @@ A join relationship between tables (declared FK or inferred).
 | `target_table_id` | string | Yes | FK to Table | Target table (referenced side) |
 | `target_column` | string | Yes | Non-empty | Target column name |
 | `relationship_type` | enum | Yes | ['declared', 'inferred'] | How relationship discovered |
-| `confidence_score` | float | Conditional | 0.0-1.0 | Required if inferred |
-| `inference_reasoning` | string | Conditional | - | Human-readable explanation if inferred |
-| `constraint_name` | string | Conditional | - | FK constraint name (if declared) |
 
 **Relationships:**
 - Many Relationships → One Table (as source)
 - Many Relationships → One Table (as target)
 
 **Validation Rules:**
-- If `relationship_type='declared'`, `constraint_name` MUST be populated
-- If `relationship_type='inferred'`, `confidence_score` and `inference_reasoning` MUST be populated
-- `confidence_score` only returned if ≥ threshold (default 0.50, configurable)
 - `source_table_id ≠ target_table_id` (self-joins not initially supported)
+
+---
+
+#### 6b. DeclaredFK (Subtype)
+
+Foreign key explicitly declared in database schema.
+
+**Additional Fields:**
+| Field | Type | Required | Validation | Description |
+|-------|------|----------|------------|-------------|
+| `constraint_name` | string | Yes | Non-empty | FK constraint name |
+| `on_delete` | enum | No | ['CASCADE', 'SET NULL', 'NO ACTION'] | Delete cascade behavior |
+| `on_update` | enum | No | ['CASCADE', 'SET NULL', 'NO ACTION'] | Update cascade behavior |
+
+**Validation Rules:**
+- `relationship_type` MUST be 'declared'
+- `constraint_name` MUST be populated
+- Retrieved from `INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS` and `sys.foreign_keys`
+
+---
+
+#### 6c. InferredFK (Subtype)
+
+Relationship inferred by algorithm based on naming patterns, type compatibility, and structural hints.
+
+**Additional Fields:**
+| Field | Type | Required | Validation | Description |
+|-------|------|----------|------------|-------------|
+| `confidence_score` | float | Yes | 0.0-1.0 | Confidence in inference (threshold default 0.50) |
+| `reasoning` | string | Yes | Non-empty | Human-readable explanation of inference |
+| `inference_factors` | object | Yes | - | Breakdown of scoring factors |
+
+**inference_factors Structure:**
+```json
+{
+  "name_similarity": 0.87,
+  "type_compatible": true,
+  "structural_hints": {
+    "source_nullable": true,
+    "target_is_pk": true,
+    "target_has_unique_index": true
+  }
+}
+```
+
+**Validation Rules:**
+- `relationship_type` MUST be 'inferred'
+- `confidence_score` and `reasoning` MUST be populated
+- Only returned if `confidence_score` ≥ threshold (default 0.50, configurable)
 
 **Inference Reasoning Examples:**
 - "Exact name match + type compatible + source nullable + target PK"
 - "Name similarity 0.87 + type compatible + target unique index"
-- "Type compatible + value overlap 92%"
+- "Type compatible + value overlap 92%" (Phase 2 feature)
 
 ---
 
