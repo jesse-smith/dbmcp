@@ -23,10 +23,10 @@
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create project directory structure per plan.md (src/{mcp_server,db,inference,cache,models}, tests/{unit,integration,fixtures}, docs/)
-- [ ] T002 Initialize Python 3.11+ virtual environment and install core dependencies (mcp[cli], sqlalchemy, pyodbc)
-- [ ] T003 [P] Configure logging infrastructure (never stdout, file + stderr only per research.md)
-- [ ] T004 [P] Create .gitignore with Python and MCP server patterns
+- [X] T001 Create project directory structure per plan.md (src/{mcp_server,db,inference,cache,models}, tests/{unit,integration,fixtures}, docs/)
+- [X] T002 Initialize Python 3.11+ virtual environment and install core dependencies (mcp[cli], sqlalchemy, pyodbc)
+- [X] T003 [P] Configure logging infrastructure (never stdout, file + stderr only per research.md)
+- [X] T004 [P] Create .gitignore with Python and MCP server patterns
 
 ---
 
@@ -36,13 +36,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 Create Connection data model in src/models/schema.py
-- [ ] T006 Create Schema, Table, Column, Index data models in src/models/schema.py
-- [ ] T007 Create Relationship base data model and DeclaredFK subtype in src/models/relationship.py
-- [ ] T008 [P] Implement ConnectionManager with SQLAlchemy pooling in src/db/connection.py
-- [ ] T009 [P] Implement MetadataService base class with inspector setup in src/db/metadata.py
-- [ ] T010 Configure FastMCP server initialization in src/mcp_server/server.py
-- [ ] T011 Implement connect_database MCP tool in src/mcp_server/server.py
+- [X] T005 Create Connection data model in src/models/schema.py
+- [X] T006 Create Schema, Table, Column, Index data models in src/models/schema.py
+- [X] T007 Create Relationship base data model and DeclaredFK subtype in src/models/relationship.py
+- [X] T008 [P] Implement ConnectionManager with SQLAlchemy pooling in src/db/connection.py
+- [X] T009 [P] Implement MetadataService base class with inspector setup in src/db/metadata.py
+- [X] T010 Configure FastMCP server initialization in src/mcp_server/server.py
+- [X] T011 Implement connect_database MCP tool in src/mcp_server/server.py
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -52,10 +52,10 @@
 
 **Purpose**: Set up testing framework before user story implementation begins
 
-- [ ] T011A [P] Create pytest.ini with async test configuration
-- [ ] T011B [P] Create test database fixture scripts in tests/fixtures/test_db_schema.sql
-- [ ] T011C [P] Create connection fixture for test database in tests/conftest.py
-- [ ] T011D [P] Create base test utilities (mock connection, sample metadata) in tests/utils.py
+- [X] T011A [P] Create pytest.ini with async test configuration
+- [X] T011B [P] Create test database fixture scripts in tests/fixtures/test_db_schema.sql
+- [X] T011C [P] Create connection fixture for test database in tests/conftest.py
+- [X] T011D [P] Create base test utilities (mock connection, sample metadata) in tests/utils.py
 
 **Checkpoint**: Test infrastructure ready for TDD workflow
 
@@ -71,25 +71,25 @@
 
 **Test Phase (Write Failing Tests First):**
 
-- [ ] T012A [US1-TEST] Write test for list_schemas query in tests/unit/test_metadata.py (expect sys.schemas DMV query, verify schema list returned)
-- [ ] T013A [US1-TEST] Write test for list_tables query in tests/unit/test_metadata.py (expect row counts, verify table metadata)
-- [ ] T014A [US1-TEST] Write test for list_schemas MCP tool in tests/integration/test_discovery.py (verify schema grouping response format)
-- [ ] T015A [US1-TEST] Write test for list_tables MCP tool filtering in tests/integration/test_discovery.py (verify schema_filter, name_pattern, min_row_count work)
-- [ ] T016A [US1-TEST] Write test for sorting logic in tests/unit/test_metadata.py (verify sort by name, row_count, last_modified)
-- [ ] T017A [US1-TEST] Write test for output_mode in tests/integration/test_discovery.py (verify summary mode reduces token size vs detailed)
-- [ ] T018A [US1-TEST] Write test for limit enforcement in tests/integration/test_discovery.py (verify default 100, max 1000, error on exceeding)
-- [ ] T019A [US1-TEST] Write test for access_denied handling in tests/unit/test_metadata.py (mock permission error, verify marker returned)
+- [X] T012A [US1-TEST] Write test for list_schemas query in tests/unit/test_metadata.py (expect sys.schemas DMV query, verify schema list returned)
+- [X] T013A [US1-TEST] Write test for list_tables query in tests/unit/test_metadata.py (expect row counts, verify table metadata)
+- [X] T014A [US1-TEST] Write test for list_schemas MCP tool in tests/integration/test_discovery.py (verify schema grouping response format)
+- [X] T015A [US1-TEST] Write test for list_tables MCP tool filtering in tests/integration/test_discovery.py (verify schema_filter, name_pattern, min_row_count work)
+- [X] T016A [US1-TEST] Write test for sorting logic in tests/unit/test_metadata.py (verify sort by name, row_count, last_modified)
+- [X] T017A [US1-TEST] Write test for output_mode in tests/integration/test_discovery.py (verify summary mode reduces token size vs detailed)
+- [X] T018A [US1-TEST] Write test for limit enforcement in tests/integration/test_discovery.py (verify default 100, max 1000, error on exceeding)
+- [X] T019A [US1-TEST] Write test for access_denied handling in tests/unit/test_metadata.py (mock permission error, verify marker returned)
 
 **Implementation Phase (Make Tests Pass):**
 
-- [ ] T012 [P] [US1] Implement list_schemas query in src/db/metadata.py using sys.schemas DMV (run T012A to verify)
-- [ ] T013 [P] [US1] Implement list_tables query in src/db/metadata.py using sys.tables and sys.dm_db_partition_stats (run T013A to verify)
-- [ ] T014 [US1] Implement list_schemas MCP tool in src/mcp_server/server.py with schema grouping (run T014A to verify)
-- [ ] T015 [US1] Implement list_tables MCP tool in src/mcp_server/server.py with filtering (schema_filter, name_pattern, min_row_count) (run T015A to verify)
-- [ ] T016 [US1] Add sorting logic (by name, row_count, last_modified) to list_tables in src/mcp_server/server.py (run T016A to verify)
-- [ ] T017 [US1] Add output_mode (summary vs detailed) for token efficiency in src/mcp_server/server.py (run T017A to verify)
-- [ ] T018 [US1] Add limit parameter enforcement (default 100, max 1000) in src/mcp_server/server.py (run T018A to verify)
-- [ ] T019 [US1] Handle access_denied case for tables without SELECT permission in src/db/metadata.py (run T019A to verify)
+- [X] T012 [P] [US1] Implement list_schemas query in src/db/metadata.py using sys.schemas DMV (run T012A to verify)
+- [X] T013 [P] [US1] Implement list_tables query in src/db/metadata.py using sys.tables and sys.dm_db_partition_stats (run T013A to verify)
+- [X] T014 [US1] Implement list_schemas MCP tool in src/mcp_server/server.py with schema grouping (run T014A to verify)
+- [X] T015 [US1] Implement list_tables MCP tool in src/mcp_server/server.py with filtering (schema_filter, name_pattern, min_row_count) (run T015A to verify)
+- [X] T016 [US1] Add sorting logic (by name, row_count, last_modified) to list_tables in src/mcp_server/server.py (run T016A to verify)
+- [X] T017 [US1] Add output_mode (summary vs detailed) for token efficiency in src/mcp_server/server.py (run T017A to verify)
+- [X] T018 [US1] Add limit parameter enforcement (default 100, max 1000) in src/mcp_server/server.py (run T018A to verify)
+- [X] T019 [US1] Handle access_denied case for tables without SELECT permission in src/db/metadata.py (run T019A to verify)
 
 **Verification:**
 - [ ] T019B [US1-VERIFY] Run all US1 tests and confirm 100% pass rate before moving to next story
@@ -106,15 +106,15 @@
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Implement get_columns query using SQLAlchemy inspector in src/db/metadata.py
-- [ ] T021 [US2] Implement get_indexes query using SQLAlchemy inspector in src/db/metadata.py
-- [ ] T022 [US2] Implement get_foreign_keys query using SQLAlchemy inspector in src/db/metadata.py
-- [ ] T023 [US2] Implement get_primary_key query using SQLAlchemy inspector in src/db/metadata.py
-- [ ] T024 [US2] Combine metadata into structured table schema response in src/db/metadata.py
-- [ ] T025 [US2] Implement get_table_schema MCP tool in src/mcp_server/server.py
-- [ ] T026 [US2] Add include_indexes and include_relationships flags in src/mcp_server/server.py
-- [ ] T027 [US2] Map column metadata to Column entity format in src/mcp_server/server.py
-- [ ] T028 [US2] Add error handling for non-existent tables in src/mcp_server/server.py
+- [X] T020 [US2] Implement get_columns query using SQLAlchemy inspector in src/db/metadata.py
+- [X] T021 [US2] Implement get_indexes query using SQLAlchemy inspector in src/db/metadata.py
+- [X] T022 [US2] Implement get_foreign_keys query using SQLAlchemy inspector in src/db/metadata.py
+- [X] T023 [US2] Implement get_primary_key query using SQLAlchemy inspector in src/db/metadata.py
+- [X] T024 [US2] Combine metadata into structured table schema response in src/db/metadata.py
+- [X] T025 [US2] Implement get_table_schema MCP tool in src/mcp_server/server.py
+- [X] T026 [US2] Add include_indexes and include_relationships flags in src/mcp_server/server.py
+- [X] T027 [US2] Map column metadata to Column entity format in src/mcp_server/server.py
+- [X] T028 [US2] Add error handling for non-existent tables in src/mcp_server/server.py
 
 **Checkpoint**: User Stories 1 AND 2 should both work independently
 
@@ -128,28 +128,28 @@
 
 ### Implementation for User Story 3
 
-- [ ] T029 [P] [US3] Create InferredFK data class in src/models/relationship.py
-- [ ] T030 [P] [US3] Implement name normalization (lowercase, remove underscores, strip suffixes) in src/inference/relationships.py
-- [ ] T031 [US3] Implement name similarity scoring using difflib.SequenceMatcher in src/inference/relationships.py
-- [ ] T032 [US3] Implement type compatibility check (group compatible types) in src/inference/relationships.py
-- [ ] T033 [US3] Implement structural hints scoring (nullable, PK, unique index) in src/inference/relationships.py
-- [ ] T034 [US3] Implement three-factor weighted scoring (40% name, 15% type, 45% structural) in src/inference/relationships.py
-- [ ] T035 [US3] Create ForeignKeyInferencer class with threshold filtering in src/inference/relationships.py
-- [ ] T036 [US3] Implement confidence score calculation and reasoning generation in src/inference/relationships.py
-- [ ] T037 [US3] Query all tables and columns for candidate matching in src/inference/relationships.py
-- [ ] T038 [US3] Return top N candidates sorted by confidence in src/inference/relationships.py
-- [ ] T039 [US3] Implement infer_relationships MCP tool in src/mcp_server/server.py
-- [ ] T040 [US3] Add confidence_threshold parameter (default 0.50) in src/mcp_server/server.py
-- [ ] T041 [US3] Add max_candidates parameter (default 20) in src/mcp_server/server.py
-- [ ] T042 [US3] Add include_value_overlap flag in src/mcp_server/server.py (Phase 2 feature, initially returns NotImplementedError with message "Value overlap analysis available in Phase 2")
-- [ ] T042A [US3-TEST] Write test verifying include_value_overlap=true raises NotImplementedError in tests/unit/test_relationships.py
-- [ ] T043 [US3] Track analysis_time_ms and total_candidates_evaluated metrics in src/mcp_server/server.py
-- [ ] T043A [US3] Add parameter validation for infer_relationships tool in src/mcp_server/server.py:
+- [X] T029 [P] [US3] Create InferredFK data class in src/models/relationship.py
+- [X] T030 [P] [US3] Implement name normalization (lowercase, remove underscores, strip suffixes) in src/inference/relationships.py
+- [X] T031 [US3] Implement name similarity scoring using difflib.SequenceMatcher in src/inference/relationships.py
+- [X] T032 [US3] Implement type compatibility check (group compatible types) in src/inference/relationships.py
+- [X] T033 [US3] Implement structural hints scoring (nullable, PK, unique index) in src/inference/relationships.py
+- [X] T034 [US3] Implement three-factor weighted scoring (40% name, 15% type, 45% structural) in src/inference/relationships.py
+- [X] T035 [US3] Create ForeignKeyInferencer class with threshold filtering in src/inference/relationships.py
+- [X] T036 [US3] Implement confidence score calculation and reasoning generation in src/inference/relationships.py
+- [X] T037 [US3] Query all tables and columns for candidate matching in src/inference/relationships.py
+- [X] T038 [US3] Return top N candidates sorted by confidence in src/inference/relationships.py
+- [X] T039 [US3] Implement infer_relationships MCP tool in src/mcp_server/server.py
+- [X] T040 [US3] Add confidence_threshold parameter (default 0.50) in src/mcp_server/server.py
+- [X] T041 [US3] Add max_candidates parameter (default 20) in src/mcp_server/server.py
+- [X] T042 [US3] Add include_value_overlap flag in src/mcp_server/server.py (Phase 2 feature, initially returns NotImplementedError with message "Value overlap analysis available in Phase 2")
+- [X] T042A [US3-TEST] Write test verifying include_value_overlap=true raises NotImplementedError in tests/unit/test_relationships.py
+- [X] T043 [US3] Track analysis_time_ms and total_candidates_evaluated metrics in src/mcp_server/server.py
+- [X] T043A [US3] Add parameter validation for infer_relationships tool in src/mcp_server/server.py:
   - confidence_threshold: float between 0.0 and 1.0 (default 0.50)
   - max_candidates: int between 1 and 1000 (default 20)
   - include_value_overlap: bool (must be False in Phase 1, raise NotImplementedError if True)
   - Return actionable error messages for invalid parameters
-- [ ] T043B [US3-TEST] Write parameter validation tests in tests/unit/test_mcp_tools.py:
+- [X] T043B [US3-TEST] Write parameter validation tests in tests/unit/test_mcp_tools.py:
   - Test confidence_threshold < 0.0 raises ValueError
   - Test confidence_threshold > 1.0 raises ValueError
   - Test max_candidates = 0 raises ValueError
