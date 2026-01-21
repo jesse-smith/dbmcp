@@ -67,3 +67,6 @@ docs/*/
 credentials.json
 *.pem
 *.key
+
+# Generated test database (examples)
+examples/test_database/example.db
