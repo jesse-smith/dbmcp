@@ -5,6 +5,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+def _find_repo_root() -> Path:
+    """Find repository root by looking for pyproject.toml."""
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    # Fallback to examples parent directory
+    return Path(__file__).resolve().parent.parent
+
+
 def setup_connection(connection_string: Optional[str] = None) -> Any:
     """Establish DBMCP connection with fallback to local test database.
 
@@ -19,7 +30,10 @@ def setup_connection(connection_string: Optional[str] = None) -> Any:
         ConnectionError: If connection fails with helpful message
     """
     if connection_string is None:
-        connection_string = os.getenv("DBMCP_CONNECTION_STRING", "sqlite:///examples/test_database/example.db")
+        # Use absolute path to test database
+        repo_root = _find_repo_root()
+        test_db_path = repo_root / "examples" / "test_database" / "example.db"
+        connection_string = os.getenv("DBMCP_CONNECTION_STRING", f"sqlite:///{test_db_path}")
 
     try:
         # Import SQLAlchemy for connection
@@ -94,10 +108,11 @@ def verify_notebook_environment() -> bool:
     except ImportError:
         missing.append("sqlalchemy (install: pip install sqlalchemy)")
 
-    # Check test database
-    test_db = Path("examples/test_database/example.db")
+    # Check test database (use absolute path)
+    repo_root = _find_repo_root()
+    test_db = repo_root / "examples" / "test_database" / "example.db"
     if not test_db.exists():
-        missing.append("test database (run: python examples/test_database/setup.py)")
+        missing.append(f"test database (run: python {repo_root}/examples/test_database/setup.py)")
 
     if missing:
         print("⚠️ Missing dependencies:")

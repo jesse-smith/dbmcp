@@ -19,6 +19,8 @@ Interactive Jupyter notebooks demonstrating DBMCP database exploration capabilit
    jupyter notebook examples/notebooks/
    ```
 
+   Or open notebooks directly from any location - they automatically detect the repository root!
+
 4. **Start with**: `01_basic_connection.ipynb`
 
 ## Notebooks
@@ -71,17 +73,26 @@ The test database contains a sample e-commerce schema:
 
 ## Troubleshooting
 
-**Import errors**: Ensure you're running notebooks from repository root and DBMCP is installed in your environment.
+**Import errors**: The notebooks automatically find the repository root, so you can open them from anywhere. Just ensure DBMCP dependencies are installed:
 
 ```bash
-# Install DBMCP
+# Install DBMCP dependencies
 pip install -e .
 
 # Verify installation
 python3 -c "import sqlalchemy; print('SQLAlchemy:', sqlalchemy.__version__)"
 ```
 
-**Connection errors**: Verify test database exists by running `python3 examples/test_database/setup.py` again.
+**Connection errors**: Verify test database exists by running the setup script:
+```bash
+python3 examples/test_database/setup.py
+```
+
+**Path issues**: The notebooks automatically detect the repository root by looking for `pyproject.toml`. If you've moved files outside the repository structure, set the database path explicitly:
+```python
+import os
+os.environ["DBMCP_CONNECTION_STRING"] = "sqlite:////absolute/path/to/example.db"
+```
 
 **Missing dependencies**: Install optional dependencies for examples:
 ```bash
