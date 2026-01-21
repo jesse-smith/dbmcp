@@ -9,14 +9,14 @@ All logging goes to file and stderr only.
 
 import json
 from pathlib import Path
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.db.metadata import MetadataService
+from src.db.query import QueryService
 from src.logging_config import CredentialFilter, setup_logging
-from src.models.schema import AuthenticationMethod
+from src.models.schema import AuthenticationMethod, SamplingMethod
 
 # Configure logging (file + stderr, never stdout)
 logger = setup_logging(log_file=Path("dbmcp.log"), log_to_stderr=True)
@@ -43,8 +43,8 @@ def get_connection_manager() -> ConnectionManager:
 async def connect_database(
     server: str,
     database: str,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    username: str | None = None,
+    password: str | None = None,
     port: int = 1433,
     authentication_method: str = "sql",
     trust_server_cert: bool = False,
@@ -176,9 +176,9 @@ async def list_schemas(connection_id: str) -> str:
 @mcp.tool()
 async def list_tables(
     connection_id: str,
-    schema_filter: Optional[list[str]] = None,
-    name_pattern: Optional[str] = None,
-    min_row_count: Optional[int] = None,
+    schema_filter: list[str] | None = None,
+    name_pattern: str | None = None,
+    min_row_count: int | None = None,
     sort_by: str = "row_count",
     sort_order: str = "desc",
     limit: int = 100,
@@ -439,6 +439,93 @@ async def infer_relationships(
     except Exception as e:
         logger.exception("Error in infer_relationships")
         return json.dumps({"error": f"Failed to infer relationships: {str(e)}"})
+
+
+# =============================================================================
+# Sample Data Tools (User Story 4)
+# =============================================================================
+
+
+@mcp.tool()
+async def get_sample_data(
+    connection_id: str,
+    table_name: str,
+    schema_name: str = "dbo",
+    sample_size: int = 5,
+    sampling_method: str = "top",
+    columns: list[str] | None = None,
+) -> str:
+    """Retrieve sample data from a table.
+
+    Returns representative sample rows from a table with support for multiple
+    sampling strategies. Automatically truncates large text (>1000 chars) and
+    binary data (shows first 32 bytes as hex) to keep responses token-efficient.
+
+    Args:
+        connection_id: Connection ID from connect_database
+        table_name: Table name to sample from
+        schema_name: Schema name (default: 'dbo')
+        sample_size: Number of rows to return, 1-1000 (default: 5)
+        sampling_method: Sampling strategy - 'top', 'tablesample', or 'modulo' (default: 'top')
+            - 'top': Fast SELECT TOP N (not representative, just first N rows)
+            - 'tablesample': SQL Server statistical sampling (more representative)
+            - 'modulo': Deterministic sampling using modulo on row number (repeatable)
+        columns: Optional list of column names to include (default: all columns)
+
+    Returns:
+        JSON string with sample rows and metadata
+    """
+    try:
+        # Validate sample_size
+        if sample_size < 1 or sample_size > 1000:
+            return json.dumps({
+                "error": "sample_size must be between 1 and 1000",
+            })
+
+        # Validate sampling_method
+        valid_methods = ["top", "tablesample", "modulo"]
+        if sampling_method not in valid_methods:
+            return json.dumps({
+                "error": f"sampling_method must be one of: {valid_methods}",
+            })
+
+        # Parse sampling method enum
+        try:
+            method_enum = SamplingMethod(sampling_method.lower())
+        except ValueError:
+            return json.dumps({
+                "error": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
+            })
+
+        conn_manager = get_connection_manager()
+        engine = conn_manager.get_engine(connection_id)
+        query_svc = QueryService(engine)
+
+        # Get sample data
+        sample = query_svc.get_sample_data(
+            table_name=table_name,
+            schema_name=schema_name,
+            sample_size=sample_size,
+            sampling_method=method_enum,
+            columns=columns,
+        )
+
+        return json.dumps({
+            "sample_id": sample.sample_id,
+            "table_id": sample.table_id,
+            "sample_size": sample.sample_size,
+            "actual_rows_returned": len(sample.rows),
+            "sampling_method": sample.sampling_method.value,
+            "rows": sample.rows,
+            "truncated_columns": sample.truncated_columns,
+            "sampled_at": sample.sampled_at.isoformat(),
+        })
+
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    except Exception as e:
+        logger.exception("Error in get_sample_data")
+        return json.dumps({"error": f"Failed to get sample data: {str(e)}"})
 
 
 # =============================================================================
