@@ -49,7 +49,12 @@ def create_mock_connection_context(execute_results: dict[str, list[dict]]) -> Ma
         query_str = str(query)
         for pattern, rows in execute_results.items():
             if pattern.lower() in query_str.lower():
-                return create_mock_execute_result(rows)
+                # Handle limit parameter if present (simulates TOP clause)
+                result_rows = rows
+                if params and "limit" in params:
+                    limit = params["limit"]
+                    result_rows = rows[:limit]
+                return create_mock_execute_result(result_rows)
         return create_mock_execute_result([])
 
     connection.execute = mock_execute

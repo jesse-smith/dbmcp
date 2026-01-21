@@ -92,7 +92,13 @@
 - [X] T019 [US1] Handle access_denied case for tables without SELECT permission in src/db/metadata.py (run T019A to verify)
 
 **Verification:**
-- [ ] T019B [US1-VERIFY] Run all US1 tests and confirm 100% pass rate before moving to next story
+- [X] T019B [US1-VERIFY] Run all US1 tests and confirm 100% pass rate before moving to next story
+  - **Acceptance Criteria**:
+    - All 8 test tasks (T012A-T019A) must pass: list_schemas query, list_tables query, list_schemas MCP tool, list_tables filtering, sorting logic, output_mode, limit enforcement, access_denied handling
+    - pytest exit code 0 with no skipped tests in tests/unit/test_metadata.py and tests/integration/test_discovery.py (US1 related tests)
+    - Expected test count: ~12-15 test cases (multiple assertions per test task)
+  - **Failure Remediation**: If any test fails, debug and fix implementation before proceeding to Phase 4. Do NOT mark T019B complete until all tests pass.
+  - **Verification Results**: ✅ 27 tests passed (100% pass rate), pytest exit code 0, no skipped tests
 
 **Checkpoint**: User Story 1 should be fully functional - agent can discover database structure efficiently
 
@@ -313,6 +319,63 @@
 - [ ] T118 Run pytest test suite and ensure all tests pass
 - [ ] T119 Run ruff linting and fix any issues
 - [ ] T120 Run comprehensive performance validation suite (T121-T130) and verify all NFRs pass
+
+**⚠️ Performance Test Failure Remediation Protocol**:
+
+If any performance test (T121-T130) fails to meet NFR targets, follow this escalation path:
+
+**Step 1: Triage (immediate)**
+- Identify which NFR failed: NFR-001 (metadata <30s), NFR-002 (samples <10s), or NFR-003 (docs <1MB)
+- Measure gap: actual vs target (e.g., "list_tables took 45s, target 30s, gap +50%")
+- Check test validity: correct database size (1000 tables for NFR-001), adequate hardware (4+ cores, 8GB RAM, SSD)
+
+**Step 2: Environment Validation (15 min)**
+- Re-run on reference hardware if test environment suspected
+- Verify network latency <50ms for database connection
+- If environment confirmed as issue: Document minimum specs, skip to Step 5
+
+**Step 3: Implementation Optimization (1-2 hours per NFR)**
+- **NFR-001 failure** (metadata queries slow):
+  - Profile src/db/metadata.py queries with SQLAlchemy logging
+  - Check index usage on sys.tables, sys.dm_db_partition_stats
+  - Consider batch fetching or parallel queries
+  - Target: <25s (buffer below 30s limit)
+
+- **NFR-002 failure** (sample data slow):
+  - Profile src/db/query.py execution
+  - Verify TOP clause used (fastest method)
+  - Check for missing indexes on sampled columns
+  - Target: <8s (buffer below 10s limit)
+
+- **NFR-003 failure** (documentation size large):
+  - Profile src/cache/storage.py markdown generation
+  - Reduce verbosity: omit indexes/relationships in summary mode
+  - Consider gzip compression for cache files
+  - Target: <800KB (buffer below 1MB limit)
+
+**Step 4: NFR Revision (last resort - requires approval)**
+If optimization exhausted and environment validated:
+- Document why NFR cannot be met (include profiling data, optimization attempts)
+- Propose revised NFR with justification (e.g., "30s → 60s for 1000 tables" or "reduce scope to 500 tables")
+- Update spec.md NFR section (requires git commit with rationale)
+- Get stakeholder approval before proceeding
+
+**Step 5: Re-test and Document**
+- Re-run full suite (T121-T130)
+- Document results in tests/performance/baseline.md
+- Mark T120 complete only when: ALL NFRs pass OR revised NFRs approved and pass
+
+**Decision Tree**:
+```
+Test Fails → Environment Issue? → Yes → Fix/Document → PASS
+          → No ↓
+          Implementation Issue? → Yes → Optimize → Re-test → PASS/FAIL
+          → No ↓
+          Fundamental Limit? → Yes → Revise NFR → Approve → PASS
+```
+
+**Completion Gate**: T120 CANNOT be marked complete with failing tests. Either fix implementation, fix environment, or revise NFRs.
+
 - [ ] T121 [P] Create performance test fixture: Generate SQL script creating test DB with 1000 tables (varying sizes 0-100K rows) in tests/fixtures/perf_test_db.sql
 - [ ] T122 [P] Create performance benchmarking utility in tests/performance/benchmark.py (tracks query timing, memory usage)
 - [ ] T123 Validate NFR-001: Run list_tables on 1000-table database, verify metadata retrieval <30s in tests/performance/test_nfr001.py
