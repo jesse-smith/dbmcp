@@ -34,6 +34,10 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
 ]
+examples = [
+    "jupyter>=1.0.0",
+    "notebook>=7.0.0",
+]
 
 [project.scripts]
 dbmcp = "src.mcp_server.server:main"
@@ -90,4 +94,9 @@ exclude_lines = [
     "def __repr__",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
 ]
