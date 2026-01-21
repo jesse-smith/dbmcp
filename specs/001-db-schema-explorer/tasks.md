@@ -174,20 +174,20 @@
 
 ### Implementation for User Story 4
 
-- [ ] T044 [P] [US4] Create SampleData entity in src/models/schema.py
-- [ ] T045 [P] [US4] Implement TOP sampling method (SELECT TOP N) in src/db/query.py
-- [ ] T046 [US4] Implement distributed sampling methods in src/db/query.py:
+- [X] T044 [P] [US4] Create SampleData entity in src/models/schema.py
+- [X] T045 [P] [US4] Implement TOP sampling method (SELECT TOP N) in src/db/query.py
+- [X] T046 [US4] Implement distributed sampling methods in src/db/query.py:
   - TABLESAMPLE strategy: Use SQL Server TABLESAMPLE (N ROWS) for statistical sampling
   - Modulo strategy: Use WHERE ID % interval = 0 for deterministic repeatable sampling
   - Add sampling_method parameter validation (allowed: "top", "tablesample", "modulo")
-- [ ] T047 [US4] Implement binary column truncation (first 32 bytes as hex + size) in src/db/query.py
-- [ ] T048 [US4] Implement large text truncation (>1000 chars) in src/db/query.py
-- [ ] T049 [US4] Track truncated_columns list in sample response in src/db/query.py
-- [ ] T050 [US4] Implement get_sample_data MCP tool in src/mcp_server/server.py
-- [ ] T051 [US4] Add sample_size parameter (default 5, max 1000) in src/mcp_server/server.py
-- [ ] T052 [US4] Add sampling_method parameter (top vs distributed) in src/mcp_server/server.py
-- [ ] T053 [US4] Add columns filter for selective column sampling in src/mcp_server/server.py
-- [ ] T054 [US4] Return structured JSON with rows as array of objects in src/mcp_server/server.py
+- [X] T047 [US4] Implement binary column truncation (first 32 bytes as hex + size) in src/db/query.py
+- [X] T048 [US4] Implement large text truncation (>1000 chars) in src/db/query.py
+- [X] T049 [US4] Track truncated_columns list in sample response in src/db/query.py
+- [X] T050 [US4] Implement get_sample_data MCP tool in src/mcp_server/server.py
+- [X] T051 [US4] Add sample_size parameter (default 5, max 1000) in src/mcp_server/server.py
+- [X] T052 [US4] Add sampling_method parameter (top vs distributed) in src/mcp_server/server.py
+- [X] T053 [US4] Add columns filter for selective column sampling in src/mcp_server/server.py
+- [X] T054 [US4] Return structured JSON with rows as array of objects in src/mcp_server/server.py
 
 **Checkpoint**: User Story 4 complete and testable independently
 
