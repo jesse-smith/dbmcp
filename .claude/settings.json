@@ -4,5 +4,8 @@
       "Bash",
       "Edit"
     ]
+  },
+  "enabledPlugins": {
+    "hookify@claude-plugins-official": true
   }
 }
