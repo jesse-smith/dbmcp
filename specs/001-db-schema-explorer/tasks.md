@@ -218,8 +218,8 @@
 
 ### Companion: Example Notebook for US5
 
-- [ ] T066A [P] [US5-NOTEBOOK] Create 04_column_analysis.ipynb demonstrating column purpose inference
-- [ ] T066B [P] [US5-NOTEBOOK] Add examples showing inferred_purpose interpretation and confidence scores
+- [X] T066A [P] [US5-NOTEBOOK] Create 04_column_analysis.ipynb demonstrating column purpose inference
+- [X] T066B [P] [US5-NOTEBOOK] Add examples showing inferred_purpose interpretation and confidence scores
 
 ---
 
