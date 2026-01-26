@@ -5,6 +5,8 @@ Credentials are never logged per NFR-005.
 """
 
 import hashlib
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote_plus
 
@@ -18,6 +20,25 @@ from src.models.schema import AuthenticationMethod, Connection
 logger = get_logger(__name__)
 
 
+@dataclass
+class PoolConfig:
+    """Configuration for connection pool tuning.
+
+    Attributes:
+        pool_size: Number of connections to keep open (default: 5)
+        max_overflow: Max additional connections beyond pool_size (default: 10)
+        pool_timeout: Seconds to wait for connection before timeout (default: 30)
+        pool_recycle: Seconds before recycling idle connections (default: 3600)
+        pool_pre_ping: Validate connections before use (default: True)
+    """
+
+    pool_size: int = 5
+    max_overflow: int = 10
+    pool_timeout: int = 30
+    pool_recycle: int = 3600
+    pool_pre_ping: bool = True
+
+
 class ConnectionError(Exception):
     """Exception raised when database connection fails."""
 
@@ -29,18 +50,26 @@ class ConnectionManager:
 
     This class handles:
     - Connection establishment and validation
-    - Connection pooling via SQLAlchemy QueuePool
+    - Connection pooling via SQLAlchemy QueuePool (configurable via PoolConfig)
     - Connection lifecycle management
     - Secure credential handling (never logged)
+    - Performance logging for NFR-001/NFR-002 tracking
 
     Attributes:
         engines: Dictionary mapping connection_id to SQLAlchemy engine
         connections: Dictionary mapping connection_id to Connection metadata
+        pool_config: Connection pool configuration
     """
 
-    def __init__(self):
+    def __init__(self, pool_config: PoolConfig | None = None):
+        """Initialize connection manager.
+
+        Args:
+            pool_config: Optional pool configuration. Uses defaults if not provided.
+        """
         self._engines: dict[str, Engine] = {}
         self._connections: dict[str, Connection] = {}
+        self._pool_config = pool_config or PoolConfig()
 
     def connect(
         self,
@@ -104,29 +133,37 @@ class ConnectionManager:
             connection_timeout=connection_timeout,
         )
 
-        # Create SQLAlchemy engine with connection pooling
+        # Create SQLAlchemy engine with connection pooling (T113: configurable)
+        start_time = time.time()
         try:
             engine = create_engine(
                 f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
                 poolclass=QueuePool,
-                pool_size=5,
-                max_overflow=10,
-                pool_pre_ping=True,  # Validate connections before use
-                pool_recycle=3600,  # Recycle connections after 1 hour
+                pool_size=self._pool_config.pool_size,
+                max_overflow=self._pool_config.max_overflow,
+                pool_timeout=self._pool_config.pool_timeout,
+                pool_pre_ping=self._pool_config.pool_pre_ping,
+                pool_recycle=self._pool_config.pool_recycle,
                 echo=False,
             )
 
-            # Test connection
+            # Test connection (T131: timeout already in ODBC string)
             with engine.connect() as conn:
                 result = conn.execute(text("SELECT @@VERSION AS version, DB_NAME() AS database_name"))
                 row = result.fetchone()
                 version = row.version if row else "Unknown"
-                logger.info(f"Connected to {database} on {server}:{port}")
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                logger.info(f"Connected to {database} on {server}:{port} in {elapsed_ms}ms")
                 logger.debug(f"SQL Server version: {version[:100]}...")  # Truncate for log
 
+                # T105: Performance logging
+                if elapsed_ms > 5000:
+                    logger.warning(f"Slow connection: {elapsed_ms}ms (>5s threshold)")
+
         except Exception as e:
-            # Log error without credentials
-            logger.error(f"Connection to {server}:{port}/{database} failed: {type(e).__name__}")
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            # Log error without credentials (T105: include timing)
+            logger.error(f"Connection to {server}:{port}/{database} failed after {elapsed_ms}ms: {type(e).__name__}")
             raise ConnectionError(f"Could not connect to {server}:{port}/{database}: {str(e)}") from e
 
         # Store engine and connection metadata

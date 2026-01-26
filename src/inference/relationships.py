@@ -7,6 +7,8 @@ three-factor weighted scoring:
 - Structural hints (45% weight)
 
 Target accuracy: 75-80% for typical legacy databases.
+
+T134: Supports configurable timeout with partial results.
 """
 
 import time
@@ -20,6 +22,9 @@ from src.logging_config import get_logger
 from src.models.relationship import InferenceFactors, InferredFK, create_relationship_id
 
 logger = get_logger(__name__)
+
+# Default timeout for inference operations (10 seconds)
+DEFAULT_INFERENCE_TIMEOUT_SECONDS = 10
 
 
 # SQL Server compatible type groups
@@ -56,20 +61,30 @@ class ForeignKeyInferencer:
     - Type compatibility (15%): Data type group matching
     - Structural hints (45%): PK, nullable, unique index indicators
 
+    T134: Supports configurable timeout with partial results.
+
     Attributes:
         engine: SQLAlchemy database engine
         threshold: Minimum confidence score to return (default: 0.50)
+        timeout_seconds: Maximum time for inference before returning partial results
     """
 
-    def __init__(self, engine: Engine, threshold: float = 0.50):
+    def __init__(
+        self,
+        engine: Engine,
+        threshold: float = 0.50,
+        timeout_seconds: float | None = None,
+    ):
         """Initialize the inferencer.
 
         Args:
             engine: SQLAlchemy engine for database access
             threshold: Minimum confidence threshold (0.0-1.0)
+            timeout_seconds: Maximum inference time (None = default 10s, 0 = no timeout)
         """
         self.engine = engine
         self.threshold = threshold
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else DEFAULT_INFERENCE_TIMEOUT_SECONDS
         self._inspector = None
         self._column_cache: dict[str, list[ColumnInfo]] = {}
 
@@ -89,6 +104,9 @@ class ForeignKeyInferencer:
     ) -> tuple[list[InferredFK], dict]:
         """Infer foreign key relationships for a table.
 
+        T134: Supports timeout with partial results. If inference exceeds
+        timeout_seconds, returns partial results with timed_out=True in metadata.
+
         Args:
             table_name: Source table to analyze
             schema_name: Schema containing the table
@@ -97,6 +115,7 @@ class ForeignKeyInferencer:
 
         Returns:
             Tuple of (inferred relationships, analysis metadata)
+            Metadata includes: analysis_time_ms, total_candidates_evaluated, timed_out, tables_analyzed
 
         Raises:
             NotImplementedError: If include_value_overlap=True (Phase 2 feature)
@@ -114,12 +133,14 @@ class ForeignKeyInferencer:
 
         start_time = time.time()
         total_evaluated = 0
+        tables_analyzed = 0
+        timed_out = False
 
         # Get source table columns
         source_columns = self._get_columns(table_name, schema_name)
         if not source_columns:
             logger.warning(f"No columns found for {schema_name}.{table_name}")
-            return [], {"analysis_time_ms": 0, "total_candidates_evaluated": 0}
+            return [], {"analysis_time_ms": 0, "total_candidates_evaluated": 0, "timed_out": False, "tables_analyzed": 0}
 
         # Get all potential target tables
         all_tables = self._get_all_tables(schema_name)
@@ -130,10 +151,32 @@ class ForeignKeyInferencer:
             if src_col.is_pk:
                 continue  # PKs are typically not FKs
 
+            # T134: Check timeout before each column iteration
+            if self.timeout_seconds > 0:
+                elapsed = time.time() - start_time
+                if elapsed >= self.timeout_seconds:
+                    timed_out = True
+                    logger.warning(
+                        f"FK inference for {schema_name}.{table_name} timed out after {elapsed:.1f}s "
+                        f"({tables_analyzed} tables analyzed, {total_evaluated} candidates evaluated)"
+                    )
+                    break
+
             # Check against each potential target table
             for target_schema, target_table in all_tables:
                 if target_table == table_name and target_schema == schema_name:
                     continue  # Skip self-references for now
+
+                # T134: Periodic timeout check during inner loop
+                if self.timeout_seconds > 0 and total_evaluated % 50 == 0:
+                    elapsed = time.time() - start_time
+                    if elapsed >= self.timeout_seconds:
+                        timed_out = True
+                        logger.warning(
+                            f"FK inference for {schema_name}.{table_name} timed out after {elapsed:.1f}s "
+                            f"({tables_analyzed} tables analyzed, {total_evaluated} candidates evaluated)"
+                        )
+                        break
 
                 target_columns = self._get_columns(target_table, target_schema)
                 target_pk = self._get_primary_key_column(target_columns)
@@ -141,6 +184,7 @@ class ForeignKeyInferencer:
                 if not target_pk:
                     continue  # Can't FK to table without PK
 
+                tables_analyzed += 1
                 total_evaluated += 1
 
                 # Score this potential relationship
@@ -166,16 +210,25 @@ class ForeignKeyInferencer:
                         inference_factors=factors,
                     ))
 
+            # Break outer loop if timed out
+            if timed_out:
+                break
+
         # Sort by confidence descending and limit
         inferred.sort(key=lambda x: x.confidence_score, reverse=True)
         inferred = inferred[:max_candidates]
 
         elapsed_ms = int((time.time() - start_time) * 1000)
-        logger.debug(f"FK inference for {schema_name}.{table_name}: {len(inferred)} found in {elapsed_ms}ms")
+        if timed_out:
+            logger.info(f"FK inference for {schema_name}.{table_name}: {len(inferred)} found (PARTIAL) in {elapsed_ms}ms")
+        else:
+            logger.debug(f"FK inference for {schema_name}.{table_name}: {len(inferred)} found in {elapsed_ms}ms")
 
         return inferred, {
             "analysis_time_ms": elapsed_ms,
             "total_candidates_evaluated": total_evaluated,
+            "timed_out": timed_out,
+            "tables_analyzed": tables_analyzed,
         }
 
     def _get_columns(self, table_name: str, schema_name: str) -> list[ColumnInfo]:

@@ -305,7 +305,7 @@
 
 - [X] T103 [P] Add comprehensive error handling across all MCP tools in src/mcp_server/server.py
 - [X] T104 [P] Ensure credentials never logged (NFR-005 compliance) in src/db/connection.py
-- [ ] T105 [P] Add performance logging (track query times against NFR-001, NFR-002) across src/db/
+- [X] T105 [P] Add performance logging (track query times against NFR-001, NFR-002) across src/db/
 - [X] T106 [P] Create test fixtures (SQL scripts for test database) in tests/fixtures/
 - [X] T107 [P] Write unit tests for name similarity algorithm in tests/unit/test_relationships.py
 - [X] T108 [P] Write unit tests for type compatibility checks in tests/unit/test_relationships.py
@@ -326,7 +326,7 @@
 - [ ] T111C Document inference algorithm accuracy baseline in docs/inference_accuracy.md
   - Include: test methodology, ground truth database schema, precision/recall/F1 scores, known limitations
 - [X] T112 [P] Write integration test for caching and drift detection in tests/integration/test_caching.py
-- [ ] T113 Add connection pooling configuration tuning (pool_size, max_overflow) in src/db/connection.py
+- [X] T113 Add connection pooling configuration tuning (pool_size, max_overflow) in src/db/connection.py
 - [ ] T114 Update quickstart.md with actual implementation details (if needed)
 - [ ] T115 Create Claude for Desktop configuration example in docs/claude_config.json
 - [ ] T116 Add README.md with installation and usage instructions in project root
@@ -401,11 +401,11 @@ Test Fails → Environment Issue? → Yes → Fix/Document → PASS
 - [ ] T128 [P] Add performance metrics logging to ForeignKeyInferencer in src/inference/relationships.py
 - [ ] T129 Create performance dashboard markdown report generator in tests/performance/report.py
 - [ ] T130 Run full performance suite and generate baseline report (baseline.md) for future regression testing
-- [ ] T131 [P] Add edge case handling tasks: Implement connection timeout (EC-001) in src/db/connection.py
-- [ ] T132 [P] Add pagination support for list_tables (EC-002) in src/mcp_server/server.py
-- [ ] T133 [P] Add object_type filtering for views (EC-006) in src/db/metadata.py
-- [ ] T134 [P] Add inference timeout with partial results (EC-007) in src/inference/relationships.py
-- [ ] T135 [P] Verify NFR-003 compliance: Add documentation size check to export_documentation tool in src/cache/storage.py (warn if >1MB for 500 tables)
+- [X] T131 [P] Add edge case handling tasks: Implement connection timeout (EC-001) in src/db/connection.py
+- [X] T132 [P] Add pagination support for list_tables (EC-002) in src/mcp_server/server.py
+- [X] T133 [P] Add object_type filtering for views (EC-006) in src/db/metadata.py
+- [X] T134 [P] Add inference timeout with partial results (EC-007) in src/inference/relationships.py
+- [X] T135 [P] Verify NFR-003 compliance: Add documentation size check to export_documentation tool in src/cache/storage.py (warn if >1MB for 500 tables)
 - [X] T136 [P] Verify NFR-004 compliance: Add integration test for write operation blocking in tests/integration/test_query_execution.py
 - [X] T137 [P] Verify NFR-005 compliance: Add credential leak detection test in tests/unit/test_connection.py (scan logs for password patterns)
 - [ ] T138 Create NFR compliance validation suite in tests/compliance/ running all NFR checks together

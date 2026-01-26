@@ -3,8 +3,11 @@
 This module provides methods for querying database metadata including
 schemas, tables, columns, indexes, and foreign keys using SQLAlchemy inspector
 and SQL Server system views (DMVs).
+
+Performance logging (T105) tracks query times against NFR-001 (<30s for 1000 tables).
 """
 
+import time
 from datetime import datetime
 
 from sqlalchemy import inspect, text
@@ -14,6 +17,9 @@ from src.logging_config import get_logger
 from src.models.schema import Column, Index, Schema, Table, TableType
 
 logger = get_logger(__name__)
+
+# NFR-001: Metadata queries should complete within 30 seconds
+NFR_001_THRESHOLD_MS = 30000
 
 
 class MetadataService:
@@ -63,9 +69,20 @@ class MetadataService:
         Returns:
             List of Schema objects sorted by table count descending
         """
+        start_time = time.time()
+
         if self.is_mssql:
-            return self._list_schemas_mssql(connection_id)
-        return self._list_schemas_generic(connection_id)
+            result = self._list_schemas_mssql(connection_id)
+        else:
+            result = self._list_schemas_generic(connection_id)
+
+        # T105: Performance logging
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        logger.debug(f"list_schemas completed in {elapsed_ms}ms, returned {len(result)} schemas")
+        if elapsed_ms > NFR_001_THRESHOLD_MS:
+            logger.warning(f"list_schemas exceeded NFR-001 threshold: {elapsed_ms}ms (>{NFR_001_THRESHOLD_MS}ms)")
+
+        return result
 
     def _list_schemas_mssql(self, connection_id: str = "") -> list[Schema]:
         """SQL Server optimized schema listing using DMVs."""
@@ -159,8 +176,10 @@ class MetadataService:
         sort_by: str = "row_count",
         sort_order: str = "desc",
         limit: int = 100,
+        offset: int = 0,
+        object_type: str | None = None,
         connection_id: str = "",
-    ) -> list[Table]:
+    ) -> tuple[list[Table], dict]:
         """List tables with row counts and metadata.
 
         Uses SQL Server DMVs for efficiency when available, falls back to
@@ -173,20 +192,34 @@ class MetadataService:
             sort_by: Sort criterion ('name', 'row_count', 'last_modified')
             sort_order: Sort order ('asc', 'desc')
             limit: Maximum tables to return (1-1000)
+            offset: Number of tables to skip for pagination (T132)
+            object_type: Filter by type - 'table', 'view', or None for all (T133)
             connection_id: Connection ID for table_id generation
 
         Returns:
-            List of Table objects
+            Tuple of (List of Table objects, pagination metadata dict)
+            Pagination metadata includes: total_count, offset, limit, has_more
         """
+        start_time = time.time()
+
         if self.is_mssql:
-            return self._list_tables_mssql(
+            result, pagination = self._list_tables_mssql(
                 schema_name, name_pattern, min_row_count,
-                sort_by, sort_order, limit, connection_id
+                sort_by, sort_order, limit, offset, object_type, connection_id
             )
-        return self._list_tables_generic(
-            schema_name, name_pattern, min_row_count,
-            sort_by, sort_order, limit, connection_id
-        )
+        else:
+            result, pagination = self._list_tables_generic(
+                schema_name, name_pattern, min_row_count,
+                sort_by, sort_order, limit, offset, object_type, connection_id
+            )
+
+        # T105: Performance logging
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        logger.debug(f"list_tables completed in {elapsed_ms}ms, returned {len(result)} tables")
+        if elapsed_ms > NFR_001_THRESHOLD_MS:
+            logger.warning(f"list_tables exceeded NFR-001 threshold: {elapsed_ms}ms (>{NFR_001_THRESHOLD_MS}ms)")
+
+        return result, pagination
 
     def _list_tables_generic(
         self,
@@ -196,8 +229,10 @@ class MetadataService:
         sort_by: str = "row_count",
         sort_order: str = "desc",
         limit: int = 100,
+        offset: int = 0,
+        object_type: str | None = None,
         connection_id: str = "",
-    ) -> list[Table]:
+    ) -> tuple[list[Table], dict]:
         """Generic table listing using SQLAlchemy inspector."""
         import fnmatch
         tables = []
@@ -214,46 +249,74 @@ class MetadataService:
         for schema in schemas_to_check:
             display_schema = schema or "main"
 
-            try:
-                table_names = self.inspector.get_table_names(schema=schema)
-            except Exception:
-                continue
-
-            for table_name in table_names:
-                # Apply name pattern filter
-                if name_pattern:
-                    # Convert SQL LIKE pattern to fnmatch pattern
-                    pattern = name_pattern.replace("%", "*").replace("_", "?")
-                    if not fnmatch.fnmatch(table_name, pattern):
-                        continue
-
-                table_id = f"{display_schema}.{table_name}"
-
-                # Get row count (may be slow for large tables)
-                row_count = self._get_row_count_generic(table_name, schema)
-
-                # Apply min_row_count filter
-                if min_row_count is not None and (row_count or 0) < min_row_count:
-                    continue
-
-                # Check for primary key
+            # T133: Support object_type filtering
+            if object_type is None or object_type == "table":
                 try:
-                    pk = self.inspector.get_pk_constraint(table_name, schema=schema)
-                    has_pk = bool(pk.get("constrained_columns"))
-                except Exception:
-                    has_pk = False
+                    table_names = self.inspector.get_table_names(schema=schema)
+                    for table_name in table_names:
+                        # Apply name pattern filter
+                        if name_pattern:
+                            # Convert SQL LIKE pattern to fnmatch pattern
+                            pattern = name_pattern.replace("%", "*").replace("_", "?")
+                            if not fnmatch.fnmatch(table_name, pattern):
+                                continue
 
-                tables.append(Table(
-                    table_id=table_id,
-                    schema_id=display_schema,
-                    table_name=table_name,
-                    table_type=TableType.TABLE,
-                    row_count=row_count,
-                    row_count_updated=datetime.now(),
-                    has_primary_key=has_pk,
-                    last_modified=None,
-                    access_denied=False,
-                ))
+                        table_id = f"{display_schema}.{table_name}"
+
+                        # Get row count (may be slow for large tables)
+                        row_count = self._get_row_count_generic(table_name, schema)
+
+                        # Apply min_row_count filter
+                        if min_row_count is not None and (row_count or 0) < min_row_count:
+                            continue
+
+                        # Check for primary key
+                        try:
+                            pk = self.inspector.get_pk_constraint(table_name, schema=schema)
+                            has_pk = bool(pk.get("constrained_columns"))
+                        except Exception:
+                            has_pk = False
+
+                        tables.append(Table(
+                            table_id=table_id,
+                            schema_id=display_schema,
+                            table_name=table_name,
+                            table_type=TableType.TABLE,
+                            row_count=row_count,
+                            row_count_updated=datetime.now(),
+                            has_primary_key=has_pk,
+                            last_modified=None,
+                            access_denied=False,
+                        ))
+                except Exception:
+                    pass
+
+            # T133: Include views if requested
+            if object_type is None or object_type == "view":
+                try:
+                    view_names = self.inspector.get_view_names(schema=schema)
+                    for view_name in view_names:
+                        # Apply name pattern filter
+                        if name_pattern:
+                            pattern = name_pattern.replace("%", "*").replace("_", "?")
+                            if not fnmatch.fnmatch(view_name, pattern):
+                                continue
+
+                        table_id = f"{display_schema}.{view_name}"
+
+                        tables.append(Table(
+                            table_id=table_id,
+                            schema_id=display_schema,
+                            table_name=view_name,
+                            table_type=TableType.VIEW,
+                            row_count=None,  # Views don't have row counts
+                            row_count_updated=datetime.now(),
+                            has_primary_key=False,
+                            last_modified=None,
+                            access_denied=False,
+                        ))
+                except Exception:
+                    pass
 
         # Sort tables
         reverse = sort_order.lower() == "desc"
@@ -263,11 +326,23 @@ class MetadataService:
             tables.sort(key=lambda t: t.row_count or 0, reverse=reverse)
         # last_modified not available in generic mode
 
-        # Apply limit
-        tables = tables[:min(max(limit, 1), 1000)]
+        # T132: Pagination support
+        total_count = len(tables)
+        effective_limit = min(max(limit, 1), 1000)
+        effective_offset = max(offset, 0)
 
-        logger.debug(f"Found {len(tables)} tables (generic)")
-        return tables
+        # Apply offset and limit
+        tables = tables[effective_offset:effective_offset + effective_limit]
+
+        pagination = {
+            "total_count": total_count,
+            "offset": effective_offset,
+            "limit": effective_limit,
+            "has_more": (effective_offset + len(tables)) < total_count,
+        }
+
+        logger.debug(f"Found {len(tables)} tables (generic), total: {total_count}")
+        return tables, pagination
 
     def _get_row_count_generic(self, table_name: str, schema: str | None) -> int | None:
         """Get row count for a table using COUNT(*)."""
@@ -294,13 +369,26 @@ class MetadataService:
         sort_by: str = "row_count",
         sort_order: str = "desc",
         limit: int = 100,
+        offset: int = 0,
+        object_type: str | None = None,
         connection_id: str = "",
-    ) -> list[Table]:
+    ) -> tuple[list[Table], dict]:
         """SQL Server optimized table listing using DMVs."""
         tables = []
 
+        # T133: Object type filtering - 'U' = user table, 'V' = view
+        type_filter = []
+        if object_type is None:
+            type_filter = ["'U'", "'V'"]
+        elif object_type == "table":
+            type_filter = ["'U'"]
+        elif object_type == "view":
+            type_filter = ["'V'"]
+        else:
+            type_filter = ["'U'"]
+
         # Build dynamic SQL for filtering
-        where_clauses = ["t.type = 'U'"]  # Only user tables
+        where_clauses = [f"t.type IN ({', '.join(type_filter)})"]
         params: dict = {}
 
         if schema_name:
@@ -322,6 +410,18 @@ class MetadataService:
         sort_column = sort_column_map.get(sort_by, "ISNULL(row_counts.row_count, 0)")
         order_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
 
+        # T132: First get total count for pagination
+        count_query = text(f"""
+            SELECT COUNT(*) AS total_count
+            FROM sys.objects t
+            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE {where_sql}
+        """)
+
+        effective_limit = min(max(limit, 1), 1000)
+        effective_offset = max(offset, 0)
+
+        # T132: Use OFFSET/FETCH for pagination (SQL Server 2012+)
         query = text(f"""
             WITH row_counts AS (
                 SELECT
@@ -330,13 +430,14 @@ class MetadataService:
                 FROM sys.dm_db_partition_stats
                 GROUP BY object_id
             )
-            SELECT TOP (:limit)
+            SELECT
                 s.name AS schema_name,
                 t.name AS table_name,
+                t.type AS object_type,
                 ISNULL(row_counts.row_count, 0) AS row_count,
                 t.modify_date AS last_modified,
                 CASE WHEN pk.object_id IS NOT NULL THEN 1 ELSE 0 END AS has_primary_key
-            FROM sys.tables t
+            FROM sys.objects t
             INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
             LEFT JOIN row_counts ON t.object_id = row_counts.object_id
             LEFT JOIN (
@@ -347,31 +448,49 @@ class MetadataService:
             WHERE {where_sql}
             {"AND ISNULL(row_counts.row_count, 0) >= :min_row_count" if min_row_count else ""}
             ORDER BY {sort_column} {order_direction}
+            OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
         """)
 
-        params["limit"] = min(max(limit, 1), 1000)
+        params["limit"] = effective_limit
+        params["offset"] = effective_offset
         if min_row_count:
             params["min_row_count"] = min_row_count
 
         with self.engine.connect() as conn:
+            # Get total count
+            count_result = conn.execute(count_query, params)
+            total_count = count_result.fetchone()[0]
+
+            # Get paginated results
             result = conn.execute(query, params)
 
             for row in result:
                 table_id = f"{row.schema_name}.{row.table_name}"
+                # T133: Determine table type from object type
+                table_type = TableType.VIEW if row.object_type == "V " else TableType.TABLE
+
                 tables.append(Table(
                     table_id=table_id,
                     schema_id=row.schema_name,
                     table_name=row.table_name,
-                    table_type=TableType.TABLE,
-                    row_count=row.row_count,
+                    table_type=table_type,
+                    row_count=row.row_count if table_type == TableType.TABLE else None,
                     row_count_updated=datetime.now(),
                     has_primary_key=bool(row.has_primary_key),
                     last_modified=row.last_modified,
                     access_denied=False,
                 ))
 
-        logger.debug(f"Found {len(tables)} tables")
-        return tables
+        # T132: Build pagination metadata
+        pagination = {
+            "total_count": total_count,
+            "offset": effective_offset,
+            "limit": effective_limit,
+            "has_more": (effective_offset + len(tables)) < total_count,
+        }
+
+        logger.debug(f"Found {len(tables)} tables, total: {total_count}")
+        return tables, pagination
 
     def get_columns(self, table_name: str, schema_name: str = "dbo") -> list[Column]:
         """Get column metadata for a table.

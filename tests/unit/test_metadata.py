@@ -103,9 +103,10 @@ class TestListTables:
         """T013A: Verify list_tables returns Table objects with row counts."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables()
+        tables, pagination = service.list_tables()
 
         assert len(tables) == 3
+        assert "total_count" in pagination
         table_names = {t.table_name for t in tables}
         assert "customers" in table_names
         assert "orders" in table_names
@@ -115,7 +116,7 @@ class TestListTables:
         """T013A: Verify row counts are populated."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables()
+        tables, _ = service.list_tables()
 
         # All tables should have row counts
         for table in tables:
@@ -130,7 +131,7 @@ class TestListTables:
         """T013A: Verify schema_name filter works."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables(schema_name="main")
+        tables, _ = service.list_tables(schema_name="main")
 
         # All tables should be from main schema
         for table in tables:
@@ -140,7 +141,7 @@ class TestListTables:
         """T013A: Verify limit parameter is enforced."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables(limit=2)
+        tables, _ = service.list_tables(limit=2)
 
         assert len(tables) <= 2
 
@@ -152,7 +153,7 @@ class TestSorting:
         """T016A: Verify sort by name ascending."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables(sort_by="name", sort_order="asc")
+        tables, _ = service.list_tables(sort_by="name", sort_order="asc")
 
         names = [t.table_name for t in tables]
         assert names == sorted(names)
@@ -161,7 +162,7 @@ class TestSorting:
         """T016A: Verify sort by row_count descending (default)."""
         service = MetadataService(test_engine)
 
-        tables = service.list_tables(sort_by="row_count", sort_order="desc")
+        tables, _ = service.list_tables(sort_by="row_count", sort_order="desc")
 
         row_counts = [t.row_count for t in tables]
         assert row_counts == sorted(row_counts, reverse=True)
@@ -194,7 +195,7 @@ class TestAccessDenied:
         # When one table throws permission error, others should still be returned
         service = MetadataService(test_engine)
 
-        tables = service.list_tables()
+        tables, _ = service.list_tables()
 
         # Should still get all accessible tables
         assert len(tables) == 3
@@ -237,7 +238,7 @@ class TestLimitEnforcement:
         service = MetadataService(test_engine)
 
         # Default limit should be 100
-        tables = service.list_tables()
+        tables, _ = service.list_tables()
 
         # Our sample has only 3 tables, so all should be returned
         assert len(tables) <= 100
@@ -247,7 +248,7 @@ class TestLimitEnforcement:
         service = MetadataService(test_engine)
 
         # Request more than max
-        tables = service.list_tables(limit=2000)
+        tables, _ = service.list_tables(limit=2000)
 
         # Should be capped to 1000 (or less if fewer tables exist)
         assert len(tables) <= 1000
@@ -257,6 +258,6 @@ class TestLimitEnforcement:
         service = MetadataService(test_engine)
 
         # Limit 0 or negative should be handled
-        tables = service.list_tables(limit=0)
+        tables, _ = service.list_tables(limit=0)
         # Implementation clamps to minimum 1
         assert len(tables) >= 0

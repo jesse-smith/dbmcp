@@ -182,12 +182,16 @@ async def list_tables(
     sort_by: str = "row_count",
     sort_order: str = "desc",
     limit: int = 100,
+    offset: int = 0,
+    object_type: str | None = None,
     output_mode: str = "summary",
 ) -> str:
     """List tables in specified schema(s) with row counts and metadata.
 
     Efficiently retrieves table metadata using SQL Server DMVs.
     Supports filtering by schema, name pattern, and minimum row count.
+    Supports pagination via offset parameter (T132).
+    Supports filtering by object type to include/exclude views (T133).
 
     Args:
         connection_id: Connection ID from connect_database
@@ -197,10 +201,12 @@ async def list_tables(
         sort_by: Sort criterion - 'name', 'row_count', or 'last_modified' (default: 'row_count')
         sort_order: Sort order - 'asc' or 'desc' (default: 'desc')
         limit: Maximum tables to return, 1-1000 (default: 100)
+        offset: Number of results to skip for pagination (default: 0)
+        object_type: Filter by type - 'table', 'view', or None for all (default: None)
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
 
     Returns:
-        JSON string with table list
+        JSON string with table list and pagination metadata
     """
     try:
         # Validate limit
@@ -208,6 +214,15 @@ async def list_tables(
             return json.dumps({"error": "limit must be at least 1"})
         if limit > 1000:
             return json.dumps({"error": "limit cannot exceed 1000"})
+
+        # Validate offset (T132)
+        if offset < 0:
+            return json.dumps({"error": "offset cannot be negative"})
+
+        # Validate object_type (T133)
+        valid_object_types = [None, "table", "view"]
+        if object_type not in valid_object_types:
+            return json.dumps({"error": f"object_type must be one of: {valid_object_types}"})
 
         # Validate sort_by
         valid_sort_by = ["name", "row_count", "last_modified"]
@@ -219,33 +234,40 @@ async def list_tables(
         metadata_svc = MetadataService(engine)
 
         all_tables = []
+        total_count = 0
 
         # If schema_filter provided, query each schema
         if schema_filter:
             for schema_name in schema_filter:
-                tables = metadata_svc.list_tables(
+                tables, pagination = metadata_svc.list_tables(
                     schema_name=schema_name,
                     name_pattern=name_pattern,
                     min_row_count=min_row_count,
                     sort_by=sort_by,
                     sort_order=sort_order,
                     limit=limit,
+                    offset=offset,
+                    object_type=object_type,
                     connection_id=connection_id,
                 )
                 all_tables.extend(tables)
+                total_count += pagination.get("total_count", 0)
         else:
             # Query all schemas
-            all_tables = metadata_svc.list_tables(
+            all_tables, pagination = metadata_svc.list_tables(
                 schema_name=None,
                 name_pattern=name_pattern,
                 min_row_count=min_row_count,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 limit=limit,
+                offset=offset,
+                object_type=object_type,
                 connection_id=connection_id,
             )
+            total_count = pagination.get("total_count", len(all_tables))
 
-        # Apply limit after combining schemas
+        # Apply limit after combining schemas (for schema_filter case)
         all_tables = all_tables[:limit]
 
         # Build response based on output_mode
@@ -254,6 +276,7 @@ async def list_tables(
                 {
                     "schema_name": t.schema_id,
                     "table_name": t.table_name,
+                    "table_type": t.table_type.value,
                     "row_count": t.row_count,
                     "has_primary_key": t.has_primary_key,
                     "last_modified": t.last_modified.isoformat() if t.last_modified else None,
@@ -276,6 +299,7 @@ async def list_tables(
                 {
                     "schema_name": t.schema_id,
                     "table_name": t.table_name,
+                    "table_type": t.table_type.value,
                     "row_count": t.row_count,
                     "has_primary_key": t.has_primary_key,
                     "last_modified": t.last_modified.isoformat() if t.last_modified else None,
@@ -287,7 +311,10 @@ async def list_tables(
         return json.dumps({
             "tables": table_list,
             "total_tables": len(all_tables),
-            "filtered_count": len(all_tables),
+            "total_count": total_count,
+            "offset": offset,
+            "limit": limit,
+            "has_more": (offset + len(all_tables)) < total_count,
         })
 
     except ValueError as e:
@@ -432,6 +459,8 @@ async def infer_relationships(
             ],
             "analysis_time_ms": metadata["analysis_time_ms"],
             "total_candidates_evaluated": metadata["total_candidates_evaluated"],
+            "timed_out": metadata.get("timed_out", False),
+            "tables_analyzed": metadata.get("tables_analyzed", 0),
         })
 
     except ValueError as e:
@@ -687,7 +716,7 @@ async def export_documentation(
         indexes_dict: dict[str, list] = {}
 
         for schema in schemas:
-            schema_tables = metadata_svc.list_tables(
+            schema_tables, _ = metadata_svc.list_tables(
                 schema_name=schema.schema_name,
                 connection_id=connection_id,
             )
@@ -762,10 +791,11 @@ async def export_documentation(
         metadata = storage.get_cache_metadata(connection_id)
         files_created = metadata.get("files_created", []) if metadata else []
         total_size = metadata.get("total_size_bytes", 0) if metadata else 0
+        nfr_003_warning = metadata.get("nfr_003_warning") if metadata else None
 
         logger.info(f"Exported documentation for {database_name}: {len(files_created)} files, {total_size} bytes")
 
-        return json.dumps({
+        response = {
             "status": "success",
             "cache_dir": cache.cache_dir,
             "files_created": files_created,
@@ -777,7 +807,13 @@ async def export_documentation(
                 "declared_fks": len(declared_fks),
                 "inferred_fks": len(inferred_fks),
             },
-        })
+        }
+
+        # T135: Include NFR-003 warning if size limit exceeded
+        if nfr_003_warning:
+            response["warning"] = nfr_003_warning
+
+        return json.dumps(response)
 
     except ValueError as e:
         return json.dumps({"error": str(e)})
@@ -878,10 +914,11 @@ async def check_drift(
         schemas = metadata_svc.list_schemas(connection_id=connection_id)
         tables_dict: dict[str, list] = {}
         for schema in schemas:
-            tables_dict[schema.schema_name] = metadata_svc.list_tables(
+            tables, _ = metadata_svc.list_tables(
                 schema_name=schema.schema_name,
                 connection_id=connection_id,
             )
+            tables_dict[schema.schema_name] = tables
 
         # Check for drift
         result = detector.check_drift(

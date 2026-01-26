@@ -11,10 +11,13 @@ Cache structure:
     │   ├── Customers.md     # Full table metadata
     │   └── Orders.md
     └── relationships.md      # All inferred and declared relationships
+
+T135: Includes NFR-003 compliance check (warn if >1MB for 500 tables).
 """
 
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +31,12 @@ from src.models.schema import (
     Schema,
     Table,
 )
+
+logger = logging.getLogger(__name__)
+
+# NFR-003: Documentation should be <1MB for 500 tables
+NFR_003_SIZE_LIMIT_BYTES = 1_000_000  # 1MB
+NFR_003_TABLE_THRESHOLD = 500
 
 
 class DocumentationStorage:
@@ -197,6 +206,24 @@ class DocumentationStorage:
         files_created.append(str(relationships_path.relative_to(self.base_dir.parent)))
         total_size += relationships_path.stat().st_size
 
+        # T135: NFR-003 compliance check
+        total_table_count = sum(len(t) for t in tables.values())
+        nfr_003_warning = None
+        if total_table_count >= NFR_003_TABLE_THRESHOLD and total_size > NFR_003_SIZE_LIMIT_BYTES:
+            nfr_003_warning = (
+                f"NFR-003 WARNING: Documentation size ({total_size:,} bytes) exceeds "
+                f"{NFR_003_SIZE_LIMIT_BYTES:,} byte limit for {total_table_count} tables. "
+                f"Consider using summary mode or excluding sample data."
+            )
+            logger.warning(nfr_003_warning)
+        elif total_size > NFR_003_SIZE_LIMIT_BYTES:
+            # Still warn if size is large even for fewer tables
+            nfr_003_warning = (
+                f"Documentation size ({total_size:,} bytes) exceeds "
+                f"{NFR_003_SIZE_LIMIT_BYTES:,} byte limit for {total_table_count} tables."
+            )
+            logger.info(nfr_003_warning)
+
         # Write metadata file for cache parsing
         metadata = {
             "connection_id": connection_id,
@@ -207,6 +234,8 @@ class DocumentationStorage:
             "total_size_bytes": total_size,
             "include_sample_data": include_sample_data,
             "include_inferred_relationships": include_inferred_relationships,
+            "nfr_003_warning": nfr_003_warning,
+            "table_count": total_table_count,
         }
         metadata_path = cache_dir / ".cache_metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2))
