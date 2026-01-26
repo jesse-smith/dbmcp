@@ -913,6 +913,94 @@ async def check_drift(
 
 
 # =============================================================================
+# Query Execution Tools (User Story 7)
+# =============================================================================
+
+
+@mcp.tool()
+async def execute_query(
+    connection_id: str,
+    query_text: str,
+    row_limit: int = 1000,
+) -> str:
+    """Execute a SQL SELECT query and return results.
+
+    Executes ad-hoc SELECT queries with automatic row limiting for safety.
+    Write operations (INSERT, UPDATE, DELETE) are blocked by default.
+    Results are returned as a structured JSON with columns and rows.
+
+    Large text values (>1000 chars) and binary data are automatically truncated
+    to keep responses token-efficient.
+
+    Args:
+        connection_id: Connection ID from connect_database
+        query_text: SQL query to execute (SELECT only by default)
+        row_limit: Maximum rows to return, 1-10000 (default: 1000)
+
+    Returns:
+        JSON string with query results including:
+        - status: 'success', 'blocked', or 'error'
+        - query_id: Unique identifier for this execution
+        - query_type: Detected query type (select, insert, update, delete, other)
+        - columns: List of column names (for SELECT)
+        - rows: Array of row objects (for SELECT)
+        - rows_returned: Number of rows in the response
+        - rows_available: Total rows available (if limit was applied)
+        - limited: Whether results were truncated due to row_limit
+        - execution_time_ms: Query execution time in milliseconds
+        - error_message: Error details if status is 'error' or 'blocked'
+    """
+    try:
+        # Validate row_limit
+        if row_limit < 1:
+            return json.dumps({
+                "status": "error",
+                "error_message": "row_limit must be at least 1",
+            })
+        if row_limit > 10000:
+            return json.dumps({
+                "status": "error",
+                "error_message": "row_limit cannot exceed 10000",
+            })
+
+        # Validate query_text
+        if not query_text or not query_text.strip():
+            return json.dumps({
+                "status": "error",
+                "error_message": "query_text is required and cannot be empty",
+            })
+
+        conn_manager = get_connection_manager()
+        engine = conn_manager.get_engine(connection_id)
+        query_svc = QueryService(engine)
+
+        # Execute query
+        query = query_svc.execute_query(
+            connection_id=connection_id,
+            query_text=query_text,
+            row_limit=row_limit,
+            allow_write=False,  # Always block write operations
+        )
+
+        # Get formatted results
+        result = query_svc.get_query_results(query)
+
+        return json.dumps(result)
+
+    except ValueError as e:
+        return json.dumps({
+            "status": "error",
+            "error_message": str(e),
+        })
+    except Exception as e:
+        logger.exception("Error in execute_query")
+        return json.dumps({
+            "status": "error",
+            "error_message": f"Query execution failed: {type(e).__name__}: {str(e)}",
+        })
+
+
+# =============================================================================
 # Server Entry Point
 # =============================================================================
 

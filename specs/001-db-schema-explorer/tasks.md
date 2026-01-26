@@ -277,25 +277,25 @@
 
 ### Implementation for User Story 7
 
-- [ ] T091 [P] [US7] Create Query entity in src/models/schema.py
-- [ ] T092 [P] [US7] Implement query type parser (detect SELECT, INSERT, UPDATE, DELETE) in src/db/query.py
-- [ ] T093 [US7] Implement read-only enforcement (block non-SELECT by default) in src/db/query.py
-- [ ] T094 [US7] Implement row limit injection (TOP clause) in src/db/query.py
-- [ ] T095 [US7] Execute query and capture results with column headers in src/db/query.py
-- [ ] T096 [US7] Track execution_time_ms and rows_affected metrics in src/db/query.py
-- [ ] T097 [US7] Return structured result set (columns array + rows array) in src/db/query.py
-- [ ] T098 [US7] Implement execute_query MCP tool in src/mcp_server/server.py
-- [ ] T099 [US7] Add row_limit parameter (default 1000, max 10000) in src/mcp_server/server.py
-- [ ] T100 [US7] Return blocked status with error message for write operations in src/mcp_server/server.py
-- [ ] T101 [US7] Indicate rows_available vs rows_returned when limit applied in src/mcp_server/server.py
-- [ ] T102 [US7] Add error handling and actionable error messages in src/mcp_server/server.py
+- [X] T091 [P] [US7] Create Query entity in src/models/schema.py
+- [X] T092 [P] [US7] Implement query type parser (detect SELECT, INSERT, UPDATE, DELETE) in src/db/query.py
+- [X] T093 [US7] Implement read-only enforcement (block non-SELECT by default) in src/db/query.py
+- [X] T094 [US7] Implement row limit injection (TOP clause) in src/db/query.py
+- [X] T095 [US7] Execute query and capture results with column headers in src/db/query.py
+- [X] T096 [US7] Track execution_time_ms and rows_affected metrics in src/db/query.py
+- [X] T097 [US7] Return structured result set (columns array + rows array) in src/db/query.py
+- [X] T098 [US7] Implement execute_query MCP tool in src/mcp_server/server.py
+- [X] T099 [US7] Add row_limit parameter (default 1000, max 10000) in src/mcp_server/server.py
+- [X] T100 [US7] Return blocked status with error message for write operations in src/mcp_server/server.py
+- [X] T101 [US7] Indicate rows_available vs rows_returned when limit applied in src/mcp_server/server.py
+- [X] T102 [US7] Add error handling and actionable error messages in src/mcp_server/server.py
 
 **Checkpoint**: All user stories complete - full MCP server functional
 
 ### Companion: Example Notebook for US7
 
-- [ ] T102A [P] [US7-NOTEBOOK] Create 06_query_execution.ipynb demonstrating safe query execution
-- [ ] T102B [P] [US7-NOTEBOOK] Add examples showing row limits, error handling, and result formatting
+- [X] T102A [P] [US7-NOTEBOOK] Create 06_query_execution.ipynb demonstrating safe query execution
+- [X] T102B [P] [US7-NOTEBOOK] Add examples showing row limits, error handling, and result formatting
 
 ---
 
