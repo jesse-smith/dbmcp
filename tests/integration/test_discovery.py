@@ -5,10 +5,11 @@ These tests require mocked MCP server responses.
 """
 
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from tests.utils import create_mock_engine, SAMPLE_SCHEMA_ROWS, SAMPLE_TABLE_ROWS
+import pytest
+
+from tests.utils import SAMPLE_SCHEMA_ROWS, SAMPLE_TABLE_ROWS, create_mock_engine
 
 
 class TestListSchemasMCPTool:
@@ -17,7 +18,7 @@ class TestListSchemasMCPTool:
     @pytest.mark.asyncio
     async def test_list_schemas_returns_json(self):
         """T014A: Verify list_schemas returns valid JSON."""
-        from src.mcp_server.server import list_schemas, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_schemas
 
         # Mock the connection manager
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
@@ -36,7 +37,7 @@ class TestListSchemasMCPTool:
     @pytest.mark.asyncio
     async def test_list_schemas_schema_grouping(self):
         """T014A: Verify schema grouping response format."""
-        from src.mcp_server.server import list_schemas, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_schemas
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             mock_engine = create_mock_engine({
@@ -70,7 +71,7 @@ class TestListTablesMCPTool:
     @pytest.mark.asyncio
     async def test_list_tables_schema_filter(self):
         """T015A: Verify schema_filter parameter works."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             dbo_tables = [t for t in SAMPLE_TABLE_ROWS if t["schema_name"] == "dbo"]
@@ -89,7 +90,7 @@ class TestListTablesMCPTool:
     @pytest.mark.asyncio
     async def test_list_tables_name_pattern(self):
         """T015A: Verify name_pattern filter works."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             # Filter to Customer% pattern
@@ -108,7 +109,7 @@ class TestListTablesMCPTool:
     @pytest.mark.asyncio
     async def test_list_tables_min_row_count(self):
         """T015A: Verify min_row_count filter works."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             # Filter to tables with >= 1000 rows
@@ -131,7 +132,7 @@ class TestOutputMode:
     @pytest.mark.asyncio
     async def test_summary_mode_token_efficiency(self):
         """T017A: Verify summary mode reduces token size."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             mock_engine = create_mock_engine({
@@ -150,7 +151,7 @@ class TestOutputMode:
     @pytest.mark.asyncio
     async def test_detailed_mode_includes_columns(self):
         """T017A: Verify detailed mode includes column information."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             mock_engine = create_mock_engine({
@@ -182,7 +183,7 @@ class TestLimitEnforcement:
     @pytest.mark.asyncio
     async def test_limit_parameter_enforced(self):
         """T018A: Verify limit parameter is respected."""
-        from src.mcp_server.server import list_tables, get_connection_manager
+        from src.mcp_server.server import get_connection_manager, list_tables
 
         with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
             mock_engine = create_mock_engine({

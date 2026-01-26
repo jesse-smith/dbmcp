@@ -6,8 +6,9 @@ This module provides fixtures for:
 - Sample data for unit tests
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from src.db.connection import ConnectionManager
 from src.models.schema import (
@@ -19,7 +20,6 @@ from src.models.schema import (
     Table,
     TableType,
 )
-
 
 # =============================================================================
 # Mock Connection Fixtures
