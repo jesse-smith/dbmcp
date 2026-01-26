@@ -204,15 +204,15 @@ class ColumnAnalyzer:
         # Calculate null percentage
         null_percentage = (null_count / total_rows * 100) if total_rows > 0 else 0.0
 
-        # Detect enum
-        is_enum = self._is_enum(distinct_count, total_rows)
-
         # Get data type if not provided
         if not data_type:
             data_type = self._get_column_type(column_name, table_name, schema_name)
 
         # Categorize the column type
         category = self._categorize_type(data_type)
+
+        # Detect enum (pass category to exclude datetime/binary)
+        is_enum = self._is_enum(distinct_count, total_rows, category)
 
         # Get type-specific statistics
         numeric_stats = None
@@ -456,22 +456,39 @@ class ColumnAnalyzer:
         else:
             return ColumnCategory.UNKNOWN
 
-    def _is_enum(self, distinct_count: int, total_rows: int) -> bool:
+    def _is_enum(
+        self,
+        distinct_count: int,
+        total_rows: int,
+        category: ColumnCategory | None = None,
+    ) -> bool:
         """Detect if column appears to be an enumeration.
 
         An enum is detected when:
+        - Column is a STRING type (not datetime, numeric ID, etc.)
         - Distinct count is less than ENUM_MAX_DISTINCT (50)
         - Distinct count is less than ENUM_MAX_PERCENTAGE (10%) of total rows
+          OR total_rows is small (<100) and distinct count is low (<20)
 
         Args:
             distinct_count: Number of distinct values
             total_rows: Total number of rows
+            category: Column category (to exclude datetime/binary)
 
         Returns:
             True if column appears to be an enum
         """
         if total_rows == 0:
             return False
+
+        # Datetime and binary columns should never be considered enums
+        if category in (ColumnCategory.DATETIME, ColumnCategory.BINARY):
+            return False
+
+        # For small tables, use absolute threshold instead of percentage
+        # This handles cases like 4 status values in 15 rows (26.7%)
+        if total_rows < 100:
+            return distinct_count <= min(20, self.ENUM_MAX_DISTINCT)
 
         percentage = (distinct_count / total_rows) * 100
 
