@@ -1,0 +1,24 @@
+# Feature Status Registry
+
+Central registry of all features and their current status.
+
+| Feature ID | Name | Branch | Status | Merged Date | Notes |
+|------------|------|--------|--------|-------------|-------|
+| 001 | DB Schema Explorer | `001-db-schema-explorer` | In Progress | - | Phases 1-6 complete, 7-10 remaining |
+| 002 | Example Notebooks | `002-example-notebooks` | Archived | 2026-01-20 | Workflow changed: notebooks now tracked in 001 |
+| 003 | Speckit Workflow Integration | `003-speckit-workflow-integration` | In Progress | - | Completion workflow automation |
+
+## Status Definitions
+
+- **Draft**: Initial specification, not yet approved
+- **In Progress**: Active development on feature branch
+- **Complete**: All tasks finished, merged to main
+- **Archived**: Feature closed without full implementation (see Notes)
+
+## Usage
+
+When completing a feature branch merge:
+
+1. Run `/speckit.complete` to update this registry
+2. Add status headers to spec.md, plan.md, tasks.md
+3. Commit the status updates

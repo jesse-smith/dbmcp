@@ -216,6 +216,11 @@
 
 **Checkpoint**: User Story 5 complete and testable independently
 
+### Companion: Example Notebook for US5
+
+- [ ] T066A [P] [US5-NOTEBOOK] Create 04_column_analysis.ipynb demonstrating column purpose inference
+- [ ] T066B [P] [US5-NOTEBOOK] Add examples showing inferred_purpose interpretation and confidence scores
+
 ---
 
 ## Phase 8: User Story 6 - Documentation Generation (Priority: P2)
@@ -257,6 +262,11 @@
 
 **Checkpoint**: User Story 6 complete - documentation caching and drift detection working
 
+### Companion: Example Notebook for US6
+
+- [ ] T090A [P] [US6-NOTEBOOK] Create 05_documentation_cache.ipynb demonstrating export/import and drift detection
+- [ ] T090B [P] [US6-NOTEBOOK] Add examples showing cache workflow and drift interpretation
+
 ---
 
 ## Phase 9: User Story 7 - Query Execution (Priority: P3)
@@ -281,6 +291,11 @@
 - [ ] T102 [US7] Add error handling and actionable error messages in src/mcp_server/server.py
 
 **Checkpoint**: All user stories complete - full MCP server functional
+
+### Companion: Example Notebook for US7
+
+- [ ] T102A [P] [US7-NOTEBOOK] Create 06_query_execution.ipynb demonstrating safe query execution
+- [ ] T102B [P] [US7-NOTEBOOK] Add examples showing row limits, error handling, and result formatting
 
 ---
 

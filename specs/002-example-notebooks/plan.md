@@ -1,5 +1,9 @@
 # Implementation Plan: Example Notebooks
 
+> **STATUS: ARCHIVED** | Date: 2026-01-26 | Branch: `002-example-notebooks`
+>
+> **Reason**: Workflow changed. See spec.md for details.
+
 **Branch**: `002-example-notebooks` | **Date**: 2026-01-20 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/002-example-notebooks/spec.md`
 

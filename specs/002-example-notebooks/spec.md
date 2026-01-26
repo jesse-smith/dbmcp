@@ -1,5 +1,9 @@
 # Feature Specification: Example Notebooks
 
+> **STATUS: ARCHIVED** | Date: 2026-01-26 | Branch: `002-example-notebooks`
+>
+> **Reason**: Workflow changed. Companion artifacts (notebooks) should be tracked in the same feature's tasks.md, not as a separate parallel feature. Notebook tasks will be added to `001-db-schema-explorer` for remaining phases.
+
 **Feature Branch**: `002-example-notebooks`
 **Created**: 2026-01-20
 **Status**: Draft
