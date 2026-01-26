@@ -6,7 +6,6 @@ and SQL Server system views (DMVs).
 """
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -20,13 +19,14 @@ logger = get_logger(__name__)
 class MetadataService:
     """Service for querying database metadata.
 
-    Uses SQLAlchemy inspector and SQL Server DMVs for efficient
-    metadata retrieval. Designed for performance with large databases
-    (1000+ tables per NFR-001).
+    Uses SQLAlchemy inspector for cross-database compatibility, with
+    optimized SQL Server DMV queries when available for performance
+    with large databases (1000+ tables per NFR-001).
 
     Attributes:
         engine: SQLAlchemy engine for database connection
         inspector: SQLAlchemy inspector for metadata introspection
+        dialect_name: Database dialect (e.g., 'mssql', 'sqlite', 'postgresql')
     """
 
     def __init__(self, engine: Engine):
@@ -37,6 +37,7 @@ class MetadataService:
         """
         self.engine = engine
         self._inspector = None
+        self.dialect_name = engine.dialect.name
 
     @property
     def inspector(self):
@@ -45,10 +46,16 @@ class MetadataService:
             self._inspector = inspect(self.engine)
         return self._inspector
 
+    @property
+    def is_mssql(self) -> bool:
+        """Check if connected to SQL Server."""
+        return self.dialect_name == "mssql"
+
     def list_schemas(self, connection_id: str = "") -> list[Schema]:
         """List all schemas with table and view counts.
 
-        Uses sys.schemas DMV for efficient schema enumeration.
+        Uses SQL Server DMVs for efficiency when available, falls back to
+        SQLAlchemy inspector for other databases.
 
         Args:
             connection_id: Optional connection ID for schema_id generation
@@ -56,6 +63,12 @@ class MetadataService:
         Returns:
             List of Schema objects sorted by table count descending
         """
+        if self.is_mssql:
+            return self._list_schemas_mssql(connection_id)
+        return self._list_schemas_generic(connection_id)
+
+    def _list_schemas_mssql(self, connection_id: str = "") -> list[Schema]:
+        """SQL Server optimized schema listing using DMVs."""
         schemas = []
 
         with self.engine.connect() as conn:
@@ -86,14 +99,63 @@ class MetadataService:
                     last_scanned=datetime.now(),
                 ))
 
-        logger.debug(f"Found {len(schemas)} schemas")
+        logger.debug(f"Found {len(schemas)} schemas (SQL Server)")
+        return schemas
+
+    def _list_schemas_generic(self, connection_id: str = "") -> list[Schema]:
+        """Generic schema listing using SQLAlchemy inspector."""
+        schemas = []
+        schema_data: dict[str, dict] = {}
+
+        # Get schema names from inspector
+        try:
+            schema_names = self.inspector.get_schema_names()
+        except Exception:
+            # Some databases don't support schema introspection
+            schema_names = [None]  # Use default schema
+
+        for schema_name in schema_names:
+            # Skip system schemas
+            if schema_name in ("information_schema", "pg_catalog", "pg_toast"):
+                continue
+
+            # For SQLite, schema_name is None or 'main'
+            display_name = schema_name or "main"
+
+            try:
+                tables = self.inspector.get_table_names(schema=schema_name)
+                views = self.inspector.get_view_names(schema=schema_name)
+            except Exception:
+                tables = []
+                views = []
+
+            if tables or views or display_name in ("main", "dbo", "public"):
+                schema_data[display_name] = {
+                    "table_count": len(tables),
+                    "view_count": len(views),
+                }
+
+        # Sort by table count descending
+        for schema_name in sorted(schema_data.keys(), key=lambda k: -schema_data[k]["table_count"]):
+            data = schema_data[schema_name]
+            schema_id = f"{connection_id}_{schema_name}" if connection_id else schema_name
+            schemas.append(Schema(
+                schema_id=schema_id,
+                connection_id=connection_id,
+                schema_name=schema_name,
+                table_count=data["table_count"],
+                view_count=data["view_count"],
+                last_scanned=datetime.now(),
+            ))
+
+        logger.debug(f"Found {len(schemas)} schemas (generic)")
         return schemas
 
     def list_tables(
         self,
-        schema_name: Optional[str] = None,
-        name_pattern: Optional[str] = None,
-        min_row_count: Optional[int] = None,
+        schema_name: str | None = None,
+        name_pattern: str | None = None,
+        min_row_count: int | None = None,
         sort_by: str = "row_count",
         sort_order: str = "desc",
         limit: int = 100,
@@ -101,8 +163,8 @@ class MetadataService:
     ) -> list[Table]:
         """List tables with row counts and metadata.
 
-        Uses sys.tables and sys.dm_db_partition_stats for efficient
-        metadata and row count retrieval without full table scans.
+        Uses SQL Server DMVs for efficiency when available, falls back to
+        SQLAlchemy inspector for other databases.
 
         Args:
             schema_name: Filter by schema (None = all schemas)
@@ -116,11 +178,130 @@ class MetadataService:
         Returns:
             List of Table objects
         """
+        if self.is_mssql:
+            return self._list_tables_mssql(
+                schema_name, name_pattern, min_row_count,
+                sort_by, sort_order, limit, connection_id
+            )
+        return self._list_tables_generic(
+            schema_name, name_pattern, min_row_count,
+            sort_by, sort_order, limit, connection_id
+        )
+
+    def _list_tables_generic(
+        self,
+        schema_name: str | None = None,
+        name_pattern: str | None = None,
+        min_row_count: int | None = None,
+        sort_by: str = "row_count",
+        sort_order: str = "desc",
+        limit: int = 100,
+        connection_id: str = "",
+    ) -> list[Table]:
+        """Generic table listing using SQLAlchemy inspector."""
+        import fnmatch
+        tables = []
+
+        # Determine schema to query
+        if schema_name:
+            schemas_to_check = [schema_name if schema_name != "main" else None]
+        else:
+            try:
+                schemas_to_check = self.inspector.get_schema_names()
+            except Exception:
+                schemas_to_check = [None]
+
+        for schema in schemas_to_check:
+            display_schema = schema or "main"
+
+            try:
+                table_names = self.inspector.get_table_names(schema=schema)
+            except Exception:
+                continue
+
+            for table_name in table_names:
+                # Apply name pattern filter
+                if name_pattern:
+                    # Convert SQL LIKE pattern to fnmatch pattern
+                    pattern = name_pattern.replace("%", "*").replace("_", "?")
+                    if not fnmatch.fnmatch(table_name, pattern):
+                        continue
+
+                table_id = f"{display_schema}.{table_name}"
+
+                # Get row count (may be slow for large tables)
+                row_count = self._get_row_count_generic(table_name, schema)
+
+                # Apply min_row_count filter
+                if min_row_count is not None and (row_count or 0) < min_row_count:
+                    continue
+
+                # Check for primary key
+                try:
+                    pk = self.inspector.get_pk_constraint(table_name, schema=schema)
+                    has_pk = bool(pk.get("constrained_columns"))
+                except Exception:
+                    has_pk = False
+
+                tables.append(Table(
+                    table_id=table_id,
+                    schema_id=display_schema,
+                    table_name=table_name,
+                    table_type=TableType.TABLE,
+                    row_count=row_count,
+                    row_count_updated=datetime.now(),
+                    has_primary_key=has_pk,
+                    last_modified=None,
+                    access_denied=False,
+                ))
+
+        # Sort tables
+        reverse = sort_order.lower() == "desc"
+        if sort_by == "name":
+            tables.sort(key=lambda t: t.table_name, reverse=reverse)
+        elif sort_by == "row_count":
+            tables.sort(key=lambda t: t.row_count or 0, reverse=reverse)
+        # last_modified not available in generic mode
+
+        # Apply limit
+        tables = tables[:min(max(limit, 1), 1000)]
+
+        logger.debug(f"Found {len(tables)} tables (generic)")
+        return tables
+
+    def _get_row_count_generic(self, table_name: str, schema: str | None) -> int | None:
+        """Get row count for a table using COUNT(*)."""
+        try:
+            # Build qualified table name
+            if schema and schema != "main":
+                qualified_name = f'"{schema}"."{table_name}"'
+            else:
+                qualified_name = f'"{table_name}"'
+
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"SELECT COUNT(*) FROM {qualified_name}"))
+                row = result.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.debug(f"Could not get row count for {table_name}: {e}")
+            return None
+
+    def _list_tables_mssql(
+        self,
+        schema_name: str | None = None,
+        name_pattern: str | None = None,
+        min_row_count: int | None = None,
+        sort_by: str = "row_count",
+        sort_order: str = "desc",
+        limit: int = 100,
+        connection_id: str = "",
+    ) -> list[Table]:
+        """SQL Server optimized table listing using DMVs."""
         tables = []
 
         # Build dynamic SQL for filtering
         where_clauses = ["t.type = 'U'"]  # Only user tables
-        params = {}
+        params: dict = {}
 
         if schema_name:
             where_clauses.append("s.name = :schema_name")
