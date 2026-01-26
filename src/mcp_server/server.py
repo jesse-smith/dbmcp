@@ -636,6 +636,283 @@ async def analyze_column(
 
 
 # =============================================================================
+# Documentation Cache Tools (User Story 6)
+# =============================================================================
+
+
+@mcp.tool()
+async def export_documentation(
+    connection_id: str,
+    output_dir: str | None = None,
+    include_sample_data: bool = False,
+    include_inferred_relationships: bool = True,
+) -> str:
+    """Export database documentation to local markdown files.
+
+    Generates a complete documentation cache including database overview,
+    schema descriptions, table details, and relationship information.
+    This cache can be loaded in future sessions to reduce discovery queries.
+
+    Args:
+        connection_id: Connection ID from connect_database
+        output_dir: Custom output directory (default: docs/[connection_id])
+        include_sample_data: Include sample data in table docs (default: False)
+        include_inferred_relationships: Include inferred FKs (default: True)
+
+    Returns:
+        JSON string with export results including files_created and total_size_bytes
+    """
+    try:
+        conn_manager = get_connection_manager()
+        engine = conn_manager.get_engine(connection_id)
+        metadata_svc = MetadataService(engine)
+
+        # Import here to avoid circular imports
+        from src.cache.storage import DocumentationStorage
+        from src.inference.relationships import ForeignKeyInferencer
+        from src.models.relationship import DeclaredFK
+
+        storage = DocumentationStorage()
+
+        # Get database name from connection
+        connection = conn_manager.get_connection(connection_id)
+        database_name = connection.database
+
+        # Gather all metadata
+        schemas = metadata_svc.list_schemas(connection_id=connection_id)
+
+        # Build tables dict by schema
+        tables_dict: dict[str, list] = {}
+        columns_dict: dict[str, list] = {}
+        indexes_dict: dict[str, list] = {}
+
+        for schema in schemas:
+            schema_tables = metadata_svc.list_tables(
+                schema_name=schema.schema_name,
+                connection_id=connection_id,
+            )
+            tables_dict[schema.schema_name] = schema_tables
+
+            for table in schema_tables:
+                table_id = table.table_id
+                columns_dict[table_id] = metadata_svc.get_columns(
+                    table.table_name, schema.schema_name
+                )
+                indexes_dict[table_id] = metadata_svc.get_indexes(
+                    table.table_name, schema.schema_name
+                )
+
+        # Get declared foreign keys
+        declared_fks: list[DeclaredFK] = []
+        for schema in schemas:
+            for table in tables_dict.get(schema.schema_name, []):
+                fks = metadata_svc.get_foreign_keys(table.table_name, schema.schema_name)
+                declared_fks.extend(fks)
+
+        # Get inferred relationships if requested
+        inferred_fks = []
+        if include_inferred_relationships:
+            inferencer = ForeignKeyInferencer(engine, threshold=0.50)
+            for schema in schemas:
+                for table in tables_dict.get(schema.schema_name, []):
+                    try:
+                        inferred, _ = inferencer.infer_relationships(
+                            table_name=table.table_name,
+                            schema_name=schema.schema_name,
+                            max_candidates=10,
+                        )
+                        inferred_fks.extend(inferred)
+                    except Exception as e:
+                        logger.warning(f"Failed to infer relationships for {schema.schema_name}.{table.table_name}: {e}")
+
+        # Get sample data if requested
+        sample_data_dict: dict[str, list] = {}
+        if include_sample_data:
+            from src.db.query import QueryService
+            query_svc = QueryService(engine)
+            for schema in schemas:
+                for table in tables_dict.get(schema.schema_name, []):
+                    try:
+                        sample = query_svc.get_sample_data(
+                            table_name=table.table_name,
+                            schema_name=schema.schema_name,
+                            sample_size=3,
+                        )
+                        sample_data_dict[table.table_id] = sample.rows
+                    except Exception as e:
+                        logger.warning(f"Failed to get sample for {schema.schema_name}.{table.table_name}: {e}")
+
+        # Export documentation
+        cache = storage.export_documentation(
+            connection_id=connection_id,
+            database_name=database_name,
+            schemas=schemas,
+            tables=tables_dict,
+            columns=columns_dict,
+            indexes=indexes_dict,
+            declared_fks=declared_fks,
+            inferred_fks=inferred_fks,
+            include_sample_data=include_sample_data,
+            sample_data=sample_data_dict if include_sample_data else None,
+            include_inferred_relationships=include_inferred_relationships,
+            output_dir=output_dir,
+        )
+
+        # Get file list from metadata
+        metadata = storage.get_cache_metadata(connection_id)
+        files_created = metadata.get("files_created", []) if metadata else []
+        total_size = metadata.get("total_size_bytes", 0) if metadata else 0
+
+        logger.info(f"Exported documentation for {database_name}: {len(files_created)} files, {total_size} bytes")
+
+        return json.dumps({
+            "status": "success",
+            "cache_dir": cache.cache_dir,
+            "files_created": files_created,
+            "total_size_bytes": total_size,
+            "schema_hash": cache.schema_hash,
+            "entity_counts": {
+                "schemas": len(schemas),
+                "tables": sum(len(t) for t in tables_dict.values()),
+                "declared_fks": len(declared_fks),
+                "inferred_fks": len(inferred_fks),
+            },
+        })
+
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    except Exception as e:
+        logger.exception("Error in export_documentation")
+        return json.dumps({"error": f"Failed to export documentation: {str(e)}"})
+
+
+@mcp.tool()
+async def load_cached_docs(connection_id: str) -> str:
+    """Load previously cached database documentation.
+
+    Retrieves cached documentation from markdown files generated by
+    export_documentation. Returns entity counts and cache age for
+    quick validation without querying the database.
+
+    Args:
+        connection_id: Connection ID to load cache for
+
+    Returns:
+        JSON string with cached documentation summary including:
+        - database_name: Name of the cached database
+        - schemas: List of schema summaries
+        - entity_counts: Counts of schemas, tables, and relationships
+        - cache_age_days: Days since cache was created
+        - schema_hash: Hash for drift detection
+    """
+    try:
+        from src.cache.storage import DocumentationStorage
+
+        storage = DocumentationStorage()
+
+        if not storage.cache_exists(connection_id):
+            return json.dumps({
+                "error": f"No cached documentation found for connection: {connection_id}",
+                "hint": "Use export_documentation to create a cache first",
+            })
+
+        cached = storage.load_cached_docs(connection_id)
+
+        return json.dumps({
+            "status": "loaded",
+            "connection_id": connection_id,
+            "database_name": cached.get("database_name"),
+            "schemas": [
+                {
+                    "schema_name": s.get("schema_name"),
+                    "table_count": s.get("table_count"),
+                    "view_count": s.get("view_count"),
+                }
+                for s in cached.get("schemas", [])
+            ],
+            "entity_counts": cached.get("entity_counts"),
+            "cache_age_days": cached.get("cache_age_days"),
+            "schema_hash": cached.get("schema_hash"),
+        })
+
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    except Exception as e:
+        logger.exception("Error in load_cached_docs")
+        return json.dumps({"error": f"Failed to load cached docs: {str(e)}"})
+
+
+@mcp.tool()
+async def check_drift(
+    connection_id: str,
+    auto_refresh: bool = False,
+) -> str:
+    """Check for schema drift between cached docs and current database.
+
+    Compares the cached documentation hash with the current database schema
+    to detect added, removed, or modified tables.
+
+    Args:
+        connection_id: Connection ID from connect_database
+        auto_refresh: If True and drift detected, automatically export new docs (default: False)
+
+    Returns:
+        JSON string with drift detection results including:
+        - drift_detected: Whether changes were found
+        - added_tables: Tables present now but not in cache
+        - removed_tables: Tables in cache but not present now
+        - summary: Human-readable summary of changes
+    """
+    try:
+        conn_manager = get_connection_manager()
+        engine = conn_manager.get_engine(connection_id)
+        metadata_svc = MetadataService(engine)
+
+        from src.cache.drift import DriftDetector
+        from src.cache.storage import DocumentationStorage
+
+        storage = DocumentationStorage()
+        detector = DriftDetector(storage)
+
+        # Get current schema state
+        schemas = metadata_svc.list_schemas(connection_id=connection_id)
+        tables_dict: dict[str, list] = {}
+        for schema in schemas:
+            tables_dict[schema.schema_name] = metadata_svc.list_tables(
+                schema_name=schema.schema_name,
+                connection_id=connection_id,
+            )
+
+        # Check for drift
+        result = detector.check_drift(
+            connection_id=connection_id,
+            current_schemas=schemas,
+            current_tables=tables_dict,
+        )
+
+        response = result.to_dict()
+
+        # Auto-refresh if requested and drift detected
+        if auto_refresh and result.drift_detected:
+            # Call export_documentation internally
+            export_result = await export_documentation(
+                connection_id=connection_id,
+                include_inferred_relationships=True,
+            )
+            export_data = json.loads(export_result)
+            response["auto_refreshed"] = export_data.get("status") == "success"
+            response["new_cache_dir"] = export_data.get("cache_dir")
+
+        return json.dumps(response)
+
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    except Exception as e:
+        logger.exception("Error in check_drift")
+        return json.dumps({"error": f"Failed to check drift: {str(e)}"})
+
+
+# =============================================================================
 # Server Entry Point
 # =============================================================================
 

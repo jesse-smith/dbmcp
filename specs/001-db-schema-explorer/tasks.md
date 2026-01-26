@@ -231,30 +231,30 @@
 
 ### Implementation for User Story 6
 
-- [ ] T067 [P] [US6] Create DocumentationCache entity in src/models/schema.py
-- [ ] T068 [P] [US6] Implement markdown file writer in src/cache/storage.py
-- [ ] T069 [US6] Create cache directory structure (docs/[connection_id]/{overview,schemas,tables,relationships}.md) in src/cache/storage.py
-- [ ] T070 [US6] Implement schema hash calculation (sorted table.column names) in src/cache/storage.py
-- [ ] T071 [US6] Generate overview.md with database summary and schema list in src/cache/storage.py
-- [ ] T072 [US6] Generate schema markdown files (tables per schema) in src/cache/storage.py
-- [ ] T073 [US6] Generate table markdown files (full metadata per table) in src/cache/storage.py
-- [ ] T074 [US6] Generate relationships.md (declared and inferred FKs) in src/cache/storage.py
-- [ ] T075 [US6] Implement export_documentation MCP tool in src/mcp_server/server.py
-- [ ] T076 [US6] Add output_dir parameter (default docs/[connection_id]) in src/mcp_server/server.py
-- [ ] T077 [US6] Add include_sample_data flag in src/mcp_server/server.py
-- [ ] T078 [US6] Add include_inferred_relationships flag in src/mcp_server/server.py
-- [ ] T079 [US6] Return files_created list and total_size_bytes in src/mcp_server/server.py
-- [ ] T080 [US6] Implement markdown file reader in src/cache/storage.py
-- [ ] T081 [US6] Parse cached documentation back into entities in src/cache/storage.py
-- [ ] T082 [US6] Implement load_cached_docs MCP tool in src/mcp_server/server.py
-- [ ] T083 [US6] Return cache_age_days and entity counts in src/mcp_server/server.py
-- [ ] T084 [US6] Check has_cached_docs in connect_database response in src/mcp_server/server.py
-- [ ] T085 [US6] Implement drift detection logic (compare cached vs current hash) in src/cache/drift.py
-- [ ] T086 [US6] Identify added, removed, modified tables in src/cache/drift.py
-- [ ] T087 [US6] Generate human-readable drift summary in src/cache/drift.py
-- [ ] T088 [US6] Implement check_drift MCP tool in src/mcp_server/server.py
-- [ ] T089 [US6] Return drift_detected flag and changes breakdown in src/mcp_server/server.py
-- [ ] T090 [US6] Auto-trigger drift check on connect (default behavior) in src/mcp_server/server.py
+- [X] T067 [P] [US6] Create DocumentationCache entity in src/models/schema.py
+- [X] T068 [P] [US6] Implement markdown file writer in src/cache/storage.py
+- [X] T069 [US6] Create cache directory structure (docs/[connection_id]/{overview,schemas,tables,relationships}.md) in src/cache/storage.py
+- [X] T070 [US6] Implement schema hash calculation (sorted table.column names) in src/cache/storage.py
+- [X] T071 [US6] Generate overview.md with database summary and schema list in src/cache/storage.py
+- [X] T072 [US6] Generate schema markdown files (tables per schema) in src/cache/storage.py
+- [X] T073 [US6] Generate table markdown files (full metadata per table) in src/cache/storage.py
+- [X] T074 [US6] Generate relationships.md (declared and inferred FKs) in src/cache/storage.py
+- [X] T075 [US6] Implement export_documentation MCP tool in src/mcp_server/server.py
+- [X] T076 [US6] Add output_dir parameter (default docs/[connection_id]) in src/mcp_server/server.py
+- [X] T077 [US6] Add include_sample_data flag in src/mcp_server/server.py
+- [X] T078 [US6] Add include_inferred_relationships flag in src/mcp_server/server.py
+- [X] T079 [US6] Return files_created list and total_size_bytes in src/mcp_server/server.py
+- [X] T080 [US6] Implement markdown file reader in src/cache/storage.py
+- [X] T081 [US6] Parse cached documentation back into entities in src/cache/storage.py
+- [X] T082 [US6] Implement load_cached_docs MCP tool in src/mcp_server/server.py
+- [X] T083 [US6] Return cache_age_days and entity counts in src/mcp_server/server.py
+- [X] T084 [US6] Check has_cached_docs in connect_database response in src/mcp_server/server.py
+- [X] T085 [US6] Implement drift detection logic (compare cached vs current hash) in src/cache/drift.py
+- [X] T086 [US6] Identify added, removed, modified tables in src/cache/drift.py
+- [X] T087 [US6] Generate human-readable drift summary in src/cache/drift.py
+- [X] T088 [US6] Implement check_drift MCP tool in src/mcp_server/server.py
+- [X] T089 [US6] Return drift_detected flag and changes breakdown in src/mcp_server/server.py
+- [X] T090 [US6] Auto-trigger drift check on connect (default behavior) in src/mcp_server/server.py
   - Add auto_check_drift flag to connect_database (default True)
   - Perform hash comparison on connect if cached docs exist
   - Return has_drift flag and summary in connect response
@@ -264,8 +264,8 @@
 
 ### Companion: Example Notebook for US6
 
-- [ ] T090A [P] [US6-NOTEBOOK] Create 05_documentation_cache.ipynb demonstrating export/import and drift detection
-- [ ] T090B [P] [US6-NOTEBOOK] Add examples showing cache workflow and drift interpretation
+- [X] T090A [P] [US6-NOTEBOOK] Create 05_documentation_cache.ipynb demonstrating export/import and drift detection
+- [X] T090B [P] [US6-NOTEBOOK] Add examples showing cache workflow and drift interpretation
 
 ---
 
