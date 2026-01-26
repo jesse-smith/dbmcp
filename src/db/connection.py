@@ -6,7 +6,6 @@ Credentials are never logged per NFR-005.
 
 import hashlib
 from datetime import datetime
-from typing import Optional
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, text
@@ -47,8 +46,8 @@ class ConnectionManager:
         self,
         server: str,
         database: str,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        username: str | None = None,
+        password: str | None = None,
         port: int = 1433,
         authentication_method: AuthenticationMethod = AuthenticationMethod.SQL,
         trust_server_cert: bool = False,
@@ -149,8 +148,8 @@ class ConnectionManager:
         self,
         server: str,
         database: str,
-        username: Optional[str],
-        password: Optional[str],
+        username: str | None,
+        password: str | None,
         port: int,
         authentication_method: AuthenticationMethod,
         trust_server_cert: bool,

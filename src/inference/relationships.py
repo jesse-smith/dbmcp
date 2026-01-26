@@ -12,7 +12,6 @@ Target accuracy: 75-80% for typical legacy databases.
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Optional
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
@@ -228,7 +227,7 @@ class ForeignKeyInferencer:
             logger.warning(f"Error listing tables: {e}")
         return tables
 
-    def _get_primary_key_column(self, columns: list[ColumnInfo]) -> Optional[ColumnInfo]:
+    def _get_primary_key_column(self, columns: list[ColumnInfo]) -> ColumnInfo | None:
         """Get the primary key column (single-column PKs only for now)."""
         pk_columns = [c for c in columns if c.is_pk]
         if len(pk_columns) == 1:

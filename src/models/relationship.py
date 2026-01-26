@@ -6,7 +6,6 @@ between tables in the database.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class RelationshipType(str, Enum):
@@ -80,8 +79,8 @@ class DeclaredFK(Relationship):
     """
 
     constraint_name: str = ""
-    on_delete: Optional[CascadeAction] = None
-    on_update: Optional[CascadeAction] = None
+    on_delete: CascadeAction | None = None
+    on_update: CascadeAction | None = None
 
     def __post_init__(self):
         self.relationship_type = RelationshipType.DECLARED

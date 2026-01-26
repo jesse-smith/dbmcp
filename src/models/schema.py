@@ -7,7 +7,6 @@ All entities are internal data structures - no persistent database storage requi
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 
 class AuthenticationMethod(str, Enum):
@@ -76,7 +75,7 @@ class Connection:
     database: str
     port: int = 1433
     authentication_method: AuthenticationMethod = AuthenticationMethod.SQL
-    username: Optional[str] = None
+    username: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
     # Note: password is NEVER stored in this model (NFR-005 compliance)
@@ -100,7 +99,7 @@ class Schema:
     schema_name: str
     table_count: int = 0
     view_count: int = 0
-    last_scanned: Optional[datetime] = None
+    last_scanned: datetime | None = None
 
 
 @dataclass
@@ -123,10 +122,10 @@ class Table:
     schema_id: str
     table_name: str
     table_type: TableType = TableType.TABLE
-    row_count: Optional[int] = None
-    row_count_updated: Optional[datetime] = None
+    row_count: int | None = None
+    row_count_updated: datetime | None = None
     has_primary_key: bool = False
-    last_modified: Optional[datetime] = None
+    last_modified: datetime | None = None
     access_denied: bool = False
 
 
@@ -158,17 +157,17 @@ class Column:
     column_name: str
     ordinal_position: int
     data_type: str
-    max_length: Optional[int] = None
+    max_length: int | None = None
     is_nullable: bool = True
-    default_value: Optional[str] = None
+    default_value: str | None = None
     is_identity: bool = False
     is_computed: bool = False
     is_primary_key: bool = False
     is_foreign_key: bool = False
-    distinct_count: Optional[int] = None
-    null_percentage: Optional[float] = None
-    inferred_purpose: Optional[InferredPurpose] = None
-    inferred_confidence: Optional[float] = None
+    distinct_count: int | None = None
+    null_percentage: float | None = None
+    inferred_purpose: InferredPurpose | None = None
+    inferred_confidence: float | None = None
 
 
 @dataclass
@@ -218,7 +217,7 @@ class DocumentationCache:
     last_updated: datetime = field(default_factory=datetime.now)
     schema_hash: str = ""
     drift_detected: bool = False
-    drift_summary: Optional[str] = None
+    drift_summary: str | None = None
 
 
 @dataclass
@@ -244,10 +243,10 @@ class Query:
     query_type: QueryType = QueryType.SELECT
     is_allowed: bool = True
     row_limit: int = 1000
-    execution_time_ms: Optional[int] = None
-    rows_affected: Optional[int] = None
-    error_message: Optional[str] = None
-    executed_at: Optional[datetime] = None
+    execution_time_ms: int | None = None
+    rows_affected: int | None = None
+    error_message: str | None = None
+    executed_at: datetime | None = None
 
 
 @dataclass
