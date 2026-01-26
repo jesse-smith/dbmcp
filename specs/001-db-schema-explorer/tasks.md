@@ -303,14 +303,14 @@
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T103 [P] Add comprehensive error handling across all MCP tools in src/mcp_server/server.py
-- [ ] T104 [P] Ensure credentials never logged (NFR-005 compliance) in src/db/connection.py
+- [X] T103 [P] Add comprehensive error handling across all MCP tools in src/mcp_server/server.py
+- [X] T104 [P] Ensure credentials never logged (NFR-005 compliance) in src/db/connection.py
 - [ ] T105 [P] Add performance logging (track query times against NFR-001, NFR-002) across src/db/
-- [ ] T106 [P] Create test fixtures (SQL scripts for test database) in tests/fixtures/
-- [ ] T107 [P] Write unit tests for name similarity algorithm in tests/unit/test_relationships.py
-- [ ] T108 [P] Write unit tests for type compatibility checks in tests/unit/test_relationships.py
-- [ ] T109 [P] Write unit tests for column purpose inference in tests/unit/test_columns.py
-- [ ] T110 [P] Write integration test for full discovery workflow in tests/integration/test_discovery.py
+- [X] T106 [P] Create test fixtures (SQL scripts for test database) in tests/fixtures/
+- [X] T107 [P] Write unit tests for name similarity algorithm in tests/unit/test_relationships.py
+- [X] T108 [P] Write unit tests for type compatibility checks in tests/unit/test_relationships.py
+- [X] T109 [P] Write unit tests for column purpose inference in tests/unit/test_columns.py
+- [X] T110 [P] Write integration test for full discovery workflow in tests/integration/test_discovery.py
 - [ ] T111 [P] Create FK inference accuracy test suite in tests/integration/test_fk_inference.py
   - Subtask 1: Create ground truth test database with 50 tables, 80 known relationships (40 declared FKs, 40 undeclared but valid joins) in tests/fixtures/fk_ground_truth.sql
   - Subtask 2: Run ForeignKeyInferencer on ground truth database with confidence_threshold=0.50
@@ -319,20 +319,20 @@
   - Subtask 5: Calculate F1 score: 2 * (precision * recall) / (precision + recall)
   - Subtask 6: Assert F1 score >= 0.80 to meet SC-003 requirement (80%+ accuracy)
   - Subtask 7: Generate detailed report showing missed relationships and false positives
-- [ ] T111A [P] Write test for name similarity edge cases in tests/unit/test_relationships.py
+- [X] T111A [P] Write test for name similarity edge cases in tests/unit/test_relationships.py
   - Test cases: OrderID vs Order_ID (high similarity), CustomerNo vs CustNum (medium), ID vs Identifier (low)
-- [ ] T111B [P] Write test for type compatibility groupings in tests/unit/test_relationships.py
+- [X] T111B [P] Write test for type compatibility groupings in tests/unit/test_relationships.py
   - Test cases: int/bigint compatible, varchar(50)/nvarchar(100) compatible, date/datetime incompatible
 - [ ] T111C Document inference algorithm accuracy baseline in docs/inference_accuracy.md
   - Include: test methodology, ground truth database schema, precision/recall/F1 scores, known limitations
-- [ ] T112 [P] Write integration test for caching and drift detection in tests/integration/test_caching.py
+- [X] T112 [P] Write integration test for caching and drift detection in tests/integration/test_caching.py
 - [ ] T113 Add connection pooling configuration tuning (pool_size, max_overflow) in src/db/connection.py
 - [ ] T114 Update quickstart.md with actual implementation details (if needed)
 - [ ] T115 Create Claude for Desktop configuration example in docs/claude_config.json
 - [ ] T116 Add README.md with installation and usage instructions in project root
 - [ ] T117 Validate quickstart.md examples work end-to-end
-- [ ] T118 Run pytest test suite and ensure all tests pass
-- [ ] T119 Run ruff linting and fix any issues
+- [X] T118 Run pytest test suite and ensure all tests pass
+- [X] T119 Run ruff linting and fix any issues
 - [ ] T120 Run comprehensive performance validation suite (T121-T130) and verify all NFRs pass
 
 **⚠️ Performance Test Failure Remediation Protocol**:
@@ -406,8 +406,8 @@ Test Fails → Environment Issue? → Yes → Fix/Document → PASS
 - [ ] T133 [P] Add object_type filtering for views (EC-006) in src/db/metadata.py
 - [ ] T134 [P] Add inference timeout with partial results (EC-007) in src/inference/relationships.py
 - [ ] T135 [P] Verify NFR-003 compliance: Add documentation size check to export_documentation tool in src/cache/storage.py (warn if >1MB for 500 tables)
-- [ ] T136 [P] Verify NFR-004 compliance: Add integration test for write operation blocking in tests/integration/test_query_execution.py
-- [ ] T137 [P] Verify NFR-005 compliance: Add credential leak detection test in tests/unit/test_connection.py (scan logs for password patterns)
+- [X] T136 [P] Verify NFR-004 compliance: Add integration test for write operation blocking in tests/integration/test_query_execution.py
+- [X] T137 [P] Verify NFR-005 compliance: Add credential leak detection test in tests/unit/test_connection.py (scan logs for password patterns)
 - [ ] T138 Create NFR compliance validation suite in tests/compliance/ running all NFR checks together
 
 ---

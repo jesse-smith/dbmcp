@@ -22,7 +22,8 @@ def test_database_schema_creates_all_tables(test_db_path):
     cursor = conn.cursor()
 
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    tables = [row[0] for row in cursor.fetchall()]
+    # Exclude sqlite_sequence (internal SQLite table for AUTOINCREMENT)
+    tables = [row[0] for row in cursor.fetchall() if row[0] != "sqlite_sequence"]
 
     expected = ["customers", "order_items", "orders", "product_reviews", "products", "shipping_addresses"]
     assert tables == expected, f"Expected tables {expected}, got {tables}"

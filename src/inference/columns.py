@@ -930,13 +930,23 @@ class ColumnAnalyzer:
         if name_lower == "id" or name_normalized == "id":
             return True
 
-        # Check for unique numeric values
+        # Patterns that indicate NOT an ID (amount, quantity, percentage)
+        non_id_patterns = [
+            "amt", "amount", "price", "cost", "total", "sum", "balance",
+            "fee", "charge", "payment", "salary", "wage",  # amount patterns
+            "qty", "quantity", "count", "cnt", "units", "items",  # quantity patterns
+            "pct", "percent", "percentage", "rate", "ratio",  # percentage patterns
+        ]
+        has_non_id_pattern = any(pattern in name_lower for pattern in non_id_patterns)
+
+        # Check for unique numeric values (but NOT if name suggests amount/qty/pct)
         if (
             category == ColumnCategory.NUMERIC
             and numeric_stats
             and numeric_stats.is_integer
             and distinct_count == total_rows
             and total_rows > 0
+            and not has_non_id_pattern
         ):
             return True
 
