@@ -201,18 +201,18 @@
 
 ### Implementation for User Story 5
 
-- [ ] T055 [US5] Implement distinct value count query in src/inference/columns.py
-- [ ] T056 [US5] Implement null percentage calculation in src/inference/columns.py
-- [ ] T057 [US5] Implement enum detection (distinct count <50 AND <10% of rows) in src/inference/columns.py
-- [ ] T058 [US5] Implement numeric statistics (min, max, mean, median, std dev) in src/inference/columns.py
-- [ ] T059 [US5] Implement numeric purpose heuristics (ID, percentage, amount, quantity) in src/inference/columns.py
-- [ ] T060 [US5] Implement date/time analysis (range, patterns, business hours) in src/inference/columns.py
-- [ ] T061 [US5] Implement string analysis (top values with frequencies) in src/inference/columns.py
-- [ ] T062 [US5] Create ColumnAnalyzer class with purpose inference logic in src/inference/columns.py
-- [ ] T063 [US5] Return inferred_purpose enum (id, enum, status, flag, amount, quantity, percentage, timestamp, unknown) in src/inference/columns.py
-- [ ] T064 [US5] Calculate confidence score for inferred purpose in src/inference/columns.py
-- [ ] T065 [US5] Implement analyze_column MCP tool in src/mcp_server/server.py
-- [ ] T066 [US5] Return type-specific statistics (categorical top values, numeric min/max/mean, date ranges) in src/mcp_server/server.py
+- [X] T055 [US5] Implement distinct value count query in src/inference/columns.py
+- [X] T056 [US5] Implement null percentage calculation in src/inference/columns.py
+- [X] T057 [US5] Implement enum detection (distinct count <50 AND <10% of rows) in src/inference/columns.py
+- [X] T058 [US5] Implement numeric statistics (min, max, mean, median, std dev) in src/inference/columns.py
+- [X] T059 [US5] Implement numeric purpose heuristics (ID, percentage, amount, quantity) in src/inference/columns.py
+- [X] T060 [US5] Implement date/time analysis (range, patterns, business hours) in src/inference/columns.py
+- [X] T061 [US5] Implement string analysis (top values with frequencies) in src/inference/columns.py
+- [X] T062 [US5] Create ColumnAnalyzer class with purpose inference logic in src/inference/columns.py
+- [X] T063 [US5] Return inferred_purpose enum (id, enum, status, flag, amount, quantity, percentage, timestamp, unknown) in src/inference/columns.py
+- [X] T064 [US5] Calculate confidence score for inferred purpose in src/inference/columns.py
+- [X] T065 [US5] Implement analyze_column MCP tool in src/mcp_server/server.py
+- [X] T066 [US5] Return type-specific statistics (categorical top values, numeric min/max/mean, date ranges) in src/mcp_server/server.py
 
 **Checkpoint**: User Story 5 complete and testable independently
 
