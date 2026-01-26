@@ -261,3 +261,156 @@ class TestLimitEnforcement:
         tables, _ = service.list_tables(limit=0)
         # Implementation clamps to minimum 1
         assert len(tables) >= 0
+
+
+class TestPagination:
+    """Tests for list_tables pagination - T132"""
+
+    def test_pagination_metadata_returned(self, test_engine):
+        """T132: Verify pagination metadata is returned."""
+        service = MetadataService(test_engine)
+
+        tables, pagination = service.list_tables()
+
+        assert "total_count" in pagination
+        assert "offset" in pagination
+        assert "limit" in pagination
+        assert "has_more" in pagination
+        assert pagination["total_count"] == 3
+        assert pagination["offset"] == 0
+        assert pagination["has_more"] is False
+
+    def test_offset_skips_records(self, test_engine):
+        """T132: Verify offset parameter skips records."""
+        service = MetadataService(test_engine)
+
+        # Get all tables sorted by name for predictable order
+        all_tables, _ = service.list_tables(sort_by="name", sort_order="asc")
+        all_names = [t.table_name for t in all_tables]
+
+        # Get tables with offset=1
+        offset_tables, pagination = service.list_tables(sort_by="name", sort_order="asc", offset=1)
+        offset_names = [t.table_name for t in offset_tables]
+
+        # Should skip first record
+        assert len(offset_tables) == 2
+        assert offset_names == all_names[1:]
+        assert pagination["offset"] == 1
+
+    def test_has_more_flag_true_when_more_records(self, test_engine):
+        """T132: Verify has_more is True when more records exist."""
+        service = MetadataService(test_engine)
+
+        # Request only 2 of 3 tables
+        tables, pagination = service.list_tables(limit=2)
+
+        assert len(tables) == 2
+        assert pagination["has_more"] is True
+        assert pagination["total_count"] == 3
+
+    def test_has_more_flag_false_at_end(self, test_engine):
+        """T132: Verify has_more is False when no more records."""
+        service = MetadataService(test_engine)
+
+        # Request with offset that leaves no more
+        tables, pagination = service.list_tables(limit=2, offset=2)
+
+        assert len(tables) == 1  # Only 1 table left after offset=2
+        assert pagination["has_more"] is False
+
+    def test_offset_beyond_total_returns_empty(self, test_engine):
+        """T132: Verify offset beyond total returns empty list."""
+        service = MetadataService(test_engine)
+
+        tables, pagination = service.list_tables(offset=100)
+
+        assert len(tables) == 0
+        assert pagination["total_count"] == 3
+        assert pagination["has_more"] is False
+
+
+class TestObjectTypeFiltering:
+    """Tests for object_type filtering (tables vs views) - T133"""
+
+    @pytest.fixture
+    def engine_with_views(self):
+        """Create a database with both tables and views."""
+        engine = create_engine("sqlite:///:memory:", echo=False)
+
+        with engine.connect() as conn:
+            # Create tables
+            conn.execute(text("""
+                CREATE TABLE customers (
+                    customer_id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE orders (
+                    order_id INTEGER PRIMARY KEY,
+                    customer_id INTEGER,
+                    total DECIMAL(10,2)
+                )
+            """))
+
+            # Create views
+            conn.execute(text("""
+                CREATE VIEW customer_summary AS
+                SELECT customer_id, name FROM customers
+            """))
+            conn.execute(text("""
+                CREATE VIEW order_totals AS
+                SELECT customer_id, SUM(total) as total FROM orders GROUP BY customer_id
+            """))
+
+            conn.commit()
+
+        return engine
+
+    def test_object_type_table_returns_only_tables(self, engine_with_views):
+        """T133: Verify object_type='table' returns only tables."""
+        service = MetadataService(engine_with_views)
+
+        tables, pagination = service.list_tables(object_type="table")
+
+        assert len(tables) == 2
+        table_names = {t.table_name for t in tables}
+        assert "customers" in table_names
+        assert "orders" in table_names
+        assert "customer_summary" not in table_names
+        assert "order_totals" not in table_names
+
+    def test_object_type_view_returns_only_views(self, engine_with_views):
+        """T133: Verify object_type='view' returns only views."""
+        service = MetadataService(engine_with_views)
+
+        tables, pagination = service.list_tables(object_type="view")
+
+        assert len(tables) == 2
+        view_names = {t.table_name for t in tables}
+        assert "customer_summary" in view_names
+        assert "order_totals" in view_names
+        assert "customers" not in view_names
+        assert "orders" not in view_names
+
+    def test_object_type_none_returns_all(self, engine_with_views):
+        """T133: Verify object_type=None returns both tables and views."""
+        service = MetadataService(engine_with_views)
+
+        tables, pagination = service.list_tables(object_type=None)
+
+        assert len(tables) == 4
+        names = {t.table_name for t in tables}
+        assert "customers" in names
+        assert "orders" in names
+        assert "customer_summary" in names
+        assert "order_totals" in names
+
+    def test_view_has_correct_table_type(self, engine_with_views):
+        """T133: Verify views have TableType.VIEW."""
+        service = MetadataService(engine_with_views)
+
+        tables, _ = service.list_tables(object_type="view")
+
+        for table in tables:
+            assert table.table_type == TableType.VIEW

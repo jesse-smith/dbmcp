@@ -403,8 +403,11 @@ Test Fails → Environment Issue? → Yes → Fix/Document → PASS
 - [ ] T130 Run full performance suite and generate baseline report (baseline.md) for future regression testing
 - [X] T131 [P] Add edge case handling tasks: Implement connection timeout (EC-001) in src/db/connection.py
 - [X] T132 [P] Add pagination support for list_tables (EC-002) in src/mcp_server/server.py
+  - Unit tests added: TestPagination class in tests/unit/test_metadata.py
 - [X] T133 [P] Add object_type filtering for views (EC-006) in src/db/metadata.py
+  - Unit tests added: TestObjectTypeFiltering class in tests/unit/test_metadata.py
 - [X] T134 [P] Add inference timeout with partial results (EC-007) in src/inference/relationships.py
+  - Note: Unit tests skipped - would require mock or large fixture to trigger timeout
 - [X] T135 [P] Verify NFR-003 compliance: Add documentation size check to export_documentation tool in src/cache/storage.py (warn if >1MB for 500 tables)
 - [X] T136 [P] Verify NFR-004 compliance: Add integration test for write operation blocking in tests/integration/test_query_execution.py
 - [X] T137 [P] Verify NFR-005 compliance: Add credential leak detection test in tests/unit/test_connection.py (scan logs for password patterns)
