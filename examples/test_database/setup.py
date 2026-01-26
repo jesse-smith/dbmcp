@@ -32,7 +32,7 @@ def setup_database(db_path: str = "examples/test_database/example.db") -> None:
     # Create new database and execute schema
     try:
         conn = sqlite3.connect(db_path)
-        with open(schema_path, "r") as f:
+        with open(schema_path) as f:
             conn.executescript(f.read())
         conn.commit()
         conn.close()

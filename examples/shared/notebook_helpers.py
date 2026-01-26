@@ -1,8 +1,7 @@
 """Shared utilities for DBMCP example notebooks."""
 import os
-import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def _find_repo_root() -> Path:
@@ -16,7 +15,7 @@ def _find_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def setup_connection(connection_string: Optional[str] = None) -> Any:
+def setup_connection(connection_string: str | None = None) -> Any:
     """Establish DBMCP connection with fallback to local test database.
 
     Args:
