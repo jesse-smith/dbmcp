@@ -14,10 +14,51 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 This skill ensures consistent feature completion tracking across the project. Run this after merging a feature branch to main.
 
+## Pre-flight Checks (MANDATORY)
+
+Before proceeding, you MUST run these validation checks. If any fail, STOP and inform the user.
+
+### Check 1: Branch Validation
+
+Run: `git branch --show-current`
+
+**STOP with error if** the current branch matches the pattern `###-*` (a feature branch).
+
+Error message to show:
+```
+ERROR: Cannot run /speckit.complete from a feature branch.
+
+This command should be run from 'main' after merging a feature branch.
+
+Correct workflow:
+1. git checkout main
+2. git merge ###-feature-name
+3. /speckit.complete
+```
+
+### Check 2: Task Completion Validation
+
+For the feature being marked complete, run:
+```bash
+.specify/scripts/bash/check-tasks-complete.sh specs/[###-feature-name]
+```
+
+**STOP with error if** the script exits with non-zero status (incomplete tasks).
+
+Show the script output to the user and explain:
+```
+ERROR: Cannot mark feature as complete - there are incomplete tasks.
+
+Either:
+1. Complete all remaining tasks first, OR
+2. Use /speckit.complete --archive to archive the feature with incomplete tasks
+```
+
 ## Steps
 
 1. **Identify the feature**: Determine which feature was just completed.
-   - If no argument provided, check recent git history for merged feature branches
+   - If argument provided, use that feature name
+   - Otherwise, check recent git history for merged feature branches (look for "Merge branch '###-" patterns)
    - Feature branches follow the pattern `###-feature-name` (e.g., `001-db-schema-explorer`)
 
 2. **Locate feature documents**: Find all spec files in `specs/[###-feature-name]/`
