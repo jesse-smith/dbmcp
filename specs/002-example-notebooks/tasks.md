@@ -1,5 +1,9 @@
 # Tasks: Example Notebooks
 
+> **STATUS: ARCHIVED** | Date: 2026-01-26 | Branch: `002-example-notebooks`
+>
+> **Reason**: Workflow changed. See spec.md for details.
+
 **Input**: Design documents from `/specs/002-example-notebooks/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/
 
