@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "python",
+      "args": ["-m", "src.mcp_server.server"],
+      "cwd": "/path/to/dbmcp",
+      "env": {
+        "PYTHONPATH": "/path/to/dbmcp"
+      }
+    }
+  }
+}
