@@ -78,12 +78,11 @@ class DeclaredFK(Relationship):
         on_update: Update cascade behavior
     """
 
+    # Override with default to allow positional args from parent
+    relationship_type: RelationshipType = field(default=RelationshipType.DECLARED)
     constraint_name: str = ""
     on_delete: CascadeAction | None = None
     on_update: CascadeAction | None = None
-
-    def __post_init__(self):
-        self.relationship_type = RelationshipType.DECLARED
 
 
 @dataclass
@@ -101,12 +100,11 @@ class InferredFK(Relationship):
         inference_factors: Breakdown of scoring factors
     """
 
+    # Override with default to allow positional args from parent
+    relationship_type: RelationshipType = field(default=RelationshipType.INFERRED)
     confidence_score: float = 0.0
     reasoning: str = ""
     inference_factors: InferenceFactors = field(default_factory=InferenceFactors)
-
-    def __post_init__(self):
-        self.relationship_type = RelationshipType.INFERRED
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
