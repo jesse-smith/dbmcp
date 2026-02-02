@@ -28,23 +28,30 @@ class CascadeAction(str, Enum):
 class InferenceFactors:
     """Breakdown of scoring factors for relationship inference.
 
-    Attributes:
-        name_similarity: Score from name matching (0.0-1.0)
-        type_compatible: Whether data types are compatible
-        structural_hints: List of structural indicators
+    Phase 1 factors (metadata-only):
+    - name_similarity: Score from name matching (0.0-1.0)
+    - type_compatible: Whether data types are compatible
+    - structural_hints: List of structural indicators
+
+    Phase 2 factors (with value overlap):
+    - value_overlap: Score from actual data overlap analysis (0.0-1.0)
     """
 
     name_similarity: float = 0.0
     type_compatible: bool = False
     structural_hints: list[str] = field(default_factory=list)
+    value_overlap: float | None = None  # Phase 2: None if not analyzed
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "name_similarity": self.name_similarity,
             "type_compatible": self.type_compatible,
             "structural_hints": ", ".join(self.structural_hints) if self.structural_hints else "",
         }
+        if self.value_overlap is not None:
+            result["value_overlap"] = self.value_overlap
+        return result
 
 
 @dataclass

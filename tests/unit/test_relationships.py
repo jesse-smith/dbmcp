@@ -229,12 +229,17 @@ class TestParameterValidation:
         with pytest.raises(ValueError, match="max_candidates"):
             inferencer.infer_relationships("Orders", "dbo", max_candidates=1500)
 
-    def test_value_overlap_raises_not_implemented(self):
-        """include_value_overlap=True should raise NotImplementedError - T042A"""
+    def test_value_overlap_validates_strategy(self):
+        """include_value_overlap=True should validate overlap_strategy - T145 (Updated from T042A)"""
         inferencer = ForeignKeyInferencer(MagicMock())
 
-        with pytest.raises(NotImplementedError, match="Phase 2"):
-            inferencer.infer_relationships("Orders", "dbo", include_value_overlap=True)
+        # Invalid strategy should raise ValueError
+        with pytest.raises(ValueError, match="overlap_strategy"):
+            inferencer.infer_relationships(
+                "Orders", "dbo",
+                include_value_overlap=True,
+                overlap_strategy="invalid",
+            )
 
 
 class TestReasoningGeneration:

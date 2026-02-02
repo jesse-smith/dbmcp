@@ -1,12 +1,19 @@
 """Foreign key inference algorithm.
 
-This module implements Phase 1 (metadata-only) FK inference using
-three-factor weighted scoring:
+This module implements FK inference using weighted scoring:
+
+Phase 1 (metadata-only):
 - Name similarity (40% weight)
 - Type compatibility (15% weight, veto if incompatible)
 - Structural hints (45% weight)
 
-Target accuracy: 75-80% for typical legacy databases.
+Phase 2 (with value overlap - T142):
+- Name similarity (32% weight - reduced from 40%)
+- Type compatibility (12% weight - reduced from 15%)
+- Structural hints (36% weight - reduced from 45%)
+- Value overlap (20% weight - new factor)
+
+Target accuracy: 75-80% (Phase 1), 85-90% (Phase 2).
 
 T134: Supports configurable timeout with partial results.
 """
@@ -14,6 +21,7 @@ T134: Supports configurable timeout with partial results.
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
@@ -21,11 +29,29 @@ from sqlalchemy.engine import Engine
 from src.logging_config import get_logger
 from src.models.relationship import InferenceFactors, InferredFK, create_relationship_id
 
+if TYPE_CHECKING:
+    from src.inference.value_overlap import ValueOverlapAnalyzer
+
 logger = get_logger(__name__)
 
 # Default timeout for inference operations (10 seconds)
 DEFAULT_INFERENCE_TIMEOUT_SECONDS = 10
 
+# Weight configuration for Phase 1 (metadata-only)
+PHASE1_WEIGHTS = {
+    "name": 0.40,
+    "type": 0.15,
+    "structural": 0.45,
+}
+
+# Weight configuration for Phase 2 (with value overlap)
+# Reduces other factors to make room for 20% overlap weight
+PHASE2_WEIGHTS = {
+    "name": 0.32,        # 40% * 0.80 = 32%
+    "type": 0.12,        # 15% * 0.80 = 12%
+    "structural": 0.36,  # 45% * 0.80 = 36%
+    "overlap": 0.20,     # New factor: 20%
+}
 
 # SQL Server compatible type groups
 TYPE_GROUPS = {
@@ -54,12 +80,16 @@ class ColumnInfo:
 
 
 class ForeignKeyInferencer:
-    """Infers foreign key relationships from metadata.
+    """Infers foreign key relationships from metadata and optionally data values.
 
-    Uses three-factor weighted scoring:
+    Phase 1 (metadata-only) uses three-factor weighted scoring:
     - Name similarity (40%): Column name pattern matching
     - Type compatibility (15%): Data type group matching
     - Structural hints (45%): PK, nullable, unique index indicators
+
+    Phase 2 (with value overlap - T142) adds a fourth factor:
+    - Value overlap (20%): Actual data value matching via Jaccard similarity
+    - Other factors reduced proportionally to 80% of original weights
 
     T134: Supports configurable timeout with partial results.
 
@@ -67,6 +97,7 @@ class ForeignKeyInferencer:
         engine: SQLAlchemy database engine
         threshold: Minimum confidence score to return (default: 0.50)
         timeout_seconds: Maximum time for inference before returning partial results
+        overlap_threshold: Minimum overlap score to consider valid (default: 0.30)
     """
 
     def __init__(
@@ -74,6 +105,7 @@ class ForeignKeyInferencer:
         engine: Engine,
         threshold: float = 0.50,
         timeout_seconds: float | None = None,
+        overlap_threshold: float = 0.30,
     ):
         """Initialize the inferencer.
 
@@ -81,12 +113,15 @@ class ForeignKeyInferencer:
             engine: SQLAlchemy engine for database access
             threshold: Minimum confidence threshold (0.0-1.0)
             timeout_seconds: Maximum inference time (None = default 10s, 0 = no timeout)
+            overlap_threshold: Minimum value overlap score (0.0-1.0, default: 0.30)
         """
         self.engine = engine
         self.threshold = threshold
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else DEFAULT_INFERENCE_TIMEOUT_SECONDS
+        self.overlap_threshold = overlap_threshold
         self._inspector = None
         self._column_cache: dict[str, list[ColumnInfo]] = {}
+        self._overlap_analyzer: ValueOverlapAnalyzer | None = None
 
     @property
     def inspector(self):
@@ -101,46 +136,73 @@ class ForeignKeyInferencer:
         schema_name: str = "dbo",
         max_candidates: int = 20,
         include_value_overlap: bool = False,
+        overlap_strategy: str = "sampling",
+        overlap_sample_size: int = 1000,
     ) -> tuple[list[InferredFK], dict]:
         """Infer foreign key relationships for a table.
 
         T134: Supports timeout with partial results. If inference exceeds
         timeout_seconds, returns partial results with timed_out=True in metadata.
 
+        T142: Supports value overlap analysis for improved accuracy.
+
         Args:
             table_name: Source table to analyze
             schema_name: Schema containing the table
             max_candidates: Maximum candidates to return
-            include_value_overlap: If True, raises NotImplementedError (Phase 2 feature)
+            include_value_overlap: If True, use value overlap analysis (Phase 2)
+            overlap_strategy: Strategy for overlap analysis - 'sampling' or 'full_comparison'
+            overlap_sample_size: Sample size for sampling strategy (default: 1000)
 
         Returns:
             Tuple of (inferred relationships, analysis metadata)
             Metadata includes: analysis_time_ms, total_candidates_evaluated, timed_out, tables_analyzed
 
         Raises:
-            NotImplementedError: If include_value_overlap=True (Phase 2 feature)
             ValueError: If parameters are invalid
         """
         # Parameter validation
-        if include_value_overlap:
-            raise NotImplementedError("Value overlap analysis available in Phase 2")
-
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("confidence_threshold must be between 0.0 and 1.0")
 
         if max_candidates < 1 or max_candidates > 1000:
             raise ValueError("max_candidates must be between 1 and 1000")
 
+        # Validate overlap parameters if enabled
+        if include_value_overlap:
+            valid_strategies = ["sampling", "full_comparison"]
+            if overlap_strategy not in valid_strategies:
+                raise ValueError(f"overlap_strategy must be one of: {valid_strategies}")
+            if overlap_sample_size < 1 or overlap_sample_size > 10000:
+                raise ValueError("overlap_sample_size must be between 1 and 10000")
+
+            # Lazy initialization of overlap analyzer
+            if self._overlap_analyzer is None:
+                from src.inference.value_overlap import OverlapStrategy, ValueOverlapAnalyzer
+                self._overlap_analyzer = ValueOverlapAnalyzer(
+                    engine=self.engine,
+                    timeout_seconds=self.timeout_seconds,
+                    default_sample_size=overlap_sample_size,
+                )
+
         start_time = time.time()
         total_evaluated = 0
         tables_analyzed = 0
         timed_out = False
+        overlap_analyses = 0
 
         # Get source table columns
         source_columns = self._get_columns(table_name, schema_name)
         if not source_columns:
             logger.warning(f"No columns found for {schema_name}.{table_name}")
-            return [], {"analysis_time_ms": 0, "total_candidates_evaluated": 0, "timed_out": False, "tables_analyzed": 0}
+            return [], {
+                "analysis_time_ms": 0,
+                "total_candidates_evaluated": 0,
+                "timed_out": False,
+                "tables_analyzed": 0,
+                "overlap_analyses": 0,
+                "include_value_overlap": include_value_overlap,
+            }
 
         # Get all potential target tables
         all_tables = self._get_all_tables(schema_name)
@@ -187,8 +249,39 @@ class ForeignKeyInferencer:
                 tables_analyzed += 1
                 total_evaluated += 1
 
-                # Score this potential relationship
-                score, factors = self._calculate_confidence(src_col, target_pk, target_table)
+                # Score this potential relationship (metadata-only first pass)
+                score, factors = self._calculate_confidence(
+                    src_col, target_pk, target_table, include_overlap=False
+                )
+
+                # If include_value_overlap and passes initial threshold, add overlap analysis
+                if include_value_overlap and score >= (self.threshold * 0.7):
+                    # Only analyze overlap for candidates that have reasonable metadata scores
+                    from src.inference.value_overlap import OverlapStrategy
+                    strategy = (
+                        OverlapStrategy.FULL_COMPARISON
+                        if overlap_strategy == "full_comparison"
+                        else OverlapStrategy.SAMPLING
+                    )
+
+                    overlap_result = self._overlap_analyzer.calculate_overlap(
+                        source_table=table_name,
+                        source_column=src_col.name,
+                        source_schema=schema_name,
+                        target_table=target_table,
+                        target_column=target_pk.name,
+                        target_schema=target_schema,
+                        strategy=strategy,
+                        sample_size=overlap_sample_size,
+                    )
+                    overlap_analyses += 1
+
+                    # Recalculate score with overlap factor
+                    score, factors = self._calculate_confidence(
+                        src_col, target_pk, target_table,
+                        include_overlap=True,
+                        overlap_score=overlap_result.overlap_score,
+                    )
 
                 if score >= self.threshold:
                     reasoning = self._generate_reasoning(src_col, target_pk, factors)
@@ -229,6 +322,8 @@ class ForeignKeyInferencer:
             "total_candidates_evaluated": total_evaluated,
             "timed_out": timed_out,
             "tables_analyzed": tables_analyzed,
+            "overlap_analyses": overlap_analyses,
+            "include_value_overlap": include_value_overlap,
         }
 
     def _get_columns(self, table_name: str, schema_name: str) -> list[ColumnInfo]:
@@ -288,9 +383,24 @@ class ForeignKeyInferencer:
         return None
 
     def _calculate_confidence(
-        self, src_col: ColumnInfo, tgt_col: ColumnInfo, tgt_table: str
+        self,
+        src_col: ColumnInfo,
+        tgt_col: ColumnInfo,
+        tgt_table: str,
+        include_overlap: bool = False,
+        overlap_score: float | None = None,
     ) -> tuple[float, InferenceFactors]:
-        """Calculate confidence score using three-factor weighted scoring.
+        """Calculate confidence score using weighted scoring.
+
+        Phase 1 (include_overlap=False): Three-factor scoring
+        Phase 2 (include_overlap=True): Four-factor scoring with value overlap
+
+        Args:
+            src_col: Source column info
+            tgt_col: Target column info
+            tgt_table: Target table name
+            include_overlap: Whether to include value overlap in scoring
+            overlap_score: Value overlap score (0.0-1.0), required if include_overlap=True
 
         Returns:
             Tuple of (score, factors)
@@ -300,21 +410,43 @@ class ForeignKeyInferencer:
         if not type_compatible:
             return 0.0, InferenceFactors(name_similarity=0, type_compatible=False)
 
-        # Factor 2: Name similarity (40% weight)
+        # Factor 2: Name similarity
         name_score = self._calculate_name_similarity(src_col.name, tgt_col.name, tgt_table)
 
-        # Factor 3: Structural hints (45% weight)
+        # Factor 3: Structural hints
         structural_score, hints = self._calculate_structural_score(src_col, tgt_col)
 
-        # Combine scores: 40% name + 15% type + 45% structural
-        # Type is binary (1.0 if compatible), so it contributes 0.15 when compatible
-        final_score = (name_score * 0.40) + (1.0 * 0.15) + (structural_score * 0.45)
+        # Select weights based on whether overlap is included
+        if include_overlap and overlap_score is not None:
+            # Phase 2 weights (adjusted to make room for overlap)
+            weights = PHASE2_WEIGHTS
+            final_score = (
+                (name_score * weights["name"]) +
+                (1.0 * weights["type"]) +  # Type is binary
+                (structural_score * weights["structural"]) +
+                (overlap_score * weights["overlap"])
+            )
 
-        factors = InferenceFactors(
-            name_similarity=round(name_score, 3),
-            type_compatible=True,
-            structural_hints=hints,
-        )
+            factors = InferenceFactors(
+                name_similarity=round(name_score, 3),
+                type_compatible=True,
+                structural_hints=hints,
+                value_overlap=round(overlap_score, 3),
+            )
+        else:
+            # Phase 1 weights (original)
+            weights = PHASE1_WEIGHTS
+            final_score = (
+                (name_score * weights["name"]) +
+                (1.0 * weights["type"]) +
+                (structural_score * weights["structural"])
+            )
+
+            factors = InferenceFactors(
+                name_similarity=round(name_score, 3),
+                type_compatible=True,
+                structural_hints=hints,
+            )
 
         return final_score, factors
 
@@ -416,6 +548,15 @@ class ForeignKeyInferencer:
         # Structural hints
         if factors.structural_hints:
             parts.append(" + ".join(factors.structural_hints))
+
+        # Value overlap (Phase 2)
+        if factors.value_overlap is not None:
+            if factors.value_overlap >= 0.80:
+                parts.append(f"strong value overlap ({factors.value_overlap:.0%})")
+            elif factors.value_overlap >= 0.50:
+                parts.append(f"moderate value overlap ({factors.value_overlap:.0%})")
+            elif factors.value_overlap >= 0.30:
+                parts.append(f"weak value overlap ({factors.value_overlap:.0%})")
 
         return " + ".join(parts) if parts else "Pattern match"
 

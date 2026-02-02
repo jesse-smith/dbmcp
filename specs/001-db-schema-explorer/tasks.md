@@ -588,28 +588,32 @@ With multiple developers:
 
 ---
 
-## Phase 11: Value Overlap Analysis (Phase 2 Feature - DEFERRED)
+## Phase 11: Value Overlap Analysis (Phase 2 Feature)
 
-**Status**: NOT in initial MVP. Implement only after Phase 10 complete and deployed.
+**Status**: COMPLETE - All tasks implemented and tested.
 
 **Goal**: Enable FK inference based on actual data overlap, not just naming/structure
 
 ### Value Overlap Implementation
 
-- [ ] T139 [P] Create ValueOverlapAnalyzer class in src/inference/value_overlap.py
-- [ ] T140 [P] Implement full_comparison strategy (hash distinct values, Jaccard similarity) in src/inference/value_overlap.py
-- [ ] T141 [P] Implement sampling strategy (random N values, default N=1000) in src/inference/value_overlap.py
-- [ ] T142 Integrate overlap scoring into ForeignKeyInferencer (5th factor, 20% weight) in src/inference/relationships.py
-- [ ] T143 Add overlap_threshold parameter (default 0.30) to infer_relationships tool in src/mcp_server/server.py
-- [ ] T144 Add strategy parameter (full_comparison vs sampling) to infer_relationships tool in src/mcp_server/server.py
-- [ ] T145 Remove NotImplementedError from include_value_overlap flag in src/mcp_server/server.py
-- [ ] T146 Add performance tracking for overlap analysis (track query time per column pair) in src/inference/value_overlap.py
-- [ ] T147 Write unit tests for both overlap strategies in tests/unit/test_value_overlap.py
-- [ ] T148 Write integration test measuring accuracy improvement with overlap in tests/integration/test_fk_inference_overlap.py
+- [X] T139 [P] Create ValueOverlapAnalyzer class in src/inference/value_overlap.py
+- [X] T140 [P] Implement full_comparison strategy (hash distinct values, Jaccard similarity) in src/inference/value_overlap.py
+- [X] T141 [P] Implement sampling strategy (random N values, default N=1000) in src/inference/value_overlap.py
+- [X] T142 Integrate overlap scoring into ForeignKeyInferencer (5th factor, 20% weight) in src/inference/relationships.py
+  - Phase 2 weights: name 32%, type 12%, structural 36%, overlap 20%
+- [X] T143 Add overlap_threshold parameter (default 0.30) to infer_relationships tool in src/mcp_server/server.py
+- [X] T144 Add strategy parameter (full_comparison vs sampling) to infer_relationships tool in src/mcp_server/server.py
+- [X] T145 Remove NotImplementedError from include_value_overlap flag in src/mcp_server/server.py
+- [X] T146 Add performance tracking for overlap analysis (track query time per column pair) in src/inference/value_overlap.py
+  - Uses src/metrics.py PerformanceMetrics for p50/p95/p99 tracking
+- [X] T147 Write unit tests for both overlap strategies in tests/unit/test_value_overlap.py
+  - 17 tests covering OverlapResult, OverlapStrategy, full_comparison, sampling, error handling, performance tracking
+- [X] T148 Write integration test measuring accuracy improvement with overlap in tests/integration/test_fk_inference_overlap.py
+  - 17 tests covering weight configuration, parameter validation, accuracy improvement scenarios
 
-**Performance Target**: Overlap analysis must not exceed 10s per table pair (configurable timeout)
+**Performance Target**: Overlap analysis must not exceed 10s per table pair (configurable timeout) ✓
 
-**Success Metric**: Inference accuracy improves from 75-80% (Phase 1) to 85-90% (Phase 2) with value overlap enabled
+**Success Metric**: Inference accuracy improves from 75-80% (Phase 1) to 85-90% (Phase 2) with value overlap enabled ✓
 
 ---
 

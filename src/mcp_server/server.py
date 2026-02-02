@@ -392,13 +392,25 @@ async def infer_relationships(
     confidence_threshold: float = 0.50,
     max_candidates: int = 20,
     include_value_overlap: bool = False,
+    overlap_threshold: float = 0.30,
+    overlap_strategy: str = "sampling",
+    overlap_sample_size: int = 1000,
 ) -> str:
     """Infer potential foreign key relationships for a table.
 
     Analyzes column names, data types, and structural hints to infer likely
     foreign key relationships in legacy databases with undeclared FKs.
-    Uses three-factor weighted scoring: name similarity (40%), type compatibility (15%),
-    and structural hints (45%).
+
+    Phase 1 (metadata-only): Three-factor weighted scoring:
+    - Name similarity (40%)
+    - Type compatibility (15%)
+    - Structural hints (45%)
+
+    Phase 2 (with value overlap): Four-factor weighted scoring:
+    - Name similarity (32%)
+    - Type compatibility (12%)
+    - Structural hints (36%)
+    - Value overlap (20%)
 
     Args:
         connection_id: Connection ID from connect_database
@@ -406,7 +418,10 @@ async def infer_relationships(
         schema_name: Schema name (default: 'dbo')
         confidence_threshold: Minimum confidence score 0.0-1.0 (default: 0.50)
         max_candidates: Maximum relationships to return, 1-1000 (default: 20)
-        include_value_overlap: Enable value overlap analysis (Phase 2 feature, raises NotImplementedError)
+        include_value_overlap: Enable value overlap analysis for improved accuracy (default: False)
+        overlap_threshold: Minimum value overlap score 0.0-1.0 (default: 0.30)
+        overlap_strategy: Strategy for overlap analysis - 'sampling' or 'full_comparison' (default: 'sampling')
+        overlap_sample_size: Number of values to sample for overlap analysis, 1-10000 (default: 1000)
 
     Returns:
         JSON string with inferred relationships and analysis metadata
@@ -423,28 +438,45 @@ async def infer_relationships(
                 "error": "max_candidates must be between 1 and 1000"
             })
 
+        # Validate overlap parameters (T143, T144)
+        if overlap_threshold < 0.0 or overlap_threshold > 1.0:
+            return json.dumps({
+                "error": "overlap_threshold must be between 0.0 and 1.0"
+            })
+
+        valid_strategies = ["sampling", "full_comparison"]
+        if overlap_strategy not in valid_strategies:
+            return json.dumps({
+                "error": f"overlap_strategy must be one of: {valid_strategies}"
+            })
+
+        if overlap_sample_size < 1 or overlap_sample_size > 10000:
+            return json.dumps({
+                "error": "overlap_sample_size must be between 1 and 10000"
+            })
+
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
 
         # Import here to avoid circular imports
         from src.inference.relationships import ForeignKeyInferencer
 
-        inferencer = ForeignKeyInferencer(engine, threshold=confidence_threshold)
+        inferencer = ForeignKeyInferencer(
+            engine,
+            threshold=confidence_threshold,
+            overlap_threshold=overlap_threshold,
+        )
 
-        try:
-            inferred, metadata = inferencer.infer_relationships(
-                table_name=table_name,
-                schema_name=schema_name,
-                max_candidates=max_candidates,
-                include_value_overlap=include_value_overlap,
-            )
-        except NotImplementedError as e:
-            return json.dumps({
-                "error": str(e),
-                "hint": "Set include_value_overlap=false for Phase 1 inference"
-            })
+        inferred, metadata = inferencer.infer_relationships(
+            table_name=table_name,
+            schema_name=schema_name,
+            max_candidates=max_candidates,
+            include_value_overlap=include_value_overlap,
+            overlap_strategy=overlap_strategy,
+            overlap_sample_size=overlap_sample_size,
+        )
 
-        return json.dumps({
+        response = {
             "inferred_relationships": [
                 {
                     "source_table": rel.source_table_id,
@@ -461,7 +493,16 @@ async def infer_relationships(
             "total_candidates_evaluated": metadata["total_candidates_evaluated"],
             "timed_out": metadata.get("timed_out", False),
             "tables_analyzed": metadata.get("tables_analyzed", 0),
-        })
+            "include_value_overlap": metadata.get("include_value_overlap", False),
+        }
+
+        # Include overlap-specific metadata if enabled
+        if include_value_overlap:
+            response["overlap_analyses"] = metadata.get("overlap_analyses", 0)
+            response["overlap_strategy"] = overlap_strategy
+            response["overlap_sample_size"] = overlap_sample_size
+
+        return json.dumps(response)
 
     except ValueError as e:
         return json.dumps({"error": str(e)})
