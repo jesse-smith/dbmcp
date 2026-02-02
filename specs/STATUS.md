@@ -4,7 +4,7 @@ Central registry of all features and their current status.
 
 | Feature ID | Name | Branch | Status | Merged Date | Notes |
 |------------|------|--------|--------|-------------|-------|
-| 001 | DB Schema Explorer | `001-db-schema-explorer` | In Progress | - | Phases 1-6 complete, 7-10 remaining |
+| 001 | DB Schema Explorer | `001-db-schema-explorer` | Complete | 2026-02-02 | All 11 phases implemented |
 | 002 | Example Notebooks | `002-example-notebooks` | Archived | 2026-01-20 | Workflow changed: notebooks now tracked in 001 |
 | 003 | Speckit Workflow Integration | `003-speckit-workflow-integration` | Complete | 2026-01-26 | Tooling feature - no spec docs |
 

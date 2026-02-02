@@ -1,5 +1,7 @@
 # Tasks: Database Schema Explorer MCP Server
 
+> **STATUS: COMPLETE** | Merged: 2026-02-02 | Branch: `001-db-schema-explorer`
+
 **Input**: Design documents from `/specs/001-db-schema-explorer/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 

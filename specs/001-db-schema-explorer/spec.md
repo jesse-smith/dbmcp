@@ -1,8 +1,10 @@
 # Feature Specification: Database Schema Explorer MCP Server
 
+> **STATUS: COMPLETE** | Merged: 2026-02-02 | Branch: `001-db-schema-explorer`
+
 **Feature Branch**: `001-db-schema-explorer`
 **Created**: 2026-01-17
-**Status**: Draft
+**Status**: Complete
 **Input**: User description: "Build an MCP server for database exploration, structure understanding, relationship inference, and documentation generation"
 
 ## User Scenarios & Testing *(mandatory)*

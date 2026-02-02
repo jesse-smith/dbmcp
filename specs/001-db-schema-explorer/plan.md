@@ -1,5 +1,7 @@
 # Implementation Plan: Database Schema Explorer MCP Server
 
+> **STATUS: COMPLETE** | Merged: 2026-02-02 | Branch: `001-db-schema-explorer`
+
 **Branch**: `001-db-schema-explorer` | **Date**: 2026-01-19 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/001-db-schema-explorer/spec.md`
 
