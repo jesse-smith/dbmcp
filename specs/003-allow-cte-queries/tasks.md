@@ -1,5 +1,7 @@
 # Tasks: Allow CTE Queries
 
+> **STATUS: COMPLETE** | Merged: 2026-02-03 | Branch: `003-allow-cte-queries`
+
 **Input**: Design documents from `/specs/003-allow-cte-queries/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, quickstart.md ✅
 

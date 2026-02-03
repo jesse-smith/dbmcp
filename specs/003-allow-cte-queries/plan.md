@@ -1,5 +1,7 @@
 # Implementation Plan: Allow CTE Queries
 
+> **STATUS: COMPLETE** | Merged: 2026-02-03 | Branch: `003-allow-cte-queries`
+
 **Branch**: `003-allow-cte-queries` | **Date**: 2026-02-03 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/003-allow-cte-queries/spec.md`
 

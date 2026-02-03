@@ -7,6 +7,7 @@ Central registry of all features and their current status.
 | 001 | DB Schema Explorer | `001-db-schema-explorer` | Complete | 2026-02-02 | All 11 phases implemented |
 | 002 | Example Notebooks | `002-example-notebooks` | Archived | 2026-01-20 | Workflow changed: notebooks now tracked in 001 |
 | 003 | Speckit Workflow Integration | `003-speckit-workflow-integration` | Complete | 2026-01-26 | Tooling feature - no spec docs |
+| 003 | Allow CTE Queries | `003-allow-cte-queries` | Complete | 2026-02-03 | CTE+SELECT queries, DDL blocklist |
 
 ## Status Definitions
 

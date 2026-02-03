@@ -1,8 +1,10 @@
 # Feature Specification: Allow CTE Queries
 
+> **STATUS: COMPLETE** | Merged: 2026-02-03 | Branch: `003-allow-cte-queries`
+
 **Feature Branch**: `003-allow-cte-queries`
 **Created**: 2026-02-03
-**Status**: Draft
+**Status**: Complete
 **Input**: User description: "The current version of the query execution disallows CTEs as an 'Other' query pattern; I'd like to allow them while still blocking create/update/delete/DDL queries. This should be a fairly simple modification."
 
 ## User Scenarios & Testing *(mandatory)*
