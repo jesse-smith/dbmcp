@@ -262,6 +262,177 @@ class TestQueryService:
         assert "..." not in sample.rows[0]["SmallBinary"]
 
 
+class TestCTEQueryParsing:
+    """Test CTE (Common Table Expression) query parsing and handling."""
+
+    def test_parse_cte_select_query(self, mock_engine):
+        """Test CTE followed by SELECT is classified as SELECT."""
+        service = QueryService(mock_engine)
+        # Simple CTE + SELECT
+        query = "WITH cte AS (SELECT 1 AS val) SELECT * FROM cte"
+        assert service.parse_query_type(query) == QueryType.SELECT
+        # Multiple lines
+        query = """
+        WITH recent_orders AS (
+            SELECT * FROM orders WHERE order_date > '2026-01-01'
+        )
+        SELECT * FROM recent_orders
+        """
+        assert service.parse_query_type(query) == QueryType.SELECT
+
+    def test_parse_cte_multiple_ctes(self, mock_engine):
+        """Test multiple CTEs chained together are classified correctly."""
+        service = QueryService(mock_engine)
+        query = """
+        WITH
+            orders_2026 AS (SELECT * FROM orders WHERE YEAR(order_date) = 2026),
+            high_value AS (SELECT * FROM orders_2026 WHERE total > 1000)
+        SELECT COUNT(*) as count FROM high_value
+        """
+        assert service.parse_query_type(query) == QueryType.SELECT
+
+    def test_parse_cte_with_comments(self, mock_engine):
+        """Test CTE queries containing SQL comments are parsed correctly."""
+        service = QueryService(mock_engine)
+        # Single-line comment before CTE
+        query = """
+        -- Get active users
+        WITH active AS (SELECT * FROM users WHERE status = 'active')
+        SELECT * FROM active
+        """
+        assert service.parse_query_type(query) == QueryType.SELECT
+        # Multi-line comment inside CTE
+        query = """
+        WITH cte AS (
+            /* This is a comment */
+            SELECT id FROM users
+        )
+        SELECT * FROM cte
+        """
+        assert service.parse_query_type(query) == QueryType.SELECT
+
+    def test_cte_select_allowed(self, mock_engine):
+        """Test CTE+SELECT queries are allowed by is_query_allowed."""
+        service = QueryService(mock_engine)
+        query_type = service.parse_query_type(
+            "WITH cte AS (SELECT 1) SELECT * FROM cte"
+        )
+        is_allowed, error = service.is_query_allowed(query_type)
+        assert is_allowed is True
+        assert error is None
+
+    def test_inject_row_limit_cte_sqlserver(self, mock_engine):
+        """Test TOP injection in CTE queries for SQL Server."""
+        mock_engine.dialect.name = "mssql"
+        service = QueryService(mock_engine)
+        query = "WITH cte AS (SELECT * FROM users) SELECT * FROM cte"
+        result = service.inject_row_limit(query, 100)
+        # TOP should be injected into the final SELECT, not the CTE
+        assert "TOP" in result.upper()
+        assert "100" in result
+        # The CTE part should remain unchanged
+        assert "WITH cte AS (SELECT * FROM users)" in result
+
+    def test_inject_row_limit_cte_sqlite(self, mock_engine):
+        """Test LIMIT injection in CTE queries for SQLite."""
+        mock_engine.dialect.name = "sqlite"
+        service = QueryService(mock_engine)
+        query = "WITH cte AS (SELECT * FROM users) SELECT * FROM cte"
+        result = service.inject_row_limit(query, 100)
+        assert "LIMIT 100" in result.upper()
+
+    def test_parse_cte_insert_query(self, mock_engine):
+        """Test CTE followed by INSERT is classified as INSERT."""
+        service = QueryService(mock_engine)
+        query = """
+        WITH source AS (SELECT * FROM staging WHERE validated = 1)
+        INSERT INTO target SELECT * FROM source
+        """
+        assert service.parse_query_type(query) == QueryType.INSERT
+
+    def test_parse_cte_update_query(self, mock_engine):
+        """Test CTE followed by UPDATE is classified as UPDATE."""
+        service = QueryService(mock_engine)
+        query = """
+        WITH updates AS (SELECT id, new_value FROM changes)
+        UPDATE target SET value = u.new_value
+        FROM target t JOIN updates u ON t.id = u.id
+        """
+        assert service.parse_query_type(query) == QueryType.UPDATE
+
+    def test_parse_cte_delete_query(self, mock_engine):
+        """Test CTE followed by DELETE is classified as DELETE."""
+        service = QueryService(mock_engine)
+        query = """
+        WITH old_records AS (SELECT id FROM records WHERE created_at < '2020-01-01')
+        DELETE FROM records WHERE id IN (SELECT id FROM old_records)
+        """
+        assert service.parse_query_type(query) == QueryType.DELETE
+
+    def test_cte_write_blocked_by_default(self, mock_engine):
+        """Test CTE+write queries are blocked by default."""
+        service = QueryService(mock_engine)
+        # CTE + INSERT
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src",
+            row_limit=1000,
+        )
+        assert query.is_allowed is False
+        assert query.query_type == QueryType.INSERT
+        assert "INSERT" in query.error_message
+
+    def test_cte_write_allowed_with_flag(self, mock_engine):
+        """Test CTE+write queries are allowed when allow_write=True."""
+        # Setup mock for execution
+        mock_result = MagicMock()
+        mock_result.rowcount = 5
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "sqlite"
+
+        service = QueryService(mock_engine)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="WITH src AS (SELECT 1 as val) INSERT INTO t SELECT * FROM src",
+            row_limit=1000,
+            allow_write=True,
+        )
+        assert query.is_allowed is True
+        assert query.query_type == QueryType.INSERT
+
+    def test_existing_write_controls_unchanged(self, mock_engine):
+        """Regression test: existing write controls still work as before."""
+        service = QueryService(mock_engine)
+        # Regular INSERT blocked
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="INSERT INTO users (name) VALUES ('test')",
+            row_limit=1000,
+        )
+        assert query.is_allowed is False
+        assert query.query_type == QueryType.INSERT
+
+        # Regular UPDATE blocked
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="UPDATE users SET name='x' WHERE id=1",
+            row_limit=1000,
+        )
+        assert query.is_allowed is False
+        assert query.query_type == QueryType.UPDATE
+
+        # Regular DELETE blocked
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="DELETE FROM users WHERE id=1",
+            row_limit=1000,
+        )
+        assert query.is_allowed is False
+        assert query.query_type == QueryType.DELETE
+
+
 class TestQueryTypeParser:
     """Test query type parsing functionality."""
 
@@ -310,6 +481,85 @@ class TestQueryTypeParser:
         service = QueryService(mock_engine)
         assert service.parse_query_type("") == QueryType.OTHER
         assert service.parse_query_type("   ") == QueryType.OTHER
+
+
+class TestBlockedKeywords:
+    """Test blocked keyword detection for dangerous operations."""
+
+    def test_blocked_create(self, mock_engine):
+        """Test CREATE operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("CREATE TABLE users (id INT)")
+        assert is_blocked is True
+        assert keyword == "CREATE"
+
+    def test_blocked_drop(self, mock_engine):
+        """Test DROP operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("DROP TABLE users")
+        assert is_blocked is True
+        assert keyword == "DROP"
+
+    def test_blocked_alter(self, mock_engine):
+        """Test ALTER operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("ALTER TABLE users ADD col INT")
+        assert is_blocked is True
+        assert keyword == "ALTER"
+
+    def test_blocked_truncate(self, mock_engine):
+        """Test TRUNCATE operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("TRUNCATE TABLE users")
+        assert is_blocked is True
+        assert keyword == "TRUNCATE"
+
+    def test_blocked_exec(self, mock_engine):
+        """Test EXEC/EXECUTE operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("EXEC sp_help")
+        assert is_blocked is True
+        assert keyword == "EXEC"
+        # Also test EXECUTE
+        is_blocked, keyword = service._is_blocked_keyword("EXECUTE sp_help")
+        assert is_blocked is True
+        assert keyword == "EXECUTE"
+
+    def test_blocked_grant_revoke_deny(self, mock_engine):
+        """Test GRANT/REVOKE/DENY operations are blocked."""
+        service = QueryService(mock_engine)
+        is_blocked, keyword = service._is_blocked_keyword("GRANT SELECT ON users TO role")
+        assert is_blocked is True
+        assert keyword == "GRANT"
+        is_blocked, keyword = service._is_blocked_keyword("REVOKE SELECT ON users FROM role")
+        assert is_blocked is True
+        assert keyword == "REVOKE"
+        is_blocked, keyword = service._is_blocked_keyword("DENY SELECT ON users TO role")
+        assert is_blocked is True
+        assert keyword == "DENY"
+
+    def test_blocked_error_message_contains_keyword(self, mock_engine):
+        """Test that blocked query error messages include the specific keyword."""
+        service = QueryService(mock_engine)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="CREATE TABLE test (id INT)",
+            row_limit=1000,
+        )
+        assert query.is_allowed is False
+        assert "CREATE" in query.error_message
+
+    def test_blocked_keyword_with_comment_obfuscation(self, mock_engine):
+        """Test that blocked keywords are detected even with comment obfuscation (FR-005)."""
+        service = QueryService(mock_engine)
+        # Try to obfuscate CREATE with a comment
+        is_blocked, keyword = service._is_blocked_keyword("/* SELECT */ CREATE TABLE test (id INT)")
+        assert is_blocked is True
+        assert keyword == "CREATE"
+        # Try with line comment
+        is_blocked, keyword = service._is_blocked_keyword("-- SELECT something\nDROP TABLE users")
+        assert is_blocked is True
+        assert keyword == "DROP"
 
 
 class TestReadOnlyEnforcement:
