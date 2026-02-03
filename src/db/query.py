@@ -30,6 +30,18 @@ class QueryService:
         engine: SQLAlchemy engine for database connection
     """
 
+    # Keywords that should always be blocked (DDL, execution, permissions)
+    BLOCKED_KEYWORDS: frozenset[str] = frozenset({
+        # DDL operations
+        'CREATE', 'ALTER', 'DROP', 'TRUNCATE',
+        # Code execution
+        'EXEC', 'EXECUTE',
+        # Permission operations
+        'GRANT', 'REVOKE', 'DENY',
+        # SQL Server specific
+        'BACKUP', 'RESTORE', 'DBCC',
+    })
+
     def __init__(self, engine: Engine):
         """Initialize query service.
 
@@ -265,6 +277,8 @@ class QueryService:
     def parse_query_type(self, query_text: str) -> QueryType:
         """Parse the type of SQL query from the query text.
 
+        For CTE queries (starting with WITH), extracts the final operation type.
+
         Args:
             query_text: SQL query string
 
@@ -287,7 +301,59 @@ class QueryService:
             "DELETE": QueryType.DELETE,
         }
 
+        # Handle CTE queries: WITH ... <final_operation>
+        if first_word == "WITH":
+            return self._extract_cte_final_operation(cleaned)
+
         return query_type_map.get(first_word, QueryType.OTHER)
+
+    def _extract_cte_final_operation(self, cleaned_query: str) -> QueryType:
+        """Extract the final operation type from a CTE query.
+
+        CTE syntax: WITH cte_name AS (...) [, cte_name AS (...)]* final_statement
+        The final statement determines the operation type.
+
+        Args:
+            cleaned_query: SQL query with comments already removed
+
+        Returns:
+            QueryType of the final operation (SELECT, INSERT, UPDATE, DELETE, or OTHER)
+        """
+        query_type_map = {
+            "SELECT": QueryType.SELECT,
+            "INSERT": QueryType.INSERT,
+            "UPDATE": QueryType.UPDATE,
+            "DELETE": QueryType.DELETE,
+        }
+
+        # Find the final operation keyword after all CTE definitions
+        # CTEs are enclosed in parentheses, so we track nesting to find the end
+        paren_depth = 0
+        i = 0
+        query_upper = cleaned_query.upper()
+
+        # Skip past "WITH" keyword
+        i = query_upper.find("WITH") + 4
+
+        while i < len(cleaned_query):
+            char = cleaned_query[i]
+            if char == '(':
+                paren_depth += 1
+            elif char == ')':
+                paren_depth -= 1
+            elif paren_depth == 0:
+                # Outside all parentheses - look for operation keyword
+                # Check if we're at the start of a keyword
+                remaining = query_upper[i:].lstrip()
+                for keyword, query_type in query_type_map.items():
+                    if remaining.startswith(keyword) and (
+                        len(remaining) == len(keyword)
+                        or not remaining[len(keyword)].isalnum()
+                    ):
+                        return query_type
+            i += 1
+
+        return QueryType.OTHER
 
     def _remove_sql_comments(self, query_text: str) -> str:
         """Remove SQL comments from query text.
@@ -303,6 +369,32 @@ class QueryService:
         # Remove multi-line comments (/* ... */)
         cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
         return cleaned.strip()
+
+    def _is_blocked_keyword(self, query_text: str) -> tuple[bool, str | None]:
+        """Check if query contains a blocked keyword anywhere.
+
+        Scans the query text (after removing comments) for any blocked keywords.
+        This catches dangerous operations regardless of their position in the query.
+
+        Args:
+            query_text: SQL query string
+
+        Returns:
+            Tuple of (is_blocked, blocked_keyword if blocked else None)
+        """
+        if not query_text:
+            return False, None
+
+        # Remove comments to prevent obfuscation like /* SELECT */ CREATE TABLE
+        cleaned = self._remove_sql_comments(query_text)
+
+        # Tokenize and check each word against blocklist
+        words = re.findall(r'\b\w+\b', cleaned.upper())
+        for word in words:
+            if word in self.BLOCKED_KEYWORDS:
+                return True, word
+
+        return False, None
 
     def is_query_allowed(
         self,
@@ -340,6 +432,8 @@ class QueryService:
     def inject_row_limit(self, query_text: str, row_limit: int) -> str:
         """Inject a row limit (TOP clause for SQL Server) into a SELECT query.
 
+        Handles both regular SELECT queries and CTE queries (WITH...SELECT).
+
         Args:
             query_text: Original SQL query
             row_limit: Maximum rows to return
@@ -352,9 +446,16 @@ class QueryService:
 
         # Remove comments for parsing but keep original for execution
         cleaned = self._remove_sql_comments(query_text.strip())
+        cleaned_upper = cleaned.upper()
 
-        # Check if it's a SELECT query
-        if not cleaned.upper().startswith("SELECT"):
+        # Check if it's a SELECT query or CTE+SELECT query
+        is_direct_select = cleaned_upper.startswith("SELECT")
+        is_cte_select = (
+            cleaned_upper.startswith("WITH")
+            and self.parse_query_type(cleaned) == QueryType.SELECT
+        )
+
+        if not is_direct_select and not is_cte_select:
             return query_text
 
         dialect_name = self.engine.dialect.name
@@ -365,24 +466,76 @@ class QueryService:
                 return f"{query_text} LIMIT {row_limit}"
             return query_text
         else:
-            # SQL Server: Inject TOP clause after SELECT
-            # Handle SELECT DISTINCT, SELECT ALL, etc.
-            select_pattern = re.compile(
-                r'^(SELECT\s+(?:DISTINCT\s+|ALL\s+)?)',
-                re.IGNORECASE
-            )
-
+            # SQL Server: Inject TOP clause after the final SELECT
             # Check if TOP already exists
             if re.search(r'\bTOP\s*\(?\s*\d+\s*\)?', query_text, re.IGNORECASE):
                 return query_text
 
-            match = select_pattern.match(cleaned)
-            if match:
-                prefix = match.group(1)
-                rest = cleaned[len(prefix):]
-                return f"{prefix}TOP ({row_limit}) {rest}"
+            if is_cte_select:
+                # For CTE queries, find the final SELECT and inject TOP there
+                return self._inject_top_in_cte(cleaned, row_limit)
+            else:
+                # Regular SELECT: Inject TOP after SELECT
+                # Handle SELECT DISTINCT, SELECT ALL, etc.
+                select_pattern = re.compile(
+                    r'^(SELECT\s+(?:DISTINCT\s+|ALL\s+)?)',
+                    re.IGNORECASE
+                )
+
+                match = select_pattern.match(cleaned)
+                if match:
+                    prefix = match.group(1)
+                    rest = cleaned[len(prefix):]
+                    return f"{prefix}TOP ({row_limit}) {rest}"
 
             return query_text
+
+    def _inject_top_in_cte(self, cleaned_query: str, row_limit: int) -> str:
+        """Inject TOP clause into the final SELECT of a CTE query.
+
+        Args:
+            cleaned_query: CTE query with comments already removed
+            row_limit: Maximum rows to return
+
+        Returns:
+            Query with TOP injected into the final SELECT
+        """
+        # Find the position of the final SELECT (after all CTE definitions)
+        paren_depth = 0
+        i = 0
+        query_upper = cleaned_query.upper()
+
+        # Skip past "WITH" keyword
+        i = query_upper.find("WITH") + 4
+
+        while i < len(cleaned_query):
+            char = cleaned_query[i]
+            if char == '(':
+                paren_depth += 1
+            elif char == ')':
+                paren_depth -= 1
+            elif paren_depth == 0:
+                # Outside all parentheses - look for SELECT keyword
+                remaining_upper = query_upper[i:].lstrip()
+                if remaining_upper.startswith("SELECT"):
+                    # Find the actual position in the original string
+                    whitespace_len = len(query_upper[i:]) - len(query_upper[i:].lstrip())
+                    select_start = i + whitespace_len
+
+                    # Handle SELECT DISTINCT, SELECT ALL, etc.
+                    select_pattern = re.compile(
+                        r'^(SELECT\s+(?:DISTINCT\s+|ALL\s+)?)',
+                        re.IGNORECASE
+                    )
+                    match = select_pattern.match(cleaned_query[select_start:])
+                    if match:
+                        prefix_part = cleaned_query[:select_start]
+                        select_prefix = match.group(1)
+                        rest = cleaned_query[select_start + len(select_prefix):]
+                        return f"{prefix_part}{select_prefix}TOP ({row_limit}) {rest}"
+            i += 1
+
+        return cleaned_query
 
     def execute_query(
         self,
@@ -414,6 +567,19 @@ class QueryService:
 
         # Generate query ID
         query_id = str(uuid.uuid4())
+
+        # Check for blocked keywords first (DDL, EXEC, permissions, etc.)
+        is_blocked, blocked_keyword = self._is_blocked_keyword(query_text)
+        if is_blocked:
+            return Query(
+                query_id=query_id,
+                connection_id=connection_id,
+                query_text=query_text,
+                query_type=QueryType.OTHER,
+                is_allowed=False,
+                row_limit=row_limit,
+                error_message=f"Query blocked: {blocked_keyword} operations are not permitted.",
+            )
 
         # Parse query type
         query_type = self.parse_query_type(query_text)
