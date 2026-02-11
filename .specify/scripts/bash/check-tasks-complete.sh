@@ -99,9 +99,9 @@ fi
 
 # Count complete and incomplete tasks
 # Tasks are lines starting with "- [x]" or "- [X]" (complete) or "- [ ]" (incomplete)
-TOTAL_TASKS=$(grep -ciE '^\s*-\s*\[(x| )\]' "$TASKS_FILE" 2>/dev/null || echo "0")
-COMPLETE_TASKS=$(grep -ciE '^\s*-\s*\[x\]' "$TASKS_FILE" 2>/dev/null || echo "0")
-INCOMPLETE_TASKS=$(grep -cE '^\s*-\s*\[ \]' "$TASKS_FILE" 2>/dev/null || echo "0")
+TOTAL_TASKS=$(grep -ciE '^\s*-\s*\[(x| )\]' "$TASKS_FILE" 2>/dev/null) || TOTAL_TASKS=0
+COMPLETE_TASKS=$(grep -ciE '^\s*-\s*\[x\]' "$TASKS_FILE" 2>/dev/null) || COMPLETE_TASKS=0
+INCOMPLETE_TASKS=$(grep -cE '^\s*-\s*\[ \]' "$TASKS_FILE" 2>/dev/null) || INCOMPLETE_TASKS=0
 
 # Get list of incomplete task IDs for reporting
 INCOMPLETE_LIST=""
