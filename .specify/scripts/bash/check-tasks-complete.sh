@@ -106,8 +106,8 @@ INCOMPLETE_TASKS=$(grep -cE '^\s*-\s*\[ \]' "$TASKS_FILE" 2>/dev/null) || INCOMP
 # Get list of incomplete task IDs for reporting
 INCOMPLETE_LIST=""
 if [[ "$INCOMPLETE_TASKS" -gt 0 ]]; then
-    # Extract task description (remove "- [ ] " prefix)
-    INCOMPLETE_LIST=$(grep -E '^- \[ \]' "$TASKS_FILE" | cut -c7- | head -10)
+    # Extract task description (remove leading whitespace and "- [ ] " prefix)
+    INCOMPLETE_LIST=$(grep -E '^\s*-\s*\[ \]' "$TASKS_FILE" | sed 's/^[[:space:]]*- \[ \] //' | head -10)
 fi
 
 # Determine result
