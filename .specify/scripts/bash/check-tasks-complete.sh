@@ -129,8 +129,8 @@ fi
 if $JSON_MODE; then
     # Build incomplete tasks JSON array
     if [[ -n "$INCOMPLETE_LIST" ]]; then
-        # Convert newline-separated list to JSON array
-        incomplete_json=$(echo "$INCOMPLETE_LIST" | jq -R -s 'split("\n") | map(select(length > 0))')
+        # Convert newline-separated list to JSON array (no jq dependency)
+        incomplete_json="[$(echo "$INCOMPLETE_LIST" | sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&"/' | paste -sd, -)]"
     else
         incomplete_json="[]"
     fi
