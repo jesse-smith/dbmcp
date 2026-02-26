@@ -30,7 +30,7 @@ Add `azure_ad_integrated` as a new authentication method that uses `azure-identi
 | III. Test-First Development | **Pass** | Unit tests for token packing, credential validation, ODBC string generation. Integration test for live Azure SQL connection. |
 | IV. Explicit Error Handling | **Pass** | `CredentialUnavailableError` from azure-identity is caught and translated to actionable user messages. Token packing errors fail fast. |
 | V. Performance by Design | **Pass** | Fresh token only on new physical connection (not every checkout). `pool_pre_ping` + `pool_recycle` handle staleness. No I/O in loops. |
-| VI. Code Quality Through Clarity | **Pass** | `AzureTokenProvider` has a single responsibility. `pack_token_for_pyodbc` is a small pure function. |
+| VI. Code Quality Through Clarity | **Pass (exception noted)** | `AzureTokenProvider` has a single responsibility. `pack_token_for_pyodbc` is a small pure function. **Param count exception**: `connect()` already has 8 params (pre-existing); adding `tenant_id` makes 9, exceeding the ≤5 complexity budget. Justified: all params are direct ODBC/auth concerns with no natural grouping that wouldn't be a premature abstraction (Principle I). Documented for code review per constitution. |
 | VII. Minimal Dependencies | **Pass** | `azure-identity` is the standard Microsoft-maintained library for this purpose. Not achievable in <50 lines. Well-maintained with active security response. Core dependency justified by team requirement. |
 
 **Post-Phase 1 re-check**: All gates still pass. No new abstractions beyond `AzureTokenProvider`. No speculative features.
@@ -49,7 +49,7 @@ specs/004-azure-ad-integrated-auth/
 │   └── connect-database-tool.md
 ├── checklists/
 │   └── requirements.md
-└── tasks.md             # Phase 2 output (not yet created)
+└── tasks.md             # Phase 2 output
 ```
 
 ### Source Code (repository root)
