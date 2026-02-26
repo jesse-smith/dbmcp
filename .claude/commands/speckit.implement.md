@@ -132,8 +132,4 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Confirm the implementation follows the technical plan
    - Report final status with summary of completed work
 
-10. **When all tasks are complete**:
-    - Inform the user that implementation is finished
-    - Remind them to merge the feature branch and run `/speckit.complete` afterward to update status tracking
-
 Note: This command assumes a complete task breakdown exists in tasks.md. If tasks are incomplete or missing, suggest running `/speckit.tasks` first to regenerate the task list.
