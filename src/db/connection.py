@@ -10,10 +10,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote_plus
 
+import pyodbc
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
+from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
 from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod, Connection
 
@@ -81,6 +83,7 @@ class ConnectionManager:
         authentication_method: AuthenticationMethod = AuthenticationMethod.SQL,
         trust_server_cert: bool = False,
         connection_timeout: int = 30,
+        tenant_id: str | None = None,
     ) -> Connection:
         """Create a database connection and return Connection object.
 
@@ -93,6 +96,7 @@ class ConnectionManager:
             authentication_method: Authentication method
             trust_server_cert: Trust server certificate without validation
             connection_timeout: Connection timeout in seconds (5-300)
+            tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
 
         Returns:
             Connection object with connection metadata
@@ -113,7 +117,11 @@ class ConnectionManager:
             raise ValueError("Connection timeout must be between 5 and 300 seconds")
 
         # Generate connection ID (excludes password for security)
-        conn_str_hash = f"{server}:{port}/{database}/{username or 'windows'}"
+        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            user_component = "azure_ad"
+        else:
+            user_component = username or "windows"
+        conn_str_hash = f"{server}:{port}/{database}/{user_component}"
         connection_id = hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
 
         # Check if already connected
@@ -136,16 +144,36 @@ class ConnectionManager:
         # Create SQLAlchemy engine with connection pooling (T113: configurable)
         start_time = time.time()
         try:
-            engine = create_engine(
-                f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
-                poolclass=QueuePool,
-                pool_size=self._pool_config.pool_size,
-                max_overflow=self._pool_config.max_overflow,
-                pool_timeout=self._pool_config.pool_timeout,
-                pool_pre_ping=self._pool_config.pool_pre_ping,
-                pool_recycle=self._pool_config.pool_recycle,
-                echo=False,
-            )
+            if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+                provider = AzureTokenProvider(tenant_id=tenant_id)
+
+                def creator():
+                    token = provider.get_token()
+                    packed = provider.pack_token_for_pyodbc(token)
+                    return pyodbc.connect(odbc_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed})
+
+                engine = create_engine(
+                    "mssql+pyodbc://",
+                    creator=creator,
+                    poolclass=QueuePool,
+                    pool_size=self._pool_config.pool_size,
+                    max_overflow=self._pool_config.max_overflow,
+                    pool_timeout=self._pool_config.pool_timeout,
+                    pool_pre_ping=self._pool_config.pool_pre_ping,
+                    pool_recycle=self._pool_config.pool_recycle,
+                    echo=False,
+                )
+            else:
+                engine = create_engine(
+                    f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+                    poolclass=QueuePool,
+                    pool_size=self._pool_config.pool_size,
+                    max_overflow=self._pool_config.max_overflow,
+                    pool_timeout=self._pool_config.pool_timeout,
+                    pool_pre_ping=self._pool_config.pool_pre_ping,
+                    pool_recycle=self._pool_config.pool_recycle,
+                    echo=False,
+                )
 
             # Test connection (T131: timeout already in ODBC string)
             with engine.connect() as conn:
@@ -225,6 +253,8 @@ class ConnectionManager:
                 f"PWD={password}",
                 "Authentication=ActiveDirectoryPassword",
             ])
+        elif authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            pass  # No UID/PWD/Authentication — token is passed via attrs_before
 
         return ";".join(parts)
 

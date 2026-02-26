@@ -346,3 +346,317 @@ class TestODBCConnectionString:
         assert "UID=user@domain.com" in conn_str
         assert "PWD=azurepass" in conn_str
         assert "Authentication=ActiveDirectoryPassword" in conn_str
+
+    def test_azure_ad_integrated_excludes_uid_pwd_authentication(self):
+        """T009: azure_ad_integrated ODBC string must NOT contain UID, PWD, or Authentication."""
+        manager = ConnectionManager()
+
+        conn_str = manager._build_odbc_connection_string(
+            server="myserver.database.windows.net",
+            database="testdb",
+            username=None,
+            password=None,
+            port=1433,
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+            trust_server_cert=False,
+            connection_timeout=30,
+        )
+
+        assert "UID=" not in conn_str
+        assert "PWD=" not in conn_str
+        assert "Authentication=" not in conn_str
+        assert "Driver={ODBC Driver 18 for SQL Server}" in conn_str
+        assert "Server=myserver.database.windows.net,1433" in conn_str
+        assert "Database=testdb" in conn_str
+        assert "TrustServerCertificate=" in conn_str
+        assert "Connection Timeout=30" in conn_str
+
+
+class TestAzureAdIntegratedValidation:
+    """T008: Tests for azure_ad_integrated auth validation."""
+
+    def test_azure_ad_integrated_does_not_require_username_password(self):
+        """azure_ad_integrated auth method does NOT require username/password."""
+        manager = ConnectionManager()
+
+        # Should NOT raise ValueError about missing credentials
+        with patch("src.db.connection.create_engine") as mock_engine:
+            mock_connection = MagicMock()
+            mock_result = MagicMock()
+            mock_result.fetchone.return_value = MagicMock(
+                version="SQL Server 2019",
+                database_name="testdb",
+            )
+            mock_connection.execute.return_value = mock_result
+            mock_engine_instance = MagicMock()
+            mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+            mock_engine.return_value = mock_engine_instance
+
+            with patch("src.db.connection.AzureTokenProvider") as mock_provider_cls:
+                mock_provider = MagicMock()
+                mock_provider.get_token.return_value = "fake-token"
+                mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+                mock_provider_cls.return_value = mock_provider
+
+                conn = manager.connect(
+                    server="myserver.database.windows.net",
+                    database="testdb",
+                    authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+                )
+                assert conn.connection_id is not None
+
+    def test_azure_ad_integrated_ignores_provided_username_password(self):
+        """Providing username/password with azure_ad_integrated is silently ignored (no error)."""
+        manager = ConnectionManager()
+
+        with patch("src.db.connection.create_engine") as mock_engine:
+            mock_connection = MagicMock()
+            mock_result = MagicMock()
+            mock_result.fetchone.return_value = MagicMock(
+                version="SQL Server 2019",
+                database_name="testdb",
+            )
+            mock_connection.execute.return_value = mock_result
+            mock_engine_instance = MagicMock()
+            mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+            mock_engine.return_value = mock_engine_instance
+
+            with patch("src.db.connection.AzureTokenProvider") as mock_provider_cls:
+                mock_provider = MagicMock()
+                mock_provider.get_token.return_value = "fake-token"
+                mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+                mock_provider_cls.return_value = mock_provider
+
+                # Should not raise even with username/password provided
+                conn = manager.connect(
+                    server="myserver.database.windows.net",
+                    database="testdb",
+                    username="ignored@domain.com",
+                    password="ignored-password",
+                    authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+                )
+                assert conn.connection_id is not None
+
+
+class TestAzureAdIntegratedCreatorPattern:
+    """T010: Tests for creator function pattern with azure_ad_integrated."""
+
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_uses_creator_instead_of_url(self, mock_create_engine, mock_provider_cls):
+        """azure_ad_integrated uses create_engine(creator=...) instead of URL-based connection."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(
+            version="SQL Server 2019",
+            database_name="testdb",
+        )
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        # Verify create_engine was called with creator= keyword, not a URL containing odbc_connect
+        call_args = mock_create_engine.call_args
+        assert "creator" in call_args.kwargs or (len(call_args.args) == 0 and "creator" in call_args.kwargs)
+        # Should NOT have a URL as first positional arg
+        if call_args.args:
+            assert "odbc_connect" not in call_args.args[0]
+
+
+class TestAzureAdIntegratedConnectionIdHash:
+    """T011: Tests for connection ID hash with azure_ad_integrated."""
+
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_connection_id_uses_azure_ad_marker(self, mock_create_engine, mock_provider_cls):
+        """Connection ID hash uses 'azure_ad' (not username) for azure_ad_integrated."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(
+            version="SQL Server 2019",
+            database_name="testdb",
+        )
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+
+        # Connect with azure_ad_integrated (no username)
+        conn = manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        # The connection hash should be based on 'azure_ad', not 'windows' (the fallback when username is None)
+        import hashlib
+        expected_hash_input = "myserver.database.windows.net:1433/testdb/azure_ad"
+        expected_id = hashlib.sha256(expected_hash_input.encode()).hexdigest()[:12]
+        assert conn.connection_id == expected_id
+
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_azure_ad_integrated_id_differs_from_windows(self, mock_create_engine, mock_provider_cls):
+        """azure_ad_integrated connection ID differs from windows auth (same server/db, no username)."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(
+            version="SQL Server 2019",
+            database_name="testdb",
+        )
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+
+        # Azure AD integrated
+        conn_azure = manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        # Clear to allow re-connect
+        manager._engines.clear()
+        manager._connections.clear()
+
+        # Windows auth (same server/db, also no username)
+        conn_windows = manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.WINDOWS,
+        )
+
+        # They should have different IDs because the hash input differs
+        assert conn_azure.connection_id != conn_windows.connection_id
+
+
+class TestAzureAdIntegratedTokenRefresh:
+    """T019-T020: Tests for token refresh behavior with azure_ad_integrated."""
+
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_creator_calls_get_token_on_every_invocation(self, mock_create_engine, mock_provider_cls):
+        """T019: The creator callable calls get_token() on every invocation (not cached)."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(
+            version="SQL Server 2019",
+            database_name="testdb",
+        )
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        # Extract the creator callable from create_engine call
+        creator = mock_create_engine.call_args.kwargs["creator"]
+
+        # Reset the mock to track new calls
+        mock_provider.get_token.reset_mock()
+
+        # Call creator multiple times (simulating pool creating new connections)
+        with patch("src.db.connection.pyodbc") as mock_pyodbc:
+            mock_pyodbc.connect.return_value = MagicMock()
+            creator()
+            creator()
+            creator()
+
+        # get_token should be called once per creator invocation
+        assert mock_provider.get_token.call_count == 3
+
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_pool_pre_ping_and_recycle_set_for_azure_ad_integrated(self, mock_create_engine, mock_provider_cls):
+        """T020: pool_pre_ping=True and pool_recycle=3600 set on azure_ad_integrated engine."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(
+            version="SQL Server 2019",
+            database_name="testdb",
+        )
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        call_kwargs = mock_create_engine.call_args.kwargs
+        assert call_kwargs["pool_pre_ping"] is True
+        assert call_kwargs["pool_recycle"] == 3600
+
+
+class TestAzureAdIntegratedErrorPropagation:
+    """T026: Tests for error propagation from AzureTokenProvider through connect()."""
+
+    @patch("src.db.connection.AzureTokenProvider")
+    def test_connect_propagates_token_provider_error_as_connection_error(self, mock_provider_cls):
+        """connect() wraps token provider errors in ConnectionError with actionable message."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.side_effect = ConnectionError(
+            "Azure AD authentication failed: No credential sources available. "
+            "Run 'az login' or set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and AZURE_TENANT_ID environment variables."
+        )
+        mock_provider_cls.return_value = mock_provider
+
+        manager = ConnectionManager()
+
+        with pytest.raises(ConnectionError) as exc_info:
+            manager.connect(
+                server="myserver.database.windows.net",
+                database="testdb",
+                authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+            )
+
+        error_msg = str(exc_info.value)
+        assert "az login" in error_msg or "Azure AD" in error_msg

@@ -17,8 +17,8 @@
 
 **Purpose**: Add dependency and extend enum — prerequisites for all stories
 
-- [ ] T001 Add `azure-identity>=1.14.0` to core dependencies in pyproject.toml
-- [ ] T002 Add `AZURE_AD_INTEGRATED = "azure_ad_integrated"` enum value to `AuthenticationMethod` in src/models/schema.py
+- [x] T001 Add `azure-identity>=1.14.0` to core dependencies in pyproject.toml
+- [x] T002 Add `AZURE_AD_INTEGRATED = "azure_ad_integrated"` enum value to `AuthenticationMethod` in src/models/schema.py
 
 ---
 
@@ -32,14 +32,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T003 Write unit tests for `pack_token_for_pyodbc` (correct struct packing: 4-byte LE length prefix + UTF-16LE encoded token) in tests/unit/test_azure_auth.py
-- [ ] T004 [P] Write unit tests for `AzureTokenProvider.__init__` (credential creation with/without tenant_id, exclude_interactive_browser_credential=True, exclude_visual_studio_code_credential=True) in tests/unit/test_azure_auth.py
-- [ ] T005 [P] Write unit tests for `AzureTokenProvider.get_token` (returns token string, calls credential.get_token with correct scope `https://database.windows.net/.default`) in tests/unit/test_azure_auth.py
+- [x] T003 Write unit tests for `pack_token_for_pyodbc` (correct struct packing: 4-byte LE length prefix + UTF-16LE encoded token) in tests/unit/test_azure_auth.py
+- [x] T004 [P] Write unit tests for `AzureTokenProvider.__init__` (credential creation with/without tenant_id, exclude_interactive_browser_credential=True, exclude_visual_studio_code_credential=True) in tests/unit/test_azure_auth.py
+- [x] T005 [P] Write unit tests for `AzureTokenProvider.get_token` (returns token string, calls credential.get_token with correct scope `https://database.windows.net/.default`) in tests/unit/test_azure_auth.py
 
 ### Implementation for Foundational Phase
 
-- [ ] T006 Create `AzureTokenProvider` class in src/db/azure_auth.py: `__init__(tenant_id: str | None = None)` creates `DefaultAzureCredential` with non-interactive sources only; `get_token() -> str` acquires token scoped to `https://database.windows.net/.default`; `pack_token_for_pyodbc(token: str) -> bytes` packs token as `struct.pack("<I", len(encoded)) + encoded` where `encoded = token.encode("utf-16-le")`
-- [ ] T007 Verify foundational tests pass (run `pytest tests/unit/test_azure_auth.py`)
+- [x] T006 Create `AzureTokenProvider` class in src/db/azure_auth.py: `__init__(tenant_id: str | None = None)` creates `DefaultAzureCredential` with non-interactive sources only; `get_token() -> str` acquires token scoped to `https://database.windows.net/.default`; `pack_token_for_pyodbc(token: str) -> bytes` packs token as `struct.pack("<I", len(encoded)) + encoded` where `encoded = token.encode("utf-16-le")`
+- [x] T007 Verify foundational tests pass (run `pytest tests/unit/test_azure_auth.py`)
 
 **Checkpoint**: Token provider module ready — user story implementation can now begin
 
@@ -55,20 +55,20 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T008 [US1] Write unit tests in tests/unit/test_connection.py that: (a) `azure_ad_integrated` auth method does NOT require username/password validation, and (b) providing username/password with `azure_ad_integrated` is silently ignored (no error raised, values not used) per spec acceptance scenario 1.3
-- [ ] T009 [P] [US1] Write unit test for `_build_odbc_connection_string` with `azure_ad_integrated`: string must NOT contain `UID`, `PWD`, or `Authentication` keywords; must contain Driver, Server, Database, TrustServerCertificate, Connection Timeout in tests/unit/test_connection.py
-- [ ] T010 [P] [US1] Write unit test that `connect()` with `azure_ad_integrated` uses `create_engine(creator=...)` pattern instead of URL-based connection in tests/unit/test_connection.py
-- [ ] T011 [P] [US1] Write unit test that connection ID hash uses `'azure_ad'` (not username) when auth method is `azure_ad_integrated` in tests/unit/test_connection.py. Design note: current code falls through to `'windows'` when username is None; `'azure_ad'` disambiguates integrated auth connections in the hash.
+- [x] T008 [US1] Write unit tests in tests/unit/test_connection.py that: (a) `azure_ad_integrated` auth method does NOT require username/password validation, and (b) providing username/password with `azure_ad_integrated` is silently ignored (no error raised, values not used) per spec acceptance scenario 1.3
+- [x] T009 [P] [US1] Write unit test for `_build_odbc_connection_string` with `azure_ad_integrated`: string must NOT contain `UID`, `PWD`, or `Authentication` keywords; must contain Driver, Server, Database, TrustServerCertificate, Connection Timeout in tests/unit/test_connection.py
+- [x] T010 [P] [US1] Write unit test that `connect()` with `azure_ad_integrated` uses `create_engine(creator=...)` pattern instead of URL-based connection in tests/unit/test_connection.py
+- [x] T011 [P] [US1] Write unit test that connection ID hash uses `'azure_ad'` (not username) when auth method is `azure_ad_integrated` in tests/unit/test_connection.py. Design note: current code falls through to `'windows'` when username is None; `'azure_ad'` disambiguates integrated auth connections in the hash.
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Update `_build_odbc_connection_string` in src/db/connection.py to handle `AZURE_AD_INTEGRATED`: emit only Driver, Server, Database, TrustServerCertificate, Connection Timeout (no UID/PWD/Authentication)
-- [ ] T013 [US1] Add `tenant_id: str | None = None` parameter to `ConnectionManager.connect()` in src/db/connection.py. Note: this brings `connect()` to 9 params, exceeding the constitution's 5-param complexity budget. Justified: all params are direct ODBC/auth concerns with no natural grouping that wouldn't be a premature abstraction (Principle I). Pre-existing condition (already at 8). Document in code review.
-- [ ] T014 [US1] Update `connect()` in src/db/connection.py: when auth method is `azure_ad_integrated`, create `AzureTokenProvider`, build a `creator` callable that acquires a fresh token via provider, packs it, and returns a `pyodbc.connect()` with `attrs_before={1256: packed_token}`; pass `creator` to `create_engine` instead of URL
-- [ ] T015 [US1] Update connection ID hash in `connect()` in src/db/connection.py to use `'azure_ad'` instead of username for `azure_ad_integrated` auth (prevents collision with Windows auth's `'windows'` fallback when username is None)
-- [ ] T016 [US1] Add `tenant_id: str | None = None` parameter to `connect_database` tool in src/mcp_server/server.py, pass through to `conn_manager.connect()`
-- [ ] T017 [US1] Update invalid auth method error message in src/mcp_server/server.py to include `'azure_ad_integrated'` in the list of valid methods
-- [ ] T018 [US1] Verify User Story 1 tests pass (run `pytest tests/unit/test_connection.py tests/unit/test_azure_auth.py`)
+- [x] T012 [US1] Update `_build_odbc_connection_string` in src/db/connection.py to handle `AZURE_AD_INTEGRATED`: emit only Driver, Server, Database, TrustServerCertificate, Connection Timeout (no UID/PWD/Authentication)
+- [x] T013 [US1] Add `tenant_id: str | None = None` parameter to `ConnectionManager.connect()` in src/db/connection.py. Note: this brings `connect()` to 9 params, exceeding the constitution's 5-param complexity budget. Justified: all params are direct ODBC/auth concerns with no natural grouping that wouldn't be a premature abstraction (Principle I). Pre-existing condition (already at 8). Document in code review.
+- [x] T014 [US1] Update `connect()` in src/db/connection.py: when auth method is `azure_ad_integrated`, create `AzureTokenProvider`, build a `creator` callable that acquires a fresh token via provider, packs it, and returns a `pyodbc.connect()` with `attrs_before={1256: packed_token}`; pass `creator` to `create_engine` instead of URL
+- [x] T015 [US1] Update connection ID hash in `connect()` in src/db/connection.py to use `'azure_ad'` instead of username for `azure_ad_integrated` auth (prevents collision with Windows auth's `'windows'` fallback when username is None)
+- [x] T016 [US1] Add `tenant_id: str | None = None` parameter to `connect_database` tool in src/mcp_server/server.py, pass through to `conn_manager.connect()`
+- [x] T017 [US1] Update invalid auth method error message in src/mcp_server/server.py to include `'azure_ad_integrated'` in the list of valid methods
+- [x] T018 [US1] Verify User Story 1 tests pass (run `pytest tests/unit/test_connection.py tests/unit/test_azure_auth.py`)
 
 **Checkpoint**: Users can connect to Azure SQL using `azure_ad_integrated` — core capability complete
 
@@ -84,14 +84,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T019 [US2] Write unit test that the `creator` callable calls `AzureTokenProvider.get_token()` on every invocation (not cached) in tests/unit/test_connection.py
-- [ ] T020 [P] [US2] Write unit test that `pool_pre_ping=True` and `pool_recycle=3600` are set on the engine created for `azure_ad_integrated` connections in tests/unit/test_connection.py
+- [x] T019 [US2] Write unit test that the `creator` callable calls `AzureTokenProvider.get_token()` on every invocation (not cached) in tests/unit/test_connection.py
+- [x] T020 [P] [US2] Write unit test that `pool_pre_ping=True` and `pool_recycle=3600` are set on the engine created for `azure_ad_integrated` connections in tests/unit/test_connection.py
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Code review + validate that the `creator` function from T014 calls `provider.get_token()` fresh on each invocation (no token caching in the creator — `azure-identity` handles its own token cache internally). No new code expected; this validates the US1 implementation satisfies US2's refresh requirement.
-- [ ] T022 [US2] Code review + validate that `pool_pre_ping` and `pool_recycle` from `PoolConfig` are applied to the `azure_ad_integrated` engine in src/db/connection.py. No new code expected; this confirms existing pool defaults cover token expiry.
-- [ ] T023 [US2] Verify User Story 2 tests pass (run `pytest tests/unit/test_connection.py -k "refresh or pool or creator"`)
+- [x] T021 [US2] Code review + validate that the `creator` function from T014 calls `provider.get_token()` fresh on each invocation (no token caching in the creator — `azure-identity` handles its own token cache internally). No new code expected; this validates the US1 implementation satisfies US2's refresh requirement.
+- [x] T022 [US2] Code review + validate that `pool_pre_ping` and `pool_recycle` from `PoolConfig` are applied to the `azure_ad_integrated` engine in src/db/connection.py. No new code expected; this confirms existing pool defaults cover token expiry.
+- [x] T023 [US2] Verify User Story 2 tests pass (run `pytest tests/unit/test_connection.py -k "refresh or pool or creator"`)
 
 **Checkpoint**: Token refresh is automatic — long sessions work without manual intervention
 
@@ -107,16 +107,16 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T024 [US3] Write unit test that `CredentialUnavailableError` from `azure-identity` is caught and translated to an actionable message mentioning `az login` and environment variable setup in tests/unit/test_azure_auth.py
-- [ ] T025 [P] [US3] Write unit test that `ClientAuthenticationError` (expired credentials) produces a message indicating credentials are expired and suggesting re-authentication in tests/unit/test_azure_auth.py
-- [ ] T026 [P] [US3] Write unit test that `connect()` propagates the actionable error message from `AzureTokenProvider` as a `ConnectionError` in tests/unit/test_connection.py
+- [x] T024 [US3] Write unit test that `CredentialUnavailableError` from `azure-identity` is caught and translated to an actionable message mentioning `az login` and environment variable setup in tests/unit/test_azure_auth.py
+- [x] T025 [P] [US3] Write unit test that `ClientAuthenticationError` (expired credentials) produces a message indicating credentials are expired and suggesting re-authentication in tests/unit/test_azure_auth.py
+- [x] T026 [P] [US3] Write unit test that `connect()` propagates the actionable error message from `AzureTokenProvider` as a `ConnectionError` in tests/unit/test_connection.py
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Add error handling to `AzureTokenProvider.get_token()` in src/db/azure_auth.py: catch `CredentialUnavailableError` → raise with message "Azure AD authentication failed: No credential sources available. Run 'az login' or set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and AZURE_TENANT_ID environment variables."
-- [ ] T028 [US3] Add error handling for `ClientAuthenticationError` in src/db/azure_auth.py → raise with message indicating expired credentials and suggesting re-authentication
-- [ ] T029 [US3] Ensure `connect()` in src/db/connection.py catches token provider errors and wraps them in `ConnectionError` with the actionable message preserved
-- [ ] T030 [US3] Verify User Story 3 tests pass (run `pytest tests/unit/test_azure_auth.py tests/unit/test_connection.py -k "error or fail"`)
+- [x] T027 [US3] Add error handling to `AzureTokenProvider.get_token()` in src/db/azure_auth.py: catch `CredentialUnavailableError` → raise with message "Azure AD authentication failed: No credential sources available. Run 'az login' or set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and AZURE_TENANT_ID environment variables."
+- [x] T028 [US3] Add error handling for `ClientAuthenticationError` in src/db/azure_auth.py → raise with message indicating expired credentials and suggesting re-authentication
+- [x] T029 [US3] Ensure `connect()` in src/db/connection.py catches token provider errors and wraps them in `ConnectionError` with the actionable message preserved
+- [x] T030 [US3] Verify User Story 3 tests pass (run `pytest tests/unit/test_azure_auth.py tests/unit/test_connection.py -k "error or fail"`)
 
 **Checkpoint**: All auth failures produce clear, actionable error messages
 
@@ -126,9 +126,9 @@
 
 **Purpose**: Validation, regression checks, and cleanup
 
-- [ ] T031 Run full test suite (`pytest tests/`) and verify zero regressions on existing auth methods (sql, windows, azure_ad)
-- [ ] T032 Run `ruff check src/ tests/` and fix any lint warnings
-- [ ] T033 **[Integration test required]** Validate quickstart.md scenarios against a live Azure SQL instance. Must verify SC-005: successful authentication in at least two distinct credential environments (e.g., Azure CLI-based and environment variable-based). Also verify token acquisition completes within the 5s performance target from plan.md (network-dependent; log timing for review).
+- [x] T031 Run full test suite (`pytest tests/`) and verify zero regressions on existing auth methods (sql, windows, azure_ad)
+- [x] T032 Run `ruff check src/ tests/` and fix any lint warnings
+- [x] T033 **[Integration test required]** Validate quickstart.md scenarios against a live Azure SQL instance. Must verify SC-005: successful authentication in at least two distinct credential environments (e.g., Azure CLI-based and environment variable-based). Also verify token acquisition completes within the 5s performance target from plan.md (network-dependent; log timing for review).
 
 ---
 
