@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "featcomp": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:ac1e5a5c277890f54e7541ff735494d64655bc4a7e81dfbc40ac11f8935ee2a0",
+      "enabled": true,
+      "registered_commands": {
+        "claude": [
+          "speckit.featcomp.complete",
+          "speckit.complete"
+        ]
+      },
+      "installed_at": "2026-02-26T20:44:22.720517+00:00"
+    }
+  }
+}

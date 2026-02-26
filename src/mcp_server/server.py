@@ -49,6 +49,7 @@ async def connect_database(
     authentication_method: str = "sql",
     trust_server_cert: bool = False,
     connection_timeout: int = 30,
+    tenant_id: str | None = None,
 ) -> str:
     """Connect to a SQL Server database.
 
@@ -58,12 +59,13 @@ async def connect_database(
     Args:
         server: SQL Server host (hostname or IP address)
         database: Database name
-        username: Username for SQL/Azure AD authentication (optional for Windows auth)
-        password: Password for SQL/Azure AD authentication (optional for Windows auth)
+        username: Username for SQL/Azure AD authentication (optional for Windows/azure_ad_integrated auth)
+        password: Password for SQL/Azure AD authentication (optional for Windows/azure_ad_integrated auth)
         port: SQL Server port (default: 1433)
-        authentication_method: Auth method - 'sql', 'windows', or 'azure_ad' (default: 'sql')
+        authentication_method: Auth method - 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated' (default: 'sql')
         trust_server_cert: Trust server certificate without validation (default: False)
         connection_timeout: Connection timeout in seconds, 5-300 (default: 30)
+        tenant_id: Azure AD tenant ID for azure_ad_integrated auth (optional, default: None)
 
     Returns:
         JSON string with connection details including connection_id
@@ -75,7 +77,7 @@ async def connect_database(
         except ValueError:
             return json.dumps({
                 "status": "failed",
-                "message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', or 'azure_ad'.",
+                "message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
             })
 
         # Attempt connection
@@ -89,6 +91,7 @@ async def connect_database(
             authentication_method=auth_method,
             trust_server_cert=trust_server_cert,
             connection_timeout=connection_timeout,
+            tenant_id=tenant_id,
         )
 
         # Get schema count for response

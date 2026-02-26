@@ -15,6 +15,7 @@ class AuthenticationMethod(str, Enum):
     SQL = "sql"
     WINDOWS = "windows"
     AZURE_AD = "azure_ad"
+    AZURE_AD_INTEGRATED = "azure_ad_integrated"
 
 
 class TableType(str, Enum):
