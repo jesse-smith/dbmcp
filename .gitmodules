@@ -1,0 +1,3 @@
+[submodule ".specify/extensions/featcomp"]
+	path = .specify/extensions/featcomp
+	url = https://github.com/jesse-smith/spec-kit-featcomp
