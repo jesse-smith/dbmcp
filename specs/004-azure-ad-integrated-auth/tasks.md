@@ -1,5 +1,7 @@
 # Tasks: Azure AD Integrated Authentication
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `004-azure-ad-integrated-auth`
+
 **Input**: Design documents from `/specs/004-azure-ad-integrated-auth/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/connect-database-tool.md, quickstart.md
 

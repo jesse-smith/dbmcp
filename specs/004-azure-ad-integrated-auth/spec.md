@@ -1,8 +1,10 @@
 # Feature Specification: Azure AD Integrated Authentication
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `004-azure-ad-integrated-auth`
+
 **Feature Branch**: `004-azure-ad-integrated-auth`
 **Created**: 2026-02-26
-**Status**: Draft
+**Status**: Complete
 **Input**: User description: "Add ActiveDirectoryIntegrated authentication support using azure-identity's DefaultAzureCredential for token-based Azure AD auth. This adds a new AZURE_AD_INTEGRATED enum value to AuthenticationMethod, acquires tokens via azure-identity (not az CLI), and passes them to pyodbc via SQL_COPT_SS_ACCESS_TOKEN. azure-identity is a core dependency (not optional) since the team targets Azure SQL. The existing AZURE_AD (ActiveDirectoryPassword) method remains unchanged. Key considerations: token refresh for pooled connections (tokens expire ~1hr), the SQL_COPT_SS_ACCESS_TOKEN struct packing for pyodbc, and using SQLAlchemy's creator function to inject tokens at connection creation time."
 
 ## User Scenarios & Testing *(mandatory)*

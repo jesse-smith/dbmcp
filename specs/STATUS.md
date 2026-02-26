@@ -8,6 +8,7 @@ Central registry of all features and their current status.
 | 002 | Example Notebooks | `002-example-notebooks` | Archived | 2026-01-20 | Workflow changed: notebooks now tracked in 001 |
 | 003 | Speckit Workflow Integration | `003-speckit-workflow-integration` | Complete | 2026-01-26 | Tooling feature - no spec docs |
 | 003 | Allow CTE Queries | `003-allow-cte-queries` | Complete | 2026-02-03 | CTE+SELECT queries, DDL blocklist |
+| 004 | Azure AD Integrated Auth | `004-azure-ad-integrated-auth` | Complete | 2026-02-26 | Token-based Azure AD auth via azure-identity |
 
 ## Status Definitions
 

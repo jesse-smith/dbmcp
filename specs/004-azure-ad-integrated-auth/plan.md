@@ -1,5 +1,7 @@
 # Implementation Plan: Azure AD Integrated Authentication
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `004-azure-ad-integrated-auth`
+
 **Branch**: `004-azure-ad-integrated-auth` | **Date**: 2026-02-26 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/004-azure-ad-integrated-auth/spec.md`
 
