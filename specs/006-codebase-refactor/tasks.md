@@ -151,7 +151,7 @@
 - [x] T059 Verify SC-002: no source module exceeds 400 lines (confirm T034 results still hold after US2/US3 changes)
 - [x] T060 Verify SC-003: no class exceeds 15 public methods (confirm T034 results still hold after US2/US3 changes)
 - [x] T061 Verify SC-008: no circular import dependencies (confirmed by T056)
-- [ ] T062 **COLLABORATIVE**: Manual integration testing — restart MCP server and jointly verify all 6 active tools work end-to-end against a live database (requires user participation)
+- [x] T062 **COLLABORATIVE**: Manual integration testing — restart MCP server and jointly verify all 6 active tools work end-to-end against a live database (requires user participation)
 
 **Checkpoint**: All success criteria verified. Feature complete.
 
