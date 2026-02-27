@@ -264,7 +264,8 @@ class TestQueryService:
 
     def test_datetime_serialization(self, mock_engine):
         """Test datetime values are converted to ISO format strings."""
-        from datetime import datetime, date, time as dt_time
+        from datetime import date, datetime
+        from datetime import time as dt_time
 
         mock_result = MagicMock()
         mock_row = MagicMock()
