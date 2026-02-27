@@ -43,9 +43,13 @@ DENIED_TYPES: dict[type[exp.Expression], DenialCategory] = {
     exp.TruncateTable: DenialCategory.DDL,
     # DCL
     exp.Grant: DenialCategory.DCL,
+    exp.Revoke: DenialCategory.DCL,
     # Operational
     exp.Command: DenialCategory.OPERATIONAL,
 }
+
+# Control flow block types that may contain nested denied operations
+_CONTROL_FLOW_TYPES = (exp.IfBlock, exp.WhileBlock)
 
 # 22 known-safe SQL Server system stored procedures (lowercase, unqualified)
 SAFE_PROCEDURES: frozenset[str] = frozenset({
@@ -133,7 +137,11 @@ def _classify_statement(stmt: exp.Expression, idx: int) -> list[DenialReason]:
     if isinstance(stmt, _GARBAGE_PARSE_TYPES):
         return [DenialReason(DenialCategory.PARSE_FAILURE, "Unrecognized statement", idx)]
 
-    # Command: EXEC/EXECUTE → stored procedure check; others → Operational
+    # Execute/ExecuteSql (sqlglot >=29): EXEC/EXECUTE → stored procedure check
+    if isinstance(stmt, exp.Execute):
+        return _check_execute(stmt, idx)
+
+    # Command: EXEC/EXECUTE (sqlglot <29) or other unrecognized commands → Operational
     # Must be checked before DENIED_TYPES since Command is in that map
     if isinstance(stmt, exp.Command):
         return _check_command(stmt, idx)
@@ -159,7 +167,67 @@ def _classify_statement(stmt: exp.Expression, idx: int) -> list[DenialReason]:
     if isinstance(stmt, exp.Select) and stmt.find(exp.Into):
         return [DenialReason(DenialCategory.SELECT_INTO, "SELECT INTO creates a new table and is not permitted", idx)]
 
+    # Control flow blocks (IF/WHILE): walk AST for nested denied operations
+    if isinstance(stmt, _CONTROL_FLOW_TYPES):
+        return _check_control_flow(stmt, idx)
+
     return []
+
+
+def _check_execute(stmt: exp.Execute, idx: int) -> list[DenialReason]:
+    """Check an Execute node (sqlglot >=29 EXEC/EXECUTE)."""
+    # ExecuteSql is a subclass of Execute for sp_executesql
+    if isinstance(stmt, exp.ExecuteSql):
+        return [DenialReason(
+            DenialCategory.STORED_PROCEDURE,
+            "sp_executesql is explicitly denied (executes arbitrary SQL)",
+            idx,
+        )]
+
+    # Extract procedure name from the Table node in stmt.this
+    proc_table = stmt.this
+    if proc_table and hasattr(proc_table, "this"):
+        proc_name = str(proc_table.this)
+    else:
+        proc_name = str(proc_table) if proc_table else ""
+
+    canonical = proc_name.rsplit(".", 1)[-1].lower()
+
+    if canonical in SAFE_PROCEDURES:
+        return []
+
+    return [DenialReason(
+        DenialCategory.STORED_PROCEDURE,
+        f"Stored procedure '{proc_name}' is not in the safe allowlist",
+        idx,
+    )]
+
+
+def _check_control_flow(stmt: exp.Expression, idx: int) -> list[DenialReason]:
+    """Check a control flow block (IF/WHILE) for nested denied operations."""
+    # Walk the AST looking for any denied operation nested inside
+    for node in stmt.walk():
+        if node is stmt:
+            continue
+        for denied_type, category in DENIED_TYPES.items():
+            if isinstance(node, denied_type):
+                block_type = type(stmt).__name__.replace("Block", "").upper()
+                detail = f"{type(node).__name__.upper()} inside {block_type} block is not permitted"
+                return [DenialReason(category, detail, idx)]
+        # Also check for nested Execute
+        if isinstance(node, exp.Execute):
+            nested = _check_execute(node, idx)
+            if nested:
+                return nested
+
+    # If the block was misparsed (no recognizable body), treat as unsafe
+    # sqlglot may not fully parse T-SQL control flow, so deny conservatively
+    block_type = type(stmt).__name__.replace("Block", "").upper()
+    return [DenialReason(
+        DenialCategory.OPERATIONAL,
+        f"{block_type} control flow blocks are not permitted",
+        idx,
+    )]
 
 
 def _check_command(stmt: exp.Command, idx: int) -> list[DenialReason]:
