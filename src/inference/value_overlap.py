@@ -14,7 +14,7 @@ Performance target: Overlap analysis must not exceed 10s per table pair.
 
 import time
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -31,7 +31,7 @@ DEFAULT_OVERLAP_TIMEOUT_SECONDS = 10
 DEFAULT_SAMPLE_SIZE = 1000
 
 
-class OverlapStrategy(str, Enum):
+class OverlapStrategy(StrEnum):
     """Strategy for computing value overlap."""
 
     FULL_COMPARISON = "full_comparison"  # Hash all distinct values

@@ -5,17 +5,17 @@ between tables in the database.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class RelationshipType(str, Enum):
+class RelationshipType(StrEnum):
     """How the relationship was discovered."""
 
     DECLARED = "declared"  # Schema-defined foreign key
     INFERRED = "inferred"  # Algorithm-inferred relationship
 
 
-class CascadeAction(str, Enum):
+class CascadeAction(StrEnum):
     """FK cascade behavior on delete/update."""
 
     CASCADE = "CASCADE"

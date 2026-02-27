@@ -10,7 +10,7 @@ Example cryptic columns that benefit from analysis:
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -21,7 +21,7 @@ from src.models.schema import InferredPurpose
 logger = get_logger(__name__)
 
 
-class ColumnCategory(str, Enum):
+class ColumnCategory(StrEnum):
     """Categories of column data types for analysis."""
 
     NUMERIC = "numeric"

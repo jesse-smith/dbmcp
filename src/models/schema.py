@@ -6,10 +6,10 @@ All entities are internal data structures - no persistent database storage requi
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class AuthenticationMethod(str, Enum):
+class AuthenticationMethod(StrEnum):
     """Supported authentication methods for SQL Server connections."""
 
     SQL = "sql"
@@ -18,14 +18,14 @@ class AuthenticationMethod(str, Enum):
     AZURE_AD_INTEGRATED = "azure_ad_integrated"
 
 
-class TableType(str, Enum):
+class TableType(StrEnum):
     """Database object types."""
 
     TABLE = "table"
     VIEW = "view"
 
 
-class InferredPurpose(str, Enum):
+class InferredPurpose(StrEnum):
     """Possible inferred purposes for columns."""
 
     ID = "id"
@@ -39,7 +39,7 @@ class InferredPurpose(str, Enum):
     UNKNOWN = "unknown"
 
 
-class SamplingMethod(str, Enum):
+class SamplingMethod(StrEnum):
     """Methods for sampling table data."""
 
     TOP = "top"  # Simple SELECT TOP N (fast, not representative)
@@ -47,7 +47,7 @@ class SamplingMethod(str, Enum):
     MODULO = "modulo"  # WHERE ID % interval = 0 (deterministic)
 
 
-class QueryType(str, Enum):
+class QueryType(StrEnum):
     """SQL query types."""
 
     SELECT = "select"
@@ -57,7 +57,7 @@ class QueryType(str, Enum):
     OTHER = "other"
 
 
-class DenialCategory(str, Enum):
+class DenialCategory(StrEnum):
     """Classification of why a query was denied."""
 
     DML = "dml"
