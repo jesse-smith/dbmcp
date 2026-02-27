@@ -743,7 +743,7 @@ async def export_documentation(
         # Import here to avoid circular imports
         from src.cache.storage import DocumentationStorage
         from src.inference.relationships import ForeignKeyInferencer
-        from src.models.relationship import DeclaredFK
+        from src.models.relationship import DeclaredFK, create_relationship_id
 
         storage = DocumentationStorage()
 
@@ -775,12 +775,32 @@ async def export_documentation(
                     table.table_name, schema.schema_name
                 )
 
-        # Get declared foreign keys
+        # Get declared foreign keys (convert raw dicts from SQLAlchemy to DeclaredFK objects)
         declared_fks: list[DeclaredFK] = []
         for schema in schemas:
             for table in tables_dict.get(schema.schema_name, []):
-                fks = metadata_svc.get_foreign_keys(table.table_name, schema.schema_name)
-                declared_fks.extend(fks)
+                raw_fks = metadata_svc.get_foreign_keys(table.table_name, schema.schema_name)
+                for fk_dict in raw_fks:
+                    # SQLAlchemy returns multi-column FKs as lists; create one DeclaredFK per column pair
+                    source_cols = fk_dict.get("constrained_columns", [])
+                    target_cols = fk_dict.get("referred_columns", [])
+                    referred_schema = fk_dict.get("referred_schema") or schema.schema_name
+                    referred_table = fk_dict.get("referred_table", "")
+                    constraint_name = fk_dict.get("name", "")
+
+                    for src_col, tgt_col in zip(source_cols, target_cols, strict=False):
+                        rel_id = create_relationship_id(
+                            table.table_id, src_col,
+                            f"{referred_schema}.{referred_table}", tgt_col,
+                        )
+                        declared_fks.append(DeclaredFK(
+                            relationship_id=rel_id,
+                            source_table_id=table.table_id,
+                            source_column=src_col,
+                            target_table_id=f"{referred_schema}.{referred_table}",
+                            target_column=tgt_col,
+                            constraint_name=constraint_name,
+                        ))
 
         # Get inferred relationships if requested
         inferred_fks = []

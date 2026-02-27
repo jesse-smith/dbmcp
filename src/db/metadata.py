@@ -411,11 +411,21 @@ class MetadataService:
         order_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
 
         # T132: First get total count for pagination
+        # Must include row_counts join and min_row_count filter to match the data query
         count_query = text(f"""
+            WITH row_counts AS (
+                SELECT
+                    object_id,
+                    SUM(CASE WHEN index_id IN (0, 1) THEN row_count ELSE 0 END) AS row_count
+                FROM sys.dm_db_partition_stats
+                GROUP BY object_id
+            )
             SELECT COUNT(*) AS total_count
             FROM sys.objects t
             INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            LEFT JOIN row_counts ON t.object_id = row_counts.object_id
             WHERE {where_sql}
+            {"AND ISNULL(row_counts.row_count, 0) >= :min_row_count" if min_row_count else ""}
         """)
 
         effective_limit = min(max(limit, 1), 1000)
