@@ -147,8 +147,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Fix**: Add the same `min_row_count` condition to the count query. Requires joining `row_counts` CTE in the count query as well, since row counts come from `sys.dm_db_partition_stats`.
 **Repro**: `list_tables(min_row_count=1000000)` → returns 16 tables but `total_count=440, has_more=true`
 
-### Issue #2: `list_tables` pagination field names are misleading and diverge from spec
-**Severity**: Low (confusing but functional)
+### Issue #2: `list_tables` pagination field names are misleading and diverge from spec — FIXED
+**Severity**: Low (confusing but functional) — **Fixed in `bugfix/tier2-issues` (commit f75c8e9)**
 **Location**: `src/mcp_server/server.py` lines 314-321
 **Description**: The response uses `total_tables` (= len of current page) and `total_count` (= total matching population). The naming is counterintuitive — `total_tables` sounds like the bigger number. The spec contract (`specs/001-db-schema-explorer/contracts/mcp_tools.md` line 307) defines `total_tables` (total population) and `filtered_count` (matched filters), which have different semantics and names than the implementation.
 **Suggestion**: Rename to `returned_count` + `total_count`, or align with the spec's `total_tables` + `filtered_count`. Either way, pick names where the semantics are obvious.
@@ -179,15 +179,15 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Repro**: `get_sample_data(table_name="PerformedActs")` → error. Workaround: pass `columns` param excluding datetime columns.
 **Fix**: Add `datetime`/`date`/`time`/`Decimal` handling in `_truncate_value` (convert to `.isoformat()` / `str()`), or add a `default=` handler to `json.dumps` in the server response.
 
-### Issue #6: `get_sample_data` tablesample returns 0 rows for small sample sizes on large tables
-**Severity**: Medium (silent failure — returns empty result instead of error)
+### Issue #6: `get_sample_data` tablesample returns 0 rows for small sample sizes on large tables — FIXED
+**Severity**: Medium (silent failure — returns empty result instead of error) — **Fixed in `bugfix/tier2-issues` (commit 07a3136)**
 **Location**: `src/db/query.py` lines 329-348 (`_build_tablesample_query`)
 **Description**: SQL Server's `TABLESAMPLE (N ROWS)` samples at the 8KB data page level, not individual rows. The `N ROWS` hint is statistical — on a 60M-row table, `TABLESAMPLE (5 ROWS)` translates to such a tiny fraction that SQL Server often selects zero pages, returning 0 rows with no error or warning.
 **Repro**: `get_sample_data(table_name="PerformedActs", sampling_method="tablesample", sample_size=5)` → 0 rows, `sample_size=100` → 100 rows.
 **Fix options**: (1) Calculate a `PERCENT` value instead of using `ROWS` hint: `TABLESAMPLE (max(0.01, N/total_rows * 100) PERCENT)`. (2) Fall back to `top` when tablesample returns 0 rows and log a warning. (3) Document the limitation and recommend larger sample sizes for tablesample.
 
-### Issue #7: `get_sample_data` modulo strategy is unimplemented (identical to top)
-**Severity**: Medium (misleading API — advertises 3 distinct strategies but only 2 are functional)
+### Issue #7: `get_sample_data` modulo strategy is unimplemented (identical to top) — FIXED
+**Severity**: Medium (misleading API — advertises 3 distinct strategies but only 2 are functional) — **Fixed in `bugfix/tier2-issues` (commit 7a05637)**
 **Location**: `src/db/query.py` lines 350-377 (`_build_modulo_query`)
 **Description**: The modulo strategy is documented as "deterministic sampling using modulo on row number (repeatable)" but the SQL Server implementation generates `SELECT TOP (N) ... ORDER BY (SELECT NULL)`, which is a no-op ordering hint. The optimizer returns rows in clustered index order, producing identical results to `top`. A real modulo implementation would need to: (1) identify a sequential/identity column, (2) calculate a modulo interval based on table row count and sample size, (3) filter with `WHERE id_col % interval = 0`.
 **Repro**: Compare `get_sample_data(sampling_method="top", sample_size=5)` vs `get_sample_data(sampling_method="modulo", sample_size=5)` on PerformedActs — identical rows returned.
@@ -210,8 +210,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 5. **`is_enum` contradicts `inferred_purpose`**: StatusID returns `is_enum: true` but `inferred_purpose: "id"` — the enum flag is computed but ignored by the purpose classifier.
 **Repro**: `analyze_column(column_name="StatusID", table_name="BaseEntities")` → `id` at 0.90 with `is_enum: true`. `analyze_column(column_name="Result_Value", table_name="PerformedActs_QuantitativeObservation")` → `unknown` at 0.50, all stats null.
 
-### Issue #10: `analyze_column` fails silently on nonexistent columns and small tables
-**Severity**: Medium (confusing UX — no way to distinguish invalid input from valid-but-unknown)
+### Issue #10: `analyze_column` fails silently on nonexistent columns and small tables — FIXED
+**Severity**: Medium (confusing UX — no way to distinguish invalid input from valid-but-unknown) — **Fixed in `bugfix/tier2-issues` (commit b28b246)**
 **Location**: `src/inference/columns.py` and/or `src/mcp_server/server.py`
 **Description**: Both nonexistent columns and small tables return `data_type: "unknown", total_rows: 0, distinct_count: 0, inferred_purpose: "unknown"`. No error is raised. A fake column (`TOTALLY_FAKE_COLUMN`) produces identical output to a real column on a 7-row table (`CVs_ProtocolDefinitionType.ElementID`). Nonexistent columns should return an explicit error. Small tables should still return valid metadata.
 **Repro**: `analyze_column(column_name="TOTALLY_FAKE_COLUMN", table_name="PerformedActs")` → no error, `total_rows: 0`. `analyze_column(column_name="ElementID", table_name="CVs_ProtocolDefinitionType")` → same output, `total_rows: 0`.
@@ -229,15 +229,15 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Description**: When loading a partial cache (from a prior failed export), the tool returns `status: "loaded"` with schema-level data but `entity_counts.tables: 0`, `declared_fks: 0`, `cache_age_days: null`, `schema_hash: null`. The consumer has no indication the cache is incomplete. Should return `status: "partial"` or `status: "incomplete"` with a warning, or validate that entity counts are consistent with schema counts before claiming success.
 **Repro**: `load_cached_docs(connection_id="542f8ffefc15")` after a failed `export_documentation` → `status: "loaded"` with contradictory data (schemas show 440 objects but `tables: 0`).
 
-### Issue #13: `export_documentation` silently truncates tables at 100 per schema
-**Severity**: Medium (data loss — export is incomplete without indication)
+### Issue #13: `export_documentation` silently truncates tables at 100 per schema — FIXED
+**Severity**: Medium (data loss — export is incomplete without indication) — **Fixed in `bugfix/tier2-issues` (commit 72e97ca)**
 **Location**: `src/mcp_server/server.py` lines 763-766
 **Description**: `export_documentation` calls `metadata_svc.list_tables(schema_name=...)` without passing a `limit` parameter. The `list_tables` method in `src/db/metadata.py` defaults to `limit=100`. Since pagination is never used, only the first 100 tables per schema are exported. For StemSoftClinic: dbo has 439 objects but only 100 are fetched; reporting has 1, so 101 total. The storage layer (`cache/storage.py`) correctly writes whatever it receives — the truncation happens upstream in the collection loop. Schema-level counts in the cache (dbo: 297+142) come from `list_schemas` which queries correctly, creating a visible discrepancy with `entity_counts.tables: 101`.
 **Repro**: `export_documentation(connection_id="542f8ffefc15")` → reports 101 tables. `load_cached_docs` → `entity_counts.tables: 101` but schema counts sum to 440.
 **Fix**: Pass `limit=0` or a sufficiently large limit in the `list_tables` call within `export_documentation`, or loop with pagination until `has_more=false`.
 
-### Issue #14: `export_documentation` custom output_dir — response reports wrong file paths + absolute paths rejected
-**Severity**: Low (files are written correctly; only the response metadata is wrong)
+### Issue #14: `export_documentation` custom output_dir — response reports wrong file paths + absolute paths rejected — FIXED
+**Severity**: Low (files are written correctly; only the response metadata is wrong) — **Fixed in `bugfix/tier2-issues` (commit e33f666)**
 **Location**: `src/mcp_server/server.py` line 855, `src/cache/storage.py` line 750
 **Description**: Two sub-issues with custom `output_dir`:
 1. **Wrong `files_created` in response**: `server.py:855` calls `storage.get_cache_metadata(connection_id)` which always reads from the default cache location (`docs/{connection_id}/.cache_metadata.json`), not the custom output directory. When exporting to `exports/custom_test`, the response returns stale `files_created` paths from the previous default-location export. The custom export does write a correct `.cache_metadata.json` in the custom dir — it's just never read back.
@@ -245,8 +245,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Repro**: `export_documentation(connection_id="542f8ffefc15", output_dir="exports/custom_test")` → files written correctly to `exports/custom_test/` but `files_created` in response shows `docs/542f8ffefc15/...` paths.
 **Fix**: (1) Pass the custom `output_dir` to `get_cache_metadata` or read metadata from the `cache` return value. (2) For absolute paths, either support them or validate early with a clear error.
 
-### Issue #15: `check_drift` auto-refresh doesn't preserve prior export settings
-**Severity**: Low (functional but surprising behavior)
+### Issue #15: `check_drift` auto-refresh doesn't preserve prior export settings — FIXED
+**Severity**: Low (functional but surprising behavior) — **Fixed in `bugfix/tier2-issues` (commit fc8f639)**
 **Location**: `src/mcp_server/server.py` lines 999-1002
 **Description**: When `check_drift(auto_refresh=True)` triggers a re-export, it hardcodes `include_inferred_relationships=True` and omits `include_sample_data` (defaults to `False`). Prior export settings stored in `.cache_metadata.json` (which records `include_sample_data` and `include_inferred_relationships`) are not read or passed through. This means an auto-refresh can silently change the cache contents — e.g., a cache originally exported with `include_sample_data=True` loses its sample data after drift refresh.
 **Repro**: Export with `include_sample_data=True` (220KB). Tamper cache hash. Run `check_drift(auto_refresh=True)` → re-export uses defaults, sample data lost, size changes.
@@ -261,14 +261,14 @@ Compare cached docs hash against current database schema. Detects added/removed/
 2. ~~**#1** — list_tables count ignores min_row_count~~ — fixed (b7207e6), verified against live DB
 3. ~~**#11** — export FK type mismatch crash~~ — fixed (cb4be90), verified against live DB (140 FKs exported)
 
-### Tier 2: Medium impact, easy fix
-4. **#13** — export_documentation truncates at 100 tables/schema (no pagination)
-5. **#10** — analyze_column silent failure on bad input
-6. **#6** — tablesample 0 rows for small N
-7. **#2** — list_tables field naming vs spec
-8. **#7** — modulo unimplemented (remove or implement)
-9. **#14** — export custom output_dir returns wrong file paths in response
-10. **#15** — check_drift auto-refresh doesn't preserve prior export settings
+### Tier 2: Medium impact, easy fix — ALL FIXED
+4. ~~**#13** — export truncates at 100 tables/schema~~ — fixed (72e97ca), verified: 440 tables exported (was 101)
+5. ~~**#10** — analyze_column silent failure on bad input~~ — fixed (b28b246), verified: fake column returns error, small table returns data
+6. ~~**#6** — tablesample 0 rows for small N~~ — fixed (07a3136), verified: falls back to top, returns 5 rows (was 0)
+7. ~~**#2** — list_tables field naming vs spec~~ — fixed (f75c8e9), verified: `returned_count` replaces `total_tables`
+8. ~~**#7** — modulo unimplemented~~ — fixed (7a05637), verified: evenly-spaced IDs distinct from top's sequential IDs
+9. ~~**#14** — export custom output_dir wrong paths~~ — fixed (e33f666), validation pending
+10. ~~**#15** — auto-refresh doesn't preserve settings~~ — fixed (fc8f639), validation pending
 
 ### Tier 3: Deprioritize — refactor planned
 11. **#9** — analyze_column inference quality (→ LLM-assisted)
@@ -287,3 +287,9 @@ Compare cached docs hash against current database schema. Detects added/removed/
 - **2026-02-26:** Tested `load_cached_docs` after successful export — PASS. Discovered Issue #13: `export_documentation` silently truncates at 100 tables/schema due to default `limit=100` in `list_tables`. Root cause in `server.py` lines 763-766 (no limit/pagination passed). Added to Tier 2.
 - **2026-02-26:** Tested export with sample data — PASS (220KB, sample sections present, correctly toggleable). Tested custom output_dir — BUG: files written correctly but response `files_created` returns stale paths from default location (`server.py:855` reads metadata from wrong dir). Absolute paths rejected with unclear internal error. Filed as Issue #14.
 - **2026-02-26:** Tested all check_drift scenarios. No drift — PASS. Simulated drift (tampered cache hash) — PASS, correctly detected. Auto-refresh — PASS, re-exported and restored hash. Minor note: auto-refresh hardcodes `include_inferred_relationships=True` and doesn't preserve prior export settings (`server.py:999-1001`).
+- **2026-02-26:** Fixed Tier 2 issues on `bugfix/tier2-issues` branch (7 issues, 8 commits). Validating against live DB:
+  - **#13 VERIFIED**: `export_documentation` now exports 440 tables (was 101). `load_cached_docs` shows `entity_counts.tables: 440` matching schema totals. 630KB total, 402 declared FKs.
+  - **#10 VERIFIED**: `TOTALLY_FAKE_COLUMN` returns `"error": "Column 'TOTALLY_FAKE_COLUMN' does not exist in [dbo].[PerformedActs]"`. Real column on small table (`CVs_ProtocolDefinitionType.CodedValueID`, 7 rows) returns `total_rows: 7, distinct_count: 7`. Note: original issue referenced `ElementID` which was never a real column on that table — the fix correctly catches both cases.
+  - **#6 VERIFIED**: `tablesample` with `sample_size=5` on PerformedActs (20M rows) now returns 5 rows via automatic fallback to `top`. Response shows `sampling_method: "top"` indicating fallback occurred.
+  - **#2 VERIFIED**: `list_tables` response now uses `returned_count: 3` (was `total_tables: 3`). `total_count: 440` unchanged.
+  - **#7 VERIFIED**: `modulo` with `sample_size=5` on PerformedActs returns evenly-spaced IDs (494M, 781M, 803M, 814M, 823M) vs `top`'s sequential IDs (822608122–822608166). Response shows `sampling_method: "modulo"`.
