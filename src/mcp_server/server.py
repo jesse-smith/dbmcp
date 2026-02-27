@@ -387,7 +387,7 @@ async def get_table_schema(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def infer_relationships(
     connection_id: str,
     table_name: str,
@@ -606,7 +606,7 @@ async def get_sample_data(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def analyze_column(
     connection_id: str,
     column_name: str,
@@ -713,7 +713,7 @@ async def analyze_column(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def export_documentation(
     connection_id: str,
     output_dir: str | None = None,
@@ -904,7 +904,7 @@ async def export_documentation(
         return json.dumps({"error": f"Failed to export documentation: {str(e)}"})
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def load_cached_docs(connection_id: str) -> str:
     """Load previously cached database documentation.
 
@@ -960,7 +960,7 @@ async def load_cached_docs(connection_id: str) -> str:
         return json.dumps({"error": f"Failed to load cached docs: {str(e)}"})
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def check_drift(
     connection_id: str,
     auto_refresh: bool = False,
