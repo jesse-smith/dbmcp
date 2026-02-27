@@ -221,6 +221,15 @@ class MetadataService:
 
         return result, pagination
 
+    @staticmethod
+    def _matches_name_pattern(name: str, name_pattern: str | None) -> bool:
+        """Check if a name matches a SQL LIKE pattern (converted to fnmatch)."""
+        if not name_pattern:
+            return True
+        import fnmatch
+        pattern = name_pattern.replace("%", "*").replace("_", "?")
+        return fnmatch.fnmatch(name, pattern)
+
     def _list_tables_generic(
         self,
         schema_name: str | None = None,
@@ -234,7 +243,6 @@ class MetadataService:
         connection_id: str = "",
     ) -> tuple[list[Table], dict]:
         """Generic table listing using SQLAlchemy inspector."""
-        import fnmatch
         tables = []
 
         # Determine schema to query
@@ -252,25 +260,15 @@ class MetadataService:
             # T133: Support object_type filtering
             if object_type is None or object_type == "table":
                 try:
-                    table_names = self.inspector.get_table_names(schema=schema)
-                    for table_name in table_names:
-                        # Apply name pattern filter
-                        if name_pattern:
-                            # Convert SQL LIKE pattern to fnmatch pattern
-                            pattern = name_pattern.replace("%", "*").replace("_", "?")
-                            if not fnmatch.fnmatch(table_name, pattern):
-                                continue
+                    for table_name in self.inspector.get_table_names(schema=schema):
+                        if not self._matches_name_pattern(table_name, name_pattern):
+                            continue
 
-                        table_id = f"{display_schema}.{table_name}"
-
-                        # Get row count (may be slow for large tables)
                         row_count = self._get_row_count_generic(table_name, schema)
 
-                        # Apply min_row_count filter
                         if min_row_count is not None and (row_count or 0) < min_row_count:
                             continue
 
-                        # Check for primary key
                         try:
                             pk = self.inspector.get_pk_constraint(table_name, schema=schema)
                             has_pk = bool(pk.get("constrained_columns"))
@@ -278,7 +276,7 @@ class MetadataService:
                             has_pk = False
 
                         tables.append(Table(
-                            table_id=table_id,
+                            table_id=f"{display_schema}.{table_name}",
                             schema_id=display_schema,
                             table_name=table_name,
                             table_type=TableType.TABLE,
@@ -294,22 +292,16 @@ class MetadataService:
             # T133: Include views if requested
             if object_type is None or object_type == "view":
                 try:
-                    view_names = self.inspector.get_view_names(schema=schema)
-                    for view_name in view_names:
-                        # Apply name pattern filter
-                        if name_pattern:
-                            pattern = name_pattern.replace("%", "*").replace("_", "?")
-                            if not fnmatch.fnmatch(view_name, pattern):
-                                continue
-
-                        table_id = f"{display_schema}.{view_name}"
+                    for view_name in self.inspector.get_view_names(schema=schema):
+                        if not self._matches_name_pattern(view_name, name_pattern):
+                            continue
 
                         tables.append(Table(
-                            table_id=table_id,
+                            table_id=f"{display_schema}.{view_name}",
                             schema_id=display_schema,
                             table_name=view_name,
                             table_type=TableType.VIEW,
-                            row_count=None,  # Views don't have row counts
+                            row_count=None,
                             row_count_updated=datetime.now(),
                             has_primary_key=False,
                             last_modified=None,
@@ -377,15 +369,8 @@ class MetadataService:
         tables = []
 
         # T133: Object type filtering - 'U' = user table, 'V' = view
-        type_filter = []
-        if object_type is None:
-            type_filter = ["'U'", "'V'"]
-        elif object_type == "table":
-            type_filter = ["'U'"]
-        elif object_type == "view":
-            type_filter = ["'V'"]
-        else:
-            type_filter = ["'U'"]
+        type_filter_map = {"table": ["'U'"], "view": ["'V'"]}
+        type_filter = type_filter_map.get(object_type, ["'U'", "'V'"])
 
         # Build dynamic SQL for filtering
         where_clauses = [f"t.type IN ({', '.join(type_filter)})"]

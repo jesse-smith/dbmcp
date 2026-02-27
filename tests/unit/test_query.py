@@ -16,7 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.db.query import QueryService, validate_query
+from src.db.query import QueryService
+from src.db.validation import validate_query
 from src.models.schema import DenialCategory, QueryType, SamplingMethod
 
 

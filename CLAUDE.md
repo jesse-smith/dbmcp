@@ -11,6 +11,8 @@ Auto-generated from all feature plans. Last updated: 2026-01-19
 - N/A (in-memory connection management only) (004-azure-ad-integrated-auth)
 - Python 3.11+ (existing) + sqlglot (new), SQLAlchemy >=2.0.0 (existing), pyodbc >=5.0.0 (existing), mcp[cli] >=1.0.0 (existing) (005-denylist-query-validation)
 - N/A (in-memory query validation only) (005-denylist-query-validation)
+- Python 3.11+ (existing) + mcp[cli], sqlalchemy, pyodbc, sqlglot, azure-identity (all existing, no changes) (006-codebase-refactor)
+- N/A (no data model changes) (006-codebase-refactor)
 
 - Python 3.11+ + FastMCP (MCP SDK), pyodbc (SQL Server driver), SQLAlchemy (connection pooling + metadata introspection) (001-db-schema-explorer)
 
@@ -34,9 +36,9 @@ tests/
 Python 3.11+: Follow standard conventions
 
 ## Recent Changes
+- 006-codebase-refactor: Added Python 3.11+ (existing) + mcp[cli], sqlalchemy, pyodbc, sqlglot, azure-identity (all existing, no changes)
 - 005-denylist-query-validation: Added Python 3.11+ (existing) + sqlglot (new), SQLAlchemy >=2.0.0 (existing), pyodbc >=5.0.0 (existing), mcp[cli] >=1.0.0 (existing)
 - 004-azure-ad-integrated-auth: Added Python 3.11+ (existing) + SQLAlchemy >=2.0.0, pyodbc >=5.0.0, azure-identity >=1.14.0 (new), mcp[cli] >=1.0.0 (existing)
-- 003-allow-cte-queries: Added Python 3.11+ + SQLAlchemy (existing), re module (stdlib)
 
 
 <!-- MANUAL ADDITIONS START -->
