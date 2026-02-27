@@ -862,8 +862,15 @@ async def export_documentation(
             output_dir=output_dir,
         )
 
-        # Get file list from metadata
-        metadata = storage.get_cache_metadata(connection_id)
+        # Get file list from metadata — read from the actual output directory
+        if output_dir:
+            metadata_path = Path(output_dir) / ".cache_metadata.json"
+            if metadata_path.exists():
+                metadata = json.loads(metadata_path.read_text())
+            else:
+                metadata = None
+        else:
+            metadata = storage.get_cache_metadata(connection_id)
         files_created = metadata.get("files_created", []) if metadata else []
         total_size = metadata.get("total_size_bytes", 0) if metadata else 0
         nfr_003_warning = metadata.get("nfr_003_warning") if metadata else None
