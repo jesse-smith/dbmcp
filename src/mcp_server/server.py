@@ -1013,10 +1013,16 @@ async def check_drift(
 
         # Auto-refresh if requested and drift detected
         if auto_refresh and result.drift_detected:
-            # Call export_documentation internally
+            # Preserve prior export settings from cache metadata
+            prior_metadata = storage.get_cache_metadata(connection_id)
+            prior_include_sample = prior_metadata.get("include_sample_data", False) if prior_metadata else False
+            prior_include_inferred = prior_metadata.get("include_inferred_relationships", True) if prior_metadata else True
+
+            # Call export_documentation internally with preserved settings
             export_result = await export_documentation(
                 connection_id=connection_id,
-                include_inferred_relationships=True,
+                include_sample_data=prior_include_sample,
+                include_inferred_relationships=prior_include_inferred,
             )
             export_data = json.loads(export_result)
             response["auto_refreshed"] = export_data.get("status") == "success"
