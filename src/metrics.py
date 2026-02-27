@@ -21,10 +21,11 @@ import statistics
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Generator
+from typing import Any
 
 
 @dataclass

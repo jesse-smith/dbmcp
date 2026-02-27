@@ -1,5 +1,8 @@
 # DBMCP: Database Schema Explorer MCP Server
 
+[![CI](https://github.com/jesse-smith/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jesse-smith/dbmcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jesse-smith/dbmcp/branch/main/graph/badge.svg)](https://codecov.io/gh/jesse-smith/dbmcp)
+
 A Model Context Protocol (MCP) server that enables AI assistants like Claude to explore and understand SQL Server database schemas. Designed for legacy databases with undeclared foreign keys and cryptic column names.
 
 ## Features
