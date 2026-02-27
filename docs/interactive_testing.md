@@ -71,9 +71,9 @@ Retrieve sample rows with multiple sampling strategies (top, tablesample, modulo
 |--------|------|-------|
 | PASS | All columns (default) | 3 rows returned with all 21 columns including datetime fields as ISO strings (e.g. `"1995-07-06T00:00:00"`). (Issue #5 fixed in bugfix/tier1-issues) |
 | PASS | Top N sampling (column subset) | 5 rows returned, sequential from ID 13.4M (clustered index order). Fast, not representative. BIT→bool, NULL preserved, empty string distinct from null |
-| BUG | Tablesample strategy (small N) | `TABLESAMPLE (5 ROWS)` on 60M-row table returned 0 rows — page-level granularity means small N often selects zero pages (see Issue #6) |
+| PASS | Tablesample strategy (small N) | Originally returned 0 rows (Issue #6). Fixed in commit 07a3136 — falls back to `top` when tablesample returns 0 rows. Verified: `sample_size=5` on PerformedActs (20M rows) returns 5 rows, `sampling_method: "top"` indicates fallback |
 | PASS | Tablesample strategy (larger N) | 100 rows from 3 distinct page clusters (IDs ~802M, ~802.4M, ~818M). Confirms page-level random sampling with sequential rows within pages. Clearly different data region than top |
-| BUG | Modulo strategy | Returns identical results to `top` — same 5 rows, same order. `ORDER BY (SELECT NULL)` is a no-op (see Issue #7). Modulo sampling is unimplemented despite being advertised |
+| PASS | Modulo strategy | Originally returned identical results to `top` (Issue #7). Fixed in commit 7a05637 — implements real modulo sampling using ROW_NUMBER with even spacing. Verified: evenly-spaced IDs (494M, 781M, 803M, 814M, 823M) vs `top`'s sequential IDs. `sampling_method: "modulo"` |
 | PASS | Column subset selection | Single column works. Invalid column returns clean SQL Server error (42S22) with column name. Column list affects optimizer's index choice (different starting rows for same table with different column sets — expected) |
 | PASS | Large text/binary truncation | Binary: VARBINARY(MAX) truncated to `<binary: hex... (N bytes)>` with 32-byte hex preview, `truncated_columns` correctly populated. Text: NVARCHAR(MAX) with 35K/29K char XML truncated at 1000 chars with `... (N chars total)` suffix. Short values pass through untouched. Both types report in `truncated_columns` |
 
@@ -90,8 +90,8 @@ Infer column purpose (ID, enum, status, flag, amount, etc.) via statistical anal
 | BUG | Analyze an enum/status column | StatusID (4 distinct, 30% null): inferred `id` at 0.90 instead of `enum`/`status`. `is_enum: true` contradicts inferred purpose. `*ID` name pattern overrides cardinality signal (see Issue #9) |
 | BUG | Analyze a numeric/amount column | Result_Value (DECIMAL 28,10, 149 distinct): inferred `unknown` at 0.50. Should be `amount`/`quantity`. Also `is_integer: true` on DECIMAL is wrong. Numeric stats all null (see Issue #9) |
 | BUG | Analyze a column with all NULLs | ConfidentialityCodeID (100% null, 0 distinct): inferred `id` at 0.90 purely from name. Confidence should be heavily penalized when there's no data to analyze (see Issue #9) |
-| BUG | Nonexistent column error handling | TOTALLY_FAKE_COLUMN: returns `unknown/0.50` with `data_type: "unknown", total_rows: 0`. No error — silently indistinguishable from a real column on a small table (see Issue #10) |
-| BUG | Small table analysis | CVs_ProtocolDefinitionType.ElementID (7 rows): `data_type: "unknown", total_rows: 0, distinct_count: 0`. Metadata queries fail silently on small tables — identical output to nonexistent column (see Issue #10) |
+| PASS | Nonexistent column error handling | Originally returned silent `unknown/0.50` (Issue #10). Fixed in commit b28b246 — validates column existence before analysis. Verified: `TOTALLY_FAKE_COLUMN` returns `"error": "Column 'TOTALLY_FAKE_COLUMN' does not exist in [dbo].[PerformedActs]"` |
+| PASS | Small table analysis | Originally returned `total_rows: 0` on small tables (Issue #10). Fixed in commit b28b246. Verified: `CVs_ProtocolDefinitionType.CodedValueID` (7 rows) returns `total_rows: 7, distinct_count: 7` |
 | BUG | ID column without *ID suffix (MRN) | MRN on A_Transplant_Info_Rpt: `unknown` at 0.50. 2666 distinct / 3941 rows, all numeric strings 4-6 chars. MRN is a standard healthcare identifier abbreviation — should be `id`. Name pattern only matches `*ID` suffix |
 | BUG | ID column named "Identifier" | PrimaryIdentifier on Human view: `unknown` at 0.50. 8001 distinct / 8539 rows (94% unique), all frequency-1 top values. "Identifier" is literally in the name — tool doesn't recognize it. Only `*ID` suffix triggers `id` inference |
 
@@ -115,7 +115,7 @@ Export full database documentation to local markdown files. Includes schemas, ta
 |--------|------|-------|
 | PASS | Basic export (no samples, no inferred) | Success: 101 tables, 2 schemas, 140 declared FKs, 155KB total. (Issue #11 fixed in bugfix/tier1-issues) |
 | PASS | Export with sample data | 220KB total (vs 155KB without). Sample data sections confirmed in table .md files (e.g., Calendar shows 3 rows with ISO datetime values). No sample data when `include_sample_data=false` — correctly toggleable |
-| BUG | Custom output directory | Absolute path rejected: `'/tmp/.../overview.md' is not in the subpath of '.'` (security restriction). Relative path `exports/custom_test` writes files correctly and creates valid `.cache_metadata.json`, BUT response `files_created` returns stale paths from default `docs/` location. See Issue #14 |
+| PASS | Custom output directory | Originally had stale response paths and rejected absolute paths (Issue #14). Fixed in commit e33f666. Verified: relative path `exports/custom_test` → `files_created` shows correct paths. Absolute path `/tmp/dbmcp_test_export` → succeeds, paths shown relative to parent |
 | BLOCKED | Include/exclude inferred relationships | Blocked by Issue #4 (infer_relationships timeout) — no inferred relationship data available to export |
 
 ### 10. load_cached_docs
@@ -123,7 +123,7 @@ Load previously exported documentation cache. Returns entity counts and cache ag
 
 | Status | Test | Notes |
 |--------|------|-------|
-| PASS | Load after export | status=loaded, tables=101, declared_fks=140, cache_age_days=0, schema_hash present. All fields consistent with export output. Note: table count discrepancy — see Issue #13 |
+| PASS | Load after export | status=loaded, declared_fks=140, cache_age_days=0, schema_hash present. All fields consistent with export output. Table count discrepancy (Issue #13) fixed in commit 72e97ca — now exports all 440 tables |
 | BUG | Load with incomplete/no cache | Returns `status: "loaded"` on a partial/corrupt cache from a prior failed run. Schema counts present (dbo: 297+142) but `entity_counts.tables: 0`, `declared_fks: 0`, `cache_age_days: null`. Should flag incomplete cache instead of claiming success (see Issue #12) |
 
 ### 11. check_drift
@@ -134,7 +134,7 @@ Compare cached docs hash against current database schema. Detects added/removed/
 | PASS | No drift (cache is current) | `drift_detected: false`, hashes match, `summary: "No changes detected"`. All diff lists empty |
 | PASS | Drift detection with missing cache | Returns `drift_detected: true`, `summary: "Cache metadata missing"`. Correctly identifies incomplete cache. Current hash computed successfully |
 | PASS | Drift detection with stale hash | Tampered cached hash to zeros. `drift_detected: true`, `summary: "Structural changes detected in existing tables"`. Added/removed/modified lists all empty (correct — tables unchanged, only hash differs) |
-| PASS | Auto-refresh on drift | `auto_refreshed: true`, cache re-exported, hash restored. Note: auto-refresh hardcodes `include_inferred_relationships=True` and uses default `include_sample_data=False` (line 999-1001 in `server.py`) — doesn't preserve prior export settings. Size jumped 155KB→393KB due to inferred relationship computation |
+| PASS | Auto-refresh on drift | `auto_refreshed: true`, cache re-exported, hash restored. Previously hardcoded export settings (Issue #15) — fixed in commit fc8f639, now reads prior settings from `.cache_metadata.json`. Code verified + unit tests pass; live DB E2E pending |
 
 ---
 
