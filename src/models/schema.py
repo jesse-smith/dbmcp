@@ -57,6 +57,36 @@ class QueryType(str, Enum):
     OTHER = "other"
 
 
+class DenialCategory(str, Enum):
+    """Classification of why a query was denied."""
+
+    DML = "dml"
+    DDL = "ddl"
+    DCL = "dcl"
+    OPERATIONAL = "operational"
+    STORED_PROCEDURE = "stored_procedure"
+    SELECT_INTO = "select_into"
+    CTE_WRAPPED_WRITE = "cte_wrapped_write"
+    PARSE_FAILURE = "parse_failure"
+
+
+@dataclass
+class DenialReason:
+    """A single reason why a query (or statement within a batch) was denied."""
+
+    category: DenialCategory
+    detail: str
+    statement_index: int = 0
+
+
+@dataclass
+class ValidationResult:
+    """Outcome of query validation."""
+
+    is_safe: bool
+    reasons: list[DenialReason] = field(default_factory=list)
+
+
 @dataclass
 class Connection:
     """Represents a database connection configuration.
@@ -248,6 +278,7 @@ class Query:
     rows_affected: int | None = None
     error_message: str | None = None
     executed_at: datetime | None = None
+    denial_reasons: list[DenialReason] | None = None
 
 
 @dataclass

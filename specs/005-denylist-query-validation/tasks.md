@@ -17,7 +17,7 @@
 
 **Purpose**: Add sqlglot dependency
 
-- [ ] T001 Add sqlglot dependency (pinned version range) to pyproject.toml and install
+- [x] T001 Add sqlglot dependency (pinned version range) to pyproject.toml and install
 
 ---
 
@@ -25,9 +25,9 @@
 
 **Purpose**: Define new types and constants that all user stories depend on
 
-- [ ] T002 Add DenialCategory enum, DenialReason dataclass, and ValidationResult dataclass to src/models/schema.py
-- [ ] T003 Add denial_reasons field (list[DenialReason] | None) to Query dataclass in src/models/schema.py
-- [ ] T004 Define SAFE_PROCEDURES frozenset (22 stored procedure names) and DENIED_TYPES mapping (sqlglot expression types → DenialCategory) as module-level constants in src/db/query.py
+- [x] T002 Add DenialCategory enum, DenialReason dataclass, and ValidationResult dataclass to src/models/schema.py
+- [x] T003 Add denial_reasons field (list[DenialReason] | None) to Query dataclass in src/models/schema.py
+- [x] T004 Define SAFE_PROCEDURES frozenset (22 stored procedure names) and DENIED_TYPES mapping (sqlglot expression types → DenialCategory) as module-level constants in src/db/query.py
 
 **Checkpoint**: Foundation ready — all types and constants available for validation implementation
 
@@ -43,14 +43,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T005 [US1] Write tests for safe query validation: SELECT, SELECT with keyword-overlapping names (create_date, execute_count), CTE+SELECT, unknown/non-denied statement types → ValidationResult.is_safe=True in tests/unit/test_query.py
-- [ ] T006 [US2] Write tests for denied operations: INSERT, UPDATE, DELETE, MERGE → DenialCategory.DML; CREATE, ALTER, DROP, TRUNCATE, RENAME → DenialCategory.DDL; GRANT, REVOKE, DENY → DenialCategory.DCL; BACKUP, RESTORE, DBCC, KILL → DenialCategory.OPERATIONAL; SELECT INTO → DenialCategory.SELECT_INTO; CTE+INSERT/UPDATE/DELETE → DenialCategory.CTE_WRAPPED_WRITE; include case-variation tests (e.g., "drop table", "Grant", "TRUNCATE") to verify FR-013 in tests/unit/test_query.py
-- [ ] T007 [US1] [US2] Write tests for allow_write=True: DML operations (INSERT, UPDATE, DELETE, MERGE) pass when allow_write=True; DDL/DCL/Operational still denied with allow_write=True in tests/unit/test_query.py
+- [x] T005 [US1] Write tests for safe query validation: SELECT, SELECT with keyword-overlapping names (create_date, execute_count), CTE+SELECT, unknown/non-denied statement types → ValidationResult.is_safe=True in tests/unit/test_query.py
+- [x] T006 [US2] Write tests for denied operations: INSERT, UPDATE, DELETE, MERGE → DenialCategory.DML; CREATE, ALTER, DROP, TRUNCATE, RENAME → DenialCategory.DDL; GRANT, REVOKE, DENY → DenialCategory.DCL; BACKUP, RESTORE, DBCC, KILL → DenialCategory.OPERATIONAL; SELECT INTO → DenialCategory.SELECT_INTO; CTE+INSERT/UPDATE/DELETE → DenialCategory.CTE_WRAPPED_WRITE; include case-variation tests (e.g., "drop table", "Grant", "TRUNCATE") to verify FR-013 in tests/unit/test_query.py
+- [x] T007 [US1] [US2] Write tests for allow_write=True: DML operations (INSERT, UPDATE, DELETE, MERGE) pass when allow_write=True; DDL/DCL/Operational still denied with allow_write=True in tests/unit/test_query.py
 
 ### Implementation for US1 + US2
 
-- [ ] T008 [US1] [US2] Implement validate_query(sql, allow_write=False) -> ValidationResult pure function in src/db/query.py: parse with sqlglot(dialect='tsql'), check each statement against DENIED_TYPES via helper functions (_classify_statement(), _check_stored_procedure()), detect SELECT INTO, detect CTE-wrapped writes, apply allow_write DML bypass, return categorized ValidationResult. Keep validate_query() under 50 lines by extracting classification logic into focused helpers.
-- [ ] T009 [US1] [US2] Verify all T005-T007 tests pass green in tests/unit/test_query.py
+- [x] T008 [US1] [US2] Implement validate_query(sql, allow_write=False) -> ValidationResult pure function in src/db/query.py: parse with sqlglot(dialect='tsql'), check each statement against DENIED_TYPES via helper functions (_classify_statement(), _check_stored_procedure()), detect SELECT INTO, detect CTE-wrapped writes, apply allow_write DML bypass, return categorized ValidationResult. Keep validate_query() under 50 lines by extracting classification logic into focused helpers.
+- [x] T009 [US1] [US2] Verify all T005-T007 tests pass green in tests/unit/test_query.py
 
 **Checkpoint**: Core validation works — safe queries pass, all denial categories correctly classified, allow_write bypass functional
 
@@ -66,12 +66,12 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T010 [US3] Write tests for stored procedure allowlist: each of the 22 safe procedures passes validation; multi-part names (master.dbo.sp_help, dbo.sp_columns) resolve correctly; sp_executesql explicitly denied; unknown/user-defined procedures denied with DenialCategory.STORED_PROCEDURE; case-insensitive matching (SP_TABLES, Sp_Help) in tests/unit/test_query.py
+- [x] T010 [US3] Write tests for stored procedure allowlist: each of the 22 safe procedures passes validation; multi-part names (master.dbo.sp_help, dbo.sp_columns) resolve correctly; sp_executesql explicitly denied; unknown/user-defined procedures denied with DenialCategory.STORED_PROCEDURE; case-insensitive matching (SP_TABLES, Sp_Help) in tests/unit/test_query.py
 
 ### Implementation for US3
 
-- [ ] T011 [US3] Implement stored procedure allowlist checking in validate_query(): for Execute AST nodes, extract procedure name (last identifier part), check against SAFE_PROCEDURES frozenset (case-insensitive), explicitly deny sp_executesql, deny unknown procedures in src/db/query.py
-- [ ] T012 [US3] Verify all T010 tests pass green in tests/unit/test_query.py
+- [x] T011 [US3] Implement stored procedure allowlist checking in validate_query(): for Execute AST nodes, extract procedure name (last identifier part), check against SAFE_PROCEDURES frozenset (case-insensitive), explicitly deny sp_executesql, deny unknown procedures in src/db/query.py
+- [x] T012 [US3] Verify all T010 tests pass green in tests/unit/test_query.py
 
 **Checkpoint**: Stored procedure allowlist works — 22 safe procs allowed, sp_executesql and unknowns denied
 
@@ -87,14 +87,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T013 [US4] Write tests for obfuscation resistance: multi-statement batch with one denied statement → entire batch denied with statement_index in DenialReason; denied operations inside BEGIN/END, IF/ELSE, WHILE blocks → detected and denied; parse failures (malformed SQL) → DenialCategory.PARSE_FAILURE; empty/whitespace-only queries → denied in tests/unit/test_query.py
+- [x] T013 [US4] Write tests for obfuscation resistance: multi-statement batch with one denied statement → entire batch denied with statement_index in DenialReason; denied operations inside BEGIN/END, IF/ELSE, WHILE blocks → detected and denied; parse failures (malformed SQL) → DenialCategory.PARSE_FAILURE; empty/whitespace-only queries → denied in tests/unit/test_query.py
 
 ### Implementation for US4
 
-- [ ] T014 [US4] Implement recursive AST walking using sqlglot .walk() to detect denied types nested inside control flow blocks in validate_query() in src/db/query.py
-- [ ] T015 [US4] Implement multi-statement batch handling: iterate all parsed statements, track statement_index in DenialReason, deny entire batch if any statement denied in src/db/query.py
-- [ ] T016 [US4] Implement parse failure handling: catch sqlglot.errors.ParseError, return ValidationResult with DenialCategory.PARSE_FAILURE; handle empty/whitespace input in src/db/query.py
-- [ ] T017 [US4] Verify all T013 tests pass green in tests/unit/test_query.py
+- [x] T014 [US4] Implement recursive AST walking using sqlglot .walk() to detect denied types nested inside control flow blocks in validate_query() in src/db/query.py
+- [x] T015 [US4] Implement multi-statement batch handling: iterate all parsed statements, track statement_index in DenialReason, deny entire batch if any statement denied in src/db/query.py
+- [x] T016 [US4] Implement parse failure handling: catch sqlglot.errors.ParseError, return ValidationResult with DenialCategory.PARSE_FAILURE; handle empty/whitespace input in src/db/query.py
+- [x] T017 [US4] Verify all T013 tests pass green in tests/unit/test_query.py
 
 **Checkpoint**: Obfuscation resistance works — nested operations, batches, and parse failures all handled
 
@@ -104,11 +104,11 @@
 
 **Purpose**: Wire new validation into execute_query(), remove old code, update existing tests
 
-- [ ] T018 Integrate validate_query() into execute_query() method: replace calls to _is_blocked_keyword(), parse_query_type(), and is_query_allowed() with single validate_query() call; populate Query.denial_reasons and Query.error_message from ValidationResult in src/db/query.py
-- [ ] T019 Update parse_query_type() to use sqlglot AST for query type detection (SELECT/INSERT/UPDATE/DELETE/OTHER) instead of keyword heuristic — this method is still needed for Query.query_type field in src/db/query.py
-- [ ] T020 Remove dead code: BLOCKED_KEYWORDS frozenset, _is_blocked_keyword(), _remove_sql_comments(), old is_query_allowed() from src/db/query.py
-- [ ] T021 Update existing tests in tests/unit/test_query.py: remove old keyword-based tests, update execute_query() integration tests to verify new denial behavior and Query.denial_reasons field
-- [ ] T022 Run full test suite (pytest) and linter (ruff check src/) — zero failures and zero warnings
+- [x] T018 Integrate validate_query() into execute_query() method: replace calls to _is_blocked_keyword(), parse_query_type(), and is_query_allowed() with single validate_query() call; populate Query.denial_reasons and Query.error_message from ValidationResult in src/db/query.py
+- [x] T019 Update parse_query_type() to use sqlglot AST for query type detection (SELECT/INSERT/UPDATE/DELETE/OTHER) instead of keyword heuristic — this method is still needed for Query.query_type field in src/db/query.py
+- [x] T020 Remove dead code: BLOCKED_KEYWORDS frozenset, _is_blocked_keyword(), _remove_sql_comments(), old is_query_allowed() from src/db/query.py
+- [x] T021 Update existing tests in tests/unit/test_query.py: remove old keyword-based tests, update execute_query() integration tests to verify new denial behavior and Query.denial_reasons field
+- [x] T022 Run full test suite (pytest) and linter (ruff check src/) — zero failures and zero warnings
 
 ---
 

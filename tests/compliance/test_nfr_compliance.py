@@ -17,7 +17,6 @@ For full performance validation, run with the performance suite:
 """
 
 import logging
-import re
 import time
 from unittest.mock import MagicMock, patch
 
@@ -26,9 +25,8 @@ from sqlalchemy import create_engine, text
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.db.metadata import MetadataService
-from src.db.query import QueryService
-from src.models.schema import AuthenticationMethod, QueryType, SamplingMethod
-
+from src.db.query import QueryService, validate_query
+from src.models.schema import DenialCategory, SamplingMethod
 
 # =============================================================================
 # NFR-001: Metadata Retrieval Performance (<30s for 1000 tables)
@@ -166,7 +164,7 @@ class TestNFR003DocumentationSize:
 
     def test_markdown_generation_is_efficient(self, tmp_path):
         """NFR-003: Verify markdown generation doesn't produce excessive output."""
-        from src.cache.storage import DocumentationStorage, NFR_003_SIZE_LIMIT_BYTES
+        from src.cache.storage import NFR_003_SIZE_LIMIT_BYTES, DocumentationStorage
 
         # Create a storage instance
         storage = DocumentationStorage(tmp_path)
@@ -198,67 +196,46 @@ class TestNFR004ReadOnlyEnforcement:
 
     def test_select_allowed(self, mock_engine):
         """NFR-004: SELECT queries must be allowed."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.SELECT)
-
-        assert is_allowed is True
-        assert error is None
+        result = validate_query("SELECT * FROM users")
+        assert result.is_safe is True
 
     def test_insert_blocked(self, mock_engine):
         """NFR-004: INSERT queries must be blocked by default."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.INSERT)
-
-        assert is_allowed is False
-        assert "INSERT" in error
+        result = validate_query("INSERT INTO users VALUES (1)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
     def test_update_blocked(self, mock_engine):
         """NFR-004: UPDATE queries must be blocked by default."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.UPDATE)
-
-        assert is_allowed is False
-        assert "UPDATE" in error
+        result = validate_query("UPDATE users SET name='x'")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
     def test_delete_blocked(self, mock_engine):
         """NFR-004: DELETE queries must be blocked by default."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.DELETE)
-
-        assert is_allowed is False
-        assert "DELETE" in error
+        result = validate_query("DELETE FROM users WHERE id=1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
     def test_ddl_blocked(self, mock_engine):
         """NFR-004: DDL (CREATE, DROP, ALTER) must be blocked."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.OTHER)
-
-        assert is_allowed is False
+        result = validate_query("CREATE TABLE t (id INT)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
     def test_query_type_detection_blocks_writes(self, mock_engine):
         """NFR-004: Write queries must be detected and blocked."""
-        service = QueryService(mock_engine)
-
-        # Test various write query patterns
         write_queries = [
-            ("INSERT INTO users VALUES (1)", QueryType.INSERT),
-            ("UPDATE users SET name='x'", QueryType.UPDATE),
-            ("DELETE FROM users", QueryType.DELETE),
-            ("CREATE TABLE t (id INT)", QueryType.OTHER),
-            ("DROP TABLE users", QueryType.OTHER),
+            "INSERT INTO users VALUES (1)",
+            "UPDATE users SET name='x'",
+            "DELETE FROM users",
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE users",
         ]
 
-        for query, expected_type in write_queries:
-            detected_type = service.parse_query_type(query)
-            assert detected_type == expected_type, f"Query '{query}' should be {expected_type}"
-
-            is_allowed, _ = service.is_query_allowed(detected_type)
-            assert is_allowed is False, f"Write query should be blocked: {query}"
+        for query in write_queries:
+            result = validate_query(query)
+            assert result.is_safe is False, f"Write query should be blocked: {query}"
 
 
 # =============================================================================

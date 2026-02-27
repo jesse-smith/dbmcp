@@ -11,13 +11,186 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import sqlglot
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlglot import exp
 
 from src.logging_config import get_logger
-from src.models.schema import Query, QueryType, SampleData, SamplingMethod
+from src.models.schema import (
+    DenialCategory,
+    DenialReason,
+    Query,
+    QueryType,
+    SampleData,
+    SamplingMethod,
+    ValidationResult,
+)
+
+# AST expression types mapped to denial categories
+DENIED_TYPES: dict[type[exp.Expression], DenialCategory] = {
+    # DML
+    exp.Insert: DenialCategory.DML,
+    exp.Update: DenialCategory.DML,
+    exp.Delete: DenialCategory.DML,
+    exp.Merge: DenialCategory.DML,
+    # DDL
+    exp.Create: DenialCategory.DDL,
+    exp.Alter: DenialCategory.DDL,
+    exp.Drop: DenialCategory.DDL,
+    exp.TruncateTable: DenialCategory.DDL,
+    # DCL
+    exp.Grant: DenialCategory.DCL,
+    # Operational
+    exp.Command: DenialCategory.OPERATIONAL,
+}
+
+# 22 known-safe SQL Server system stored procedures (lowercase, unqualified)
+SAFE_PROCEDURES: frozenset[str] = frozenset({
+    # Catalog/ODBC (12)
+    "sp_column_privileges",
+    "sp_columns",
+    "sp_databases",
+    "sp_fkeys",
+    "sp_pkeys",
+    "sp_server_info",
+    "sp_special_columns",
+    "sp_sproc_columns",
+    "sp_statistics",
+    "sp_stored_procedures",
+    "sp_table_privileges",
+    "sp_tables",
+    # Object/Metadata (4)
+    "sp_help",
+    "sp_helptext",
+    "sp_helpindex",
+    "sp_helpconstraint",
+    # Session/Server (3)
+    "sp_who",
+    "sp_who2",
+    "sp_spaceused",
+    # Result Set Metadata (2)
+    "sp_describe_first_result_set",
+    "sp_describe_undeclared_parameters",
+})
 
 logger = get_logger(__name__)
+
+# Types that indicate a garbage parse (not real SQL statements)
+_GARBAGE_PARSE_TYPES = (exp.Alias, exp.Column, exp.Identifier, exp.Literal)
+
+
+def validate_query(sql: str, allow_write: bool = False) -> ValidationResult:
+    """Validate a SQL query against the AST-based denylist.
+
+    Pure function — no side effects, no database connection required.
+
+    Args:
+        sql: Raw SQL text
+        allow_write: If True, DML operations (INSERT/UPDATE/DELETE/MERGE) are allowed
+
+    Returns:
+        ValidationResult with is_safe and categorized denial reasons
+    """
+    if not sql or not sql.strip():
+        return ValidationResult(
+            is_safe=False,
+            reasons=[DenialReason(DenialCategory.PARSE_FAILURE, "Empty or whitespace-only query", 0)],
+        )
+
+    try:
+        statements = sqlglot.parse(sql, dialect="tsql")
+    except sqlglot.errors.ParseError as e:
+        return ValidationResult(
+            is_safe=False,
+            reasons=[DenialReason(DenialCategory.PARSE_FAILURE, str(e), 0)],
+        )
+
+    if not statements or all(s is None for s in statements):
+        return ValidationResult(
+            is_safe=False,
+            reasons=[DenialReason(DenialCategory.PARSE_FAILURE, "No statements parsed", 0)],
+        )
+
+    reasons: list[DenialReason] = []
+    for idx, stmt in enumerate(statements):
+        if stmt is None:
+            continue
+        reasons.extend(_classify_statement(stmt, idx))
+
+    # allow_write bypass: remove DML and CTE-wrapped write denials
+    if allow_write:
+        reasons = [r for r in reasons if r.category not in (DenialCategory.DML, DenialCategory.CTE_WRAPPED_WRITE)]
+
+    return ValidationResult(is_safe=len(reasons) == 0, reasons=reasons)
+
+
+def _classify_statement(stmt: exp.Expression, idx: int) -> list[DenialReason]:
+    """Classify a single parsed statement and return denial reasons (if any)."""
+    # Garbage parse detection (e.g., DBCC → Alias)
+    if isinstance(stmt, _GARBAGE_PARSE_TYPES):
+        return [DenialReason(DenialCategory.PARSE_FAILURE, "Unrecognized statement", idx)]
+
+    # Command: EXEC/EXECUTE → stored procedure check; others → Operational
+    # Must be checked before DENIED_TYPES since Command is in that map
+    if isinstance(stmt, exp.Command):
+        return _check_command(stmt, idx)
+
+    # Kill → Operational (not in DENIED_TYPES to avoid confusion with Command handling)
+    if isinstance(stmt, exp.Kill):
+        return [DenialReason(DenialCategory.OPERATIONAL, "KILL operations are not permitted", idx)]
+
+    # Check against denied types map
+    for denied_type, category in DENIED_TYPES.items():
+        if isinstance(stmt, denied_type):
+            # CTE-wrapped write: DML with a WITH clause
+            if category == DenialCategory.DML and stmt.find(exp.With):
+                return [DenialReason(
+                    DenialCategory.CTE_WRAPPED_WRITE,
+                    f"CTE-wrapped {type(stmt).__name__.upper()} operations are not permitted",
+                    idx,
+                )]
+            detail = f"{type(stmt).__name__.upper()} operations are not permitted"
+            return [DenialReason(category, detail, idx)]
+
+    # Select: check for INTO (creates a table)
+    if isinstance(stmt, exp.Select) and stmt.find(exp.Into):
+        return [DenialReason(DenialCategory.SELECT_INTO, "SELECT INTO creates a new table and is not permitted", idx)]
+
+    return []
+
+
+def _check_command(stmt: exp.Command, idx: int) -> list[DenialReason]:
+    """Check a Command node (EXEC/EXECUTE or other unrecognized command)."""
+    cmd_name = str(stmt.this).upper() if stmt.this else ""
+    if cmd_name in ("EXEC", "EXECUTE"):
+        return _check_stored_procedure(stmt, idx)
+    return [DenialReason(DenialCategory.OPERATIONAL, f"{cmd_name} operations are not permitted", idx)]
+
+
+def _check_stored_procedure(stmt: exp.Command, idx: int) -> list[DenialReason]:
+    """Check if a stored procedure call is in the safe allowlist."""
+    # Extract procedure name from the expression arg
+    proc_expr = stmt.args.get("expression")
+    proc_name = str(proc_expr.this) if proc_expr else ""
+    # For multi-part names (master.dbo.sp_help), take the last part
+    canonical = proc_name.rsplit(".", 1)[-1].lower()
+
+    if canonical == "sp_executesql":
+        return [DenialReason(
+            DenialCategory.STORED_PROCEDURE,
+            "sp_executesql is explicitly denied (executes arbitrary SQL)",
+            idx,
+        )]
+
+    if canonical in SAFE_PROCEDURES:
+        return []
+
+    return [DenialReason(
+        DenialCategory.STORED_PROCEDURE,
+        f"Stored procedure '{proc_name}' is not in the safe allowlist",
+        idx,
+    )]
 
 
 class QueryService:
@@ -29,18 +202,6 @@ class QueryService:
     Attributes:
         engine: SQLAlchemy engine for database connection
     """
-
-    # Keywords that should always be blocked (DDL, execution, permissions)
-    BLOCKED_KEYWORDS: frozenset[str] = frozenset({
-        # DDL operations
-        'CREATE', 'ALTER', 'DROP', 'TRUNCATE',
-        # Code execution
-        'EXEC', 'EXECUTE',
-        # Permission operations
-        'GRANT', 'REVOKE', 'DENY',
-        # SQL Server specific
-        'BACKUP', 'RESTORE', 'DBCC',
-    })
 
     def __init__(self, engine: Engine):
         """Initialize query service.
@@ -275,9 +436,7 @@ class QueryService:
     # =========================================================================
 
     def parse_query_type(self, query_text: str) -> QueryType:
-        """Parse the type of SQL query from the query text.
-
-        For CTE queries (starting with WITH), extracts the final operation type.
+        """Parse the type of SQL query from the query text using sqlglot AST.
 
         Args:
             query_text: SQL query string
@@ -285,73 +444,32 @@ class QueryService:
         Returns:
             QueryType enum value (SELECT, INSERT, UPDATE, DELETE, or OTHER)
         """
-        if not query_text:
+        if not query_text or not query_text.strip():
             return QueryType.OTHER
 
-        # Normalize: remove comments and leading whitespace
-        cleaned = self._remove_sql_comments(query_text.strip())
+        try:
+            statements = sqlglot.parse(query_text, dialect="tsql")
+        except sqlglot.errors.ParseError:
+            return QueryType.OTHER
 
-        # Get first keyword
-        first_word = cleaned.split()[0].upper() if cleaned.split() else ""
+        if not statements or statements[0] is None:
+            return QueryType.OTHER
 
-        query_type_map = {
-            "SELECT": QueryType.SELECT,
-            "INSERT": QueryType.INSERT,
-            "UPDATE": QueryType.UPDATE,
-            "DELETE": QueryType.DELETE,
+        stmt = statements[0]
+        ast_type_map: dict[type[exp.Expression], QueryType] = {
+            exp.Select: QueryType.SELECT,
+            exp.Insert: QueryType.INSERT,
+            exp.Update: QueryType.UPDATE,
+            exp.Delete: QueryType.DELETE,
         }
 
-        # Handle CTE queries: WITH ... <final_operation>
-        if first_word == "WITH":
-            return self._extract_cte_final_operation(cleaned)
+        for ast_type, query_type in ast_type_map.items():
+            if isinstance(stmt, ast_type):
+                return query_type
 
-        return query_type_map.get(first_word, QueryType.OTHER)
-
-    def _extract_cte_final_operation(self, cleaned_query: str) -> QueryType:
-        """Extract the final operation type from a CTE query.
-
-        CTE syntax: WITH cte_name AS (...) [, cte_name AS (...)]* final_statement
-        The final statement determines the operation type.
-
-        Args:
-            cleaned_query: SQL query with comments already removed
-
-        Returns:
-            QueryType of the final operation (SELECT, INSERT, UPDATE, DELETE, or OTHER)
-        """
-        query_type_map = {
-            "SELECT": QueryType.SELECT,
-            "INSERT": QueryType.INSERT,
-            "UPDATE": QueryType.UPDATE,
-            "DELETE": QueryType.DELETE,
-        }
-
-        # Find the final operation keyword after all CTE definitions
-        # CTEs are enclosed in parentheses, so we track nesting to find the end
-        paren_depth = 0
-        i = 0
-        query_upper = cleaned_query.upper()
-
-        # Skip past "WITH" keyword
-        i = query_upper.find("WITH") + 4
-
-        while i < len(cleaned_query):
-            char = cleaned_query[i]
-            if char == '(':
-                paren_depth += 1
-            elif char == ')':
-                paren_depth -= 1
-            elif paren_depth == 0:
-                # Outside all parentheses - look for operation keyword
-                # Check if we're at the start of a keyword
-                remaining = query_upper[i:].lstrip()
-                for keyword, query_type in query_type_map.items():
-                    if remaining.startswith(keyword) and (
-                        len(remaining) == len(keyword)
-                        or not remaining[len(keyword)].isalnum()
-                    ):
-                        return query_type
-            i += 1
+        # Union/Intersect/Except are query types that return data like SELECT
+        if isinstance(stmt, exp.SetOperation):
+            return QueryType.SELECT
 
         return QueryType.OTHER
 
@@ -369,65 +487,6 @@ class QueryService:
         # Remove multi-line comments (/* ... */)
         cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
         return cleaned.strip()
-
-    def _is_blocked_keyword(self, query_text: str) -> tuple[bool, str | None]:
-        """Check if query contains a blocked keyword anywhere.
-
-        Scans the query text (after removing comments) for any blocked keywords.
-        This catches dangerous operations regardless of their position in the query.
-
-        Args:
-            query_text: SQL query string
-
-        Returns:
-            Tuple of (is_blocked, blocked_keyword if blocked else None)
-        """
-        if not query_text:
-            return False, None
-
-        # Remove comments to prevent obfuscation like /* SELECT */ CREATE TABLE
-        cleaned = self._remove_sql_comments(query_text)
-
-        # Tokenize and check each word against blocklist
-        words = re.findall(r'\b\w+\b', cleaned.upper())
-        for word in words:
-            if word in self.BLOCKED_KEYWORDS:
-                return True, word
-
-        return False, None
-
-    def is_query_allowed(
-        self,
-        query_type: QueryType,
-        allow_write: bool = False,
-    ) -> tuple[bool, str | None]:
-        """Check if a query type is allowed to execute.
-
-        Args:
-            query_type: Type of query
-            allow_write: Whether write operations are explicitly enabled
-
-        Returns:
-            Tuple of (is_allowed, error_message if not allowed)
-        """
-        if query_type == QueryType.SELECT:
-            return True, None
-
-        if query_type in (QueryType.INSERT, QueryType.UPDATE, QueryType.DELETE):
-            if allow_write:
-                return True, None
-            return False, (
-                f"Write operations ({query_type.value.upper()}) are blocked by default. "
-                "Enable allow_write=True to execute write operations."
-            )
-
-        if query_type == QueryType.OTHER:
-            return False, (
-                "Only SELECT queries are allowed by default. "
-                "DDL and other statements are not supported."
-            )
-
-        return False, f"Unknown query type: {query_type}"
 
     def inject_row_limit(self, query_text: str, row_limit: int) -> str:
         """Inject a row limit (TOP clause for SQL Server) into a SELECT query.
@@ -568,26 +627,14 @@ class QueryService:
         # Generate query ID
         query_id = str(uuid.uuid4())
 
-        # Check for blocked keywords first (DDL, EXEC, permissions, etc.)
-        is_blocked, blocked_keyword = self._is_blocked_keyword(query_text)
-        if is_blocked:
-            return Query(
-                query_id=query_id,
-                connection_id=connection_id,
-                query_text=query_text,
-                query_type=QueryType.OTHER,
-                is_allowed=False,
-                row_limit=row_limit,
-                error_message=f"Query blocked: {blocked_keyword} operations are not permitted.",
-            )
-
-        # Parse query type
+        # AST-based validation (replaces keyword blocklist + type-based allow/deny)
+        validation = validate_query(query_text, allow_write=allow_write)
         query_type = self.parse_query_type(query_text)
 
-        # Check if query is allowed
-        is_allowed, error_message = self.is_query_allowed(query_type, allow_write)
-
-        if not is_allowed:
+        if not validation.is_safe:
+            # Build human-readable error message from denial reasons
+            reason_strs = [f"{r.category.value.upper()} - {r.detail}" for r in validation.reasons]
+            error_message = f"Query blocked: {'; '.join(reason_strs)}"
             return Query(
                 query_id=query_id,
                 connection_id=connection_id,
@@ -596,6 +643,7 @@ class QueryService:
                 is_allowed=False,
                 row_limit=row_limit,
                 error_message=error_message,
+                denial_reasons=validation.reasons,
             )
 
         # Inject row limit for SELECT queries

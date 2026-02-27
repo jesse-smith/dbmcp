@@ -9,14 +9,15 @@ Tests cover:
 - Read-only enforcement
 - Row limit injection
 - Query execution
+- AST-based denylist query validation
 """
 
 from unittest.mock import MagicMock
 
 import pytest
 
-from src.db.query import QueryService
-from src.models.schema import QueryType, SamplingMethod
+from src.db.query import QueryService, validate_query
+from src.models.schema import DenialCategory, QueryType, SamplingMethod
 
 
 class TestQueryService:
@@ -312,14 +313,9 @@ class TestCTEQueryParsing:
         assert service.parse_query_type(query) == QueryType.SELECT
 
     def test_cte_select_allowed(self, mock_engine):
-        """Test CTE+SELECT queries are allowed by is_query_allowed."""
-        service = QueryService(mock_engine)
-        query_type = service.parse_query_type(
-            "WITH cte AS (SELECT 1) SELECT * FROM cte"
-        )
-        is_allowed, error = service.is_query_allowed(query_type)
-        assert is_allowed is True
-        assert error is None
+        """Test CTE+SELECT queries pass validation."""
+        result = validate_query("WITH cte AS (SELECT 1) SELECT * FROM cte")
+        assert result.is_safe is True
 
     def test_inject_row_limit_cte_sqlserver(self, mock_engine):
         """Test TOP injection in CTE queries for SQL Server."""
@@ -371,66 +367,34 @@ class TestCTEQueryParsing:
 
     def test_cte_write_blocked_by_default(self, mock_engine):
         """Test CTE+write queries are blocked by default."""
-        service = QueryService(mock_engine)
-        # CTE + INSERT
-        query = service.execute_query(
-            connection_id="test123",
-            query_text="WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src",
-            row_limit=1000,
-        )
-        assert query.is_allowed is False
-        assert query.query_type == QueryType.INSERT
-        assert "INSERT" in query.error_message
+        result = validate_query("WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
 
     def test_cte_write_allowed_with_flag(self, mock_engine):
-        """Test CTE+write queries are allowed when allow_write=True."""
-        # Setup mock for execution
-        mock_result = MagicMock()
-        mock_result.rowcount = 5
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value = mock_result
-        mock_engine.connect.return_value.__enter__.return_value = mock_conn
-        mock_engine.dialect.name = "sqlite"
-
-        service = QueryService(mock_engine)
-        query = service.execute_query(
-            connection_id="test123",
-            query_text="WITH src AS (SELECT 1 as val) INSERT INTO t SELECT * FROM src",
-            row_limit=1000,
+        """Test CTE+write queries pass validation when allow_write=True."""
+        result = validate_query(
+            "WITH src AS (SELECT 1 as val) INSERT INTO t SELECT * FROM src",
             allow_write=True,
         )
-        assert query.is_allowed is True
-        assert query.query_type == QueryType.INSERT
+        assert result.is_safe is True
 
     def test_existing_write_controls_unchanged(self, mock_engine):
         """Regression test: existing write controls still work as before."""
-        service = QueryService(mock_engine)
         # Regular INSERT blocked
-        query = service.execute_query(
-            connection_id="test123",
-            query_text="INSERT INTO users (name) VALUES ('test')",
-            row_limit=1000,
-        )
-        assert query.is_allowed is False
-        assert query.query_type == QueryType.INSERT
+        result = validate_query("INSERT INTO users (name) VALUES ('test')")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
         # Regular UPDATE blocked
-        query = service.execute_query(
-            connection_id="test123",
-            query_text="UPDATE users SET name='x' WHERE id=1",
-            row_limit=1000,
-        )
-        assert query.is_allowed is False
-        assert query.query_type == QueryType.UPDATE
+        result = validate_query("UPDATE users SET name='x' WHERE id=1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
         # Regular DELETE blocked
-        query = service.execute_query(
-            connection_id="test123",
-            query_text="DELETE FROM users WHERE id=1",
-            row_limit=1000,
-        )
-        assert query.is_allowed is False
-        assert query.query_type == QueryType.DELETE
+        result = validate_query("DELETE FROM users WHERE id=1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
 
 class TestQueryTypeParser:
@@ -483,63 +447,57 @@ class TestQueryTypeParser:
         assert service.parse_query_type("   ") == QueryType.OTHER
 
 
-class TestBlockedKeywords:
-    """Test blocked keyword detection for dangerous operations."""
+class TestDeniedOperations:
+    """Test AST-based denial of dangerous operations (replaces TestBlockedKeywords)."""
 
-    def test_blocked_create(self, mock_engine):
-        """Test CREATE operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("CREATE TABLE users (id INT)")
-        assert is_blocked is True
-        assert keyword == "CREATE"
+    def test_create_denied(self, mock_engine):
+        """Test CREATE operations are denied."""
+        result = validate_query("CREATE TABLE users (id INT)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_blocked_drop(self, mock_engine):
-        """Test DROP operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("DROP TABLE users")
-        assert is_blocked is True
-        assert keyword == "DROP"
+    def test_drop_denied(self, mock_engine):
+        """Test DROP operations are denied."""
+        result = validate_query("DROP TABLE users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_blocked_alter(self, mock_engine):
-        """Test ALTER operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("ALTER TABLE users ADD col INT")
-        assert is_blocked is True
-        assert keyword == "ALTER"
+    def test_alter_denied(self, mock_engine):
+        """Test ALTER operations are denied."""
+        result = validate_query("ALTER TABLE users ADD col INT")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_blocked_truncate(self, mock_engine):
-        """Test TRUNCATE operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("TRUNCATE TABLE users")
-        assert is_blocked is True
-        assert keyword == "TRUNCATE"
+    def test_truncate_denied(self, mock_engine):
+        """Test TRUNCATE operations are denied."""
+        result = validate_query("TRUNCATE TABLE users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_blocked_exec(self, mock_engine):
-        """Test EXEC/EXECUTE operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("EXEC sp_help")
-        assert is_blocked is True
-        assert keyword == "EXEC"
-        # Also test EXECUTE
-        is_blocked, keyword = service._is_blocked_keyword("EXECUTE sp_help")
-        assert is_blocked is True
-        assert keyword == "EXECUTE"
+    def test_exec_unknown_denied(self, mock_engine):
+        """Test EXEC of unknown procedures is denied."""
+        result = validate_query("EXEC unknown_proc")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
 
-    def test_blocked_grant_revoke_deny(self, mock_engine):
-        """Test GRANT/REVOKE/DENY operations are blocked."""
-        service = QueryService(mock_engine)
-        is_blocked, keyword = service._is_blocked_keyword("GRANT SELECT ON users TO role")
-        assert is_blocked is True
-        assert keyword == "GRANT"
-        is_blocked, keyword = service._is_blocked_keyword("REVOKE SELECT ON users FROM role")
-        assert is_blocked is True
-        assert keyword == "REVOKE"
-        is_blocked, keyword = service._is_blocked_keyword("DENY SELECT ON users TO role")
-        assert is_blocked is True
-        assert keyword == "DENY"
+    def test_grant_denied(self, mock_engine):
+        """Test GRANT operations are denied."""
+        result = validate_query("GRANT SELECT ON users TO role1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DCL
 
-    def test_blocked_error_message_contains_keyword(self, mock_engine):
-        """Test that blocked query error messages include the specific keyword."""
+    def test_revoke_denied(self, mock_engine):
+        """Test REVOKE operations are denied (parse failure)."""
+        result = validate_query("REVOKE SELECT ON users FROM role")
+        assert result.is_safe is False
+
+    def test_deny_denied(self, mock_engine):
+        """Test DENY operations are denied (parse failure)."""
+        result = validate_query("DENY SELECT ON users TO role")
+        assert result.is_safe is False
+
+    def test_denied_error_message_in_execute_query(self, mock_engine):
+        """Test that denied query error messages include category info."""
         service = QueryService(mock_engine)
         query = service.execute_query(
             connection_id="test123",
@@ -547,75 +505,48 @@ class TestBlockedKeywords:
             row_limit=1000,
         )
         assert query.is_allowed is False
-        assert "CREATE" in query.error_message
-
-    def test_blocked_keyword_with_comment_obfuscation(self, mock_engine):
-        """Test that blocked keywords are detected even with comment obfuscation (FR-005)."""
-        service = QueryService(mock_engine)
-        # Try to obfuscate CREATE with a comment
-        is_blocked, keyword = service._is_blocked_keyword("/* SELECT */ CREATE TABLE test (id INT)")
-        assert is_blocked is True
-        assert keyword == "CREATE"
-        # Try with line comment
-        is_blocked, keyword = service._is_blocked_keyword("-- SELECT something\nDROP TABLE users")
-        assert is_blocked is True
-        assert keyword == "DROP"
+        assert "DDL" in query.error_message
+        assert query.denial_reasons is not None
+        assert query.denial_reasons[0].category == DenialCategory.DDL
 
 
 class TestReadOnlyEnforcement:
-    """Test read-only enforcement for query execution."""
+    """Test read-only enforcement via validate_query."""
 
     def test_select_allowed_by_default(self, mock_engine):
-        """Test SELECT queries are allowed by default."""
-        service = QueryService(mock_engine)
-        is_allowed, error = service.is_query_allowed(QueryType.SELECT)
-        assert is_allowed is True
-        assert error is None
+        """Test SELECT queries pass validation by default."""
+        result = validate_query("SELECT * FROM users")
+        assert result.is_safe is True
 
     def test_insert_blocked_by_default(self, mock_engine):
-        """Test INSERT queries are blocked by default."""
-        service = QueryService(mock_engine)
-        is_allowed, error = service.is_query_allowed(QueryType.INSERT)
-        assert is_allowed is False
-        assert "INSERT" in error
-        assert "blocked" in error.lower()
+        """Test INSERT queries are denied by default."""
+        result = validate_query("INSERT INTO users VALUES (1)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
     def test_update_blocked_by_default(self, mock_engine):
-        """Test UPDATE queries are blocked by default."""
-        service = QueryService(mock_engine)
-        is_allowed, error = service.is_query_allowed(QueryType.UPDATE)
-        assert is_allowed is False
-        assert "UPDATE" in error
+        """Test UPDATE queries are denied by default."""
+        result = validate_query("UPDATE users SET name='x'")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
     def test_delete_blocked_by_default(self, mock_engine):
-        """Test DELETE queries are blocked by default."""
-        service = QueryService(mock_engine)
-        is_allowed, error = service.is_query_allowed(QueryType.DELETE)
-        assert is_allowed is False
-        assert "DELETE" in error
+        """Test DELETE queries are denied by default."""
+        result = validate_query("DELETE FROM users WHERE id=1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
 
-    def test_other_blocked(self, mock_engine):
-        """Test OTHER (DDL etc.) queries are blocked."""
-        service = QueryService(mock_engine)
-        is_allowed, error = service.is_query_allowed(QueryType.OTHER)
-        assert is_allowed is False
-        assert "only SELECT" in error.lower() or "DDL" in error
+    def test_ddl_blocked(self, mock_engine):
+        """Test DDL queries are denied."""
+        result = validate_query("CREATE TABLE test (id INT)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
 
     def test_write_allowed_when_enabled(self, mock_engine):
-        """Test write operations are allowed when explicitly enabled."""
-        service = QueryService(mock_engine)
-
-        is_allowed, error = service.is_query_allowed(QueryType.INSERT, allow_write=True)
-        assert is_allowed is True
-        assert error is None
-
-        is_allowed, error = service.is_query_allowed(QueryType.UPDATE, allow_write=True)
-        assert is_allowed is True
-        assert error is None
-
-        is_allowed, error = service.is_query_allowed(QueryType.DELETE, allow_write=True)
-        assert is_allowed is True
-        assert error is None
+        """Test write operations pass when allow_write=True."""
+        assert validate_query("INSERT INTO users VALUES (1)", allow_write=True).is_safe is True
+        assert validate_query("UPDATE users SET name='x'", allow_write=True).is_safe is True
+        assert validate_query("DELETE FROM users WHERE id=1", allow_write=True).is_safe is True
 
 
 class TestRowLimitInjection:
@@ -729,7 +660,8 @@ class TestQueryExecution:
 
         assert query.is_allowed is False
         assert query.query_type == QueryType.DELETE
-        assert "blocked" in query.error_message.lower()
+        assert "DML" in query.error_message
+        assert query.denial_reasons is not None
 
     def test_execute_query_with_results(self, mock_engine):
         """Test get_query_results returns proper structure."""
@@ -801,3 +733,382 @@ class TestQueryExecution:
         assert results["status"] == "blocked"
         assert results["is_allowed"] is False
         assert results["query_type"] == "update"
+        assert "DML" in results["error_message"]
+
+
+# =============================================================================
+# AST-Based Denylist Validation Tests (Feature 005)
+# =============================================================================
+
+
+class TestValidateQuerySafe:
+    """T005: Tests for safe query validation — queries that should pass."""
+
+    def test_simple_select(self):
+        """Plain SELECT passes validation."""
+        result = validate_query("SELECT * FROM users")
+        assert result.is_safe is True
+        assert result.reasons == []
+
+    def test_select_with_where(self):
+        """SELECT with WHERE clause passes."""
+        result = validate_query("SELECT id, name FROM users WHERE active = 1")
+        assert result.is_safe is True
+
+    def test_select_with_keyword_overlapping_column_create_date(self):
+        """SELECT referencing 'create_date' column must not false-positive on CREATE."""
+        result = validate_query("SELECT create_date FROM orders")
+        assert result.is_safe is True
+
+    def test_select_with_keyword_overlapping_column_execute_count(self):
+        """SELECT referencing 'execute_count' column must not false-positive on EXECUTE."""
+        result = validate_query("SELECT execute_count FROM stats")
+        assert result.is_safe is True
+
+    def test_select_with_keyword_overlapping_column_drop_reason(self):
+        """SELECT referencing 'drop_reason' column must not false-positive on DROP."""
+        result = validate_query("SELECT drop_reason FROM audit_log")
+        assert result.is_safe is True
+
+    def test_cte_select(self):
+        """CTE followed by SELECT passes."""
+        result = validate_query(
+            "WITH cte AS (SELECT id FROM users) SELECT * FROM cte"
+        )
+        assert result.is_safe is True
+
+    def test_multiple_ctes_select(self):
+        """Multiple CTEs followed by SELECT passes."""
+        result = validate_query(
+            "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS y) SELECT * FROM a, b"
+        )
+        assert result.is_safe is True
+
+    def test_select_with_subquery(self):
+        """SELECT with subquery passes."""
+        result = validate_query(
+            "SELECT * FROM users WHERE id IN (SELECT user_id FROM active_users)"
+        )
+        assert result.is_safe is True
+
+    def test_select_union(self):
+        """UNION queries pass."""
+        result = validate_query("SELECT 1 AS x UNION SELECT 2 AS x")
+        assert result.is_safe is True
+
+
+class TestValidateQueryDenied:
+    """T006: Tests for denied operations — categorized denial reasons."""
+
+    # --- DML ---
+
+    def test_insert_denied(self):
+        result = validate_query("INSERT INTO users (name) VALUES ('x')")
+        assert result.is_safe is False
+        assert len(result.reasons) >= 1
+        assert result.reasons[0].category == DenialCategory.DML
+
+    def test_update_denied(self):
+        result = validate_query("UPDATE users SET name = 'x' WHERE id = 1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
+
+    def test_delete_denied(self):
+        result = validate_query("DELETE FROM users WHERE id = 1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
+
+    def test_merge_denied(self):
+        result = validate_query(
+            "MERGE INTO target USING source ON target.id = source.id "
+            "WHEN MATCHED THEN UPDATE SET name = source.name"
+        )
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DML
+
+    # --- DDL ---
+
+    def test_create_table_denied(self):
+        result = validate_query("CREATE TABLE test (id INT)")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    def test_alter_table_denied(self):
+        result = validate_query("ALTER TABLE users ADD col INT")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    def test_drop_table_denied(self):
+        result = validate_query("DROP TABLE users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    def test_truncate_denied(self):
+        result = validate_query("TRUNCATE TABLE users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    # --- DCL ---
+
+    def test_grant_denied(self):
+        result = validate_query("GRANT SELECT ON users TO role1")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DCL
+
+    def test_revoke_denied(self):
+        """REVOKE can't be parsed by sqlglot → PARSE_FAILURE (still denied)."""
+        result = validate_query("REVOKE SELECT ON users FROM role1")
+        assert result.is_safe is False
+
+    def test_deny_denied(self):
+        """DENY can't be parsed by sqlglot → PARSE_FAILURE (still denied)."""
+        result = validate_query("DENY SELECT ON users TO role1")
+        assert result.is_safe is False
+
+    # --- Operational ---
+
+    def test_backup_denied(self):
+        """BACKUP can't be parsed by sqlglot → PARSE_FAILURE (still denied)."""
+        result = validate_query("BACKUP DATABASE mydb TO DISK = 'path'")
+        assert result.is_safe is False
+
+    def test_restore_denied(self):
+        """RESTORE can't be parsed by sqlglot → PARSE_FAILURE (still denied)."""
+        result = validate_query("RESTORE DATABASE mydb FROM DISK = 'path'")
+        assert result.is_safe is False
+
+    def test_kill_denied(self):
+        result = validate_query("KILL 55")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.OPERATIONAL
+
+    # --- SELECT INTO ---
+
+    def test_select_into_denied(self):
+        result = validate_query("SELECT * INTO newtable FROM users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.SELECT_INTO
+
+    # --- CTE-wrapped writes ---
+
+    def test_cte_insert_denied(self):
+        result = validate_query(
+            "WITH cte AS (SELECT 1 AS val) INSERT INTO t SELECT * FROM cte"
+        )
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
+
+    def test_cte_update_denied(self):
+        result = validate_query(
+            "WITH cte AS (SELECT id, 'x' AS name FROM users) "
+            "UPDATE t SET name = cte.name FROM t JOIN cte ON t.id = cte.id"
+        )
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
+
+    def test_cte_delete_denied(self):
+        result = validate_query(
+            "WITH old AS (SELECT id FROM users WHERE created < '2020-01-01') "
+            "DELETE FROM users WHERE id IN (SELECT id FROM old)"
+        )
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
+
+    # --- Case variation (FR-013) ---
+
+    def test_case_insensitive_drop(self):
+        result = validate_query("drop table users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    def test_case_insensitive_grant(self):
+        result = validate_query("Grant SELECT ON t TO r")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DCL
+
+    def test_case_insensitive_truncate(self):
+        result = validate_query("TRUNCATE table users")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    # --- Stored procedures (all denied in Phase 3, allowlist added Phase 4) ---
+
+    def test_exec_unknown_proc_denied(self):
+        """Unknown stored procedures are denied."""
+        result = validate_query("EXEC user_defined_proc")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
+
+
+class TestValidateQueryAllowWrite:
+    """T007: Tests for allow_write=True bypass behavior."""
+
+    def test_insert_allowed_with_write(self):
+        result = validate_query("INSERT INTO users (name) VALUES ('x')", allow_write=True)
+        assert result.is_safe is True
+
+    def test_update_allowed_with_write(self):
+        result = validate_query("UPDATE users SET name = 'x'", allow_write=True)
+        assert result.is_safe is True
+
+    def test_delete_allowed_with_write(self):
+        result = validate_query("DELETE FROM users WHERE id = 1", allow_write=True)
+        assert result.is_safe is True
+
+    def test_merge_allowed_with_write(self):
+        result = validate_query(
+            "MERGE INTO target USING source ON target.id = source.id "
+            "WHEN MATCHED THEN UPDATE SET name = source.name",
+            allow_write=True,
+        )
+        assert result.is_safe is True
+
+    def test_ddl_still_denied_with_write(self):
+        """DDL is NOT bypassed by allow_write."""
+        result = validate_query("CREATE TABLE test (id INT)", allow_write=True)
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DDL
+
+    def test_dcl_still_denied_with_write(self):
+        """DCL is NOT bypassed by allow_write."""
+        result = validate_query("GRANT SELECT ON t TO r", allow_write=True)
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.DCL
+
+    def test_operational_still_denied_with_write(self):
+        """Operational commands are NOT bypassed by allow_write."""
+        result = validate_query("KILL 55", allow_write=True)
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.OPERATIONAL
+
+    def test_select_into_still_denied_with_write(self):
+        """SELECT INTO is NOT bypassed by allow_write."""
+        result = validate_query("SELECT * INTO newtable FROM users", allow_write=True)
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.SELECT_INTO
+
+
+class TestStoredProcedureAllowlist:
+    """T010: Tests for stored procedure allowlist (US3)."""
+
+    # All 22 safe procedures should pass
+
+    @pytest.mark.parametrize("proc", [
+        "sp_column_privileges", "sp_columns", "sp_databases", "sp_fkeys",
+        "sp_pkeys", "sp_server_info", "sp_special_columns", "sp_sproc_columns",
+        "sp_statistics", "sp_stored_procedures", "sp_table_privileges", "sp_tables",
+        "sp_help", "sp_helptext", "sp_helpindex", "sp_helpconstraint",
+        "sp_who", "sp_who2", "sp_spaceused",
+        "sp_describe_first_result_set", "sp_describe_undeclared_parameters",
+    ])
+    def test_safe_procedure_allowed(self, proc):
+        """Each of the 22 safe system procedures passes validation."""
+        result = validate_query(f"EXEC {proc}")
+        assert result.is_safe is True, f"{proc} should be safe but got: {result.reasons}"
+
+    def test_safe_procedure_with_schema_prefix(self):
+        """Multi-part name master.dbo.sp_help resolves correctly."""
+        result = validate_query("EXEC master.dbo.sp_help")
+        assert result.is_safe is True
+
+    def test_safe_procedure_with_dbo_prefix(self):
+        """dbo.sp_columns resolves correctly."""
+        result = validate_query("EXEC dbo.sp_columns")
+        assert result.is_safe is True
+
+    def test_sp_executesql_denied(self):
+        """sp_executesql is explicitly denied despite matching sp_ pattern."""
+        result = validate_query("EXEC sp_executesql")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
+        assert "sp_executesql" in result.reasons[0].detail
+
+    def test_unknown_procedure_denied(self):
+        """User-defined procedures are denied."""
+        result = validate_query("EXEC my_custom_proc")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
+
+    def test_case_insensitive_sp_tables(self):
+        """SP_TABLES (uppercase) matches case-insensitively."""
+        result = validate_query("EXEC SP_TABLES")
+        assert result.is_safe is True
+
+    def test_case_insensitive_sp_help(self):
+        """Sp_Help (mixed case) matches case-insensitively."""
+        result = validate_query("EXEC Sp_Help")
+        assert result.is_safe is True
+
+    def test_execute_keyword(self):
+        """EXECUTE (not just EXEC) works for safe procedures."""
+        result = validate_query("EXECUTE sp_tables")
+        assert result.is_safe is True
+
+    def test_execute_unknown_denied(self):
+        """EXECUTE unknown procedure is denied."""
+        result = validate_query("EXECUTE unknown_proc")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
+
+
+class TestObfuscationResistance:
+    """T013: Tests for obfuscation resistance (US4)."""
+
+    # --- Multi-statement batches ---
+
+    def test_batch_with_denied_statement(self):
+        """A batch with one denied statement → entire batch denied with statement_index."""
+        result = validate_query("SELECT 1; DROP TABLE users")
+        assert result.is_safe is False
+        # Should have at least one denial reason with correct index
+        drop_reasons = [r for r in result.reasons if r.category == DenialCategory.DDL]
+        assert len(drop_reasons) >= 1
+        assert drop_reasons[0].statement_index == 1  # Second statement (0-indexed)
+
+    def test_batch_all_safe(self):
+        """A batch of all safe statements passes."""
+        result = validate_query("SELECT 1; SELECT 2")
+        assert result.is_safe is True
+
+    def test_batch_multiple_denied(self):
+        """A batch with multiple denied statements reports all denials."""
+        result = validate_query("DROP TABLE a; INSERT INTO b VALUES(1)")
+        assert result.is_safe is False
+        assert len(result.reasons) >= 2
+
+    # --- Nested denied operations in control flow ---
+
+    def test_begin_end_block_with_drop(self):
+        """Denied operation inside BEGIN/END block detected."""
+        result = validate_query("BEGIN DROP TABLE x END")
+        assert result.is_safe is False
+
+    def test_if_else_with_denied(self):
+        """Denied operation inside IF/ELSE block detected."""
+        result = validate_query("IF 1=1 DROP TABLE x")
+        assert result.is_safe is False
+
+    def test_while_with_denied(self):
+        """Denied operation inside WHILE block detected."""
+        result = validate_query("WHILE 1=1 DELETE FROM users")
+        assert result.is_safe is False
+
+    # --- Parse failures ---
+
+    def test_malformed_sql_denied(self):
+        """Malformed SQL is denied as PARSE_FAILURE."""
+        result = validate_query("THIS IS NOT VALID SQL !@#$%")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.PARSE_FAILURE
+
+    def test_empty_query_denied(self):
+        """Empty string is denied."""
+        result = validate_query("")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.PARSE_FAILURE
+
+    def test_whitespace_only_denied(self):
+        """Whitespace-only string is denied."""
+        result = validate_query("   \n\t  ")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.PARSE_FAILURE
