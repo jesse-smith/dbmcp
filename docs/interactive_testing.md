@@ -114,16 +114,16 @@ Export full database documentation to local markdown files. Includes schemas, ta
 | Status | Test | Notes |
 |--------|------|-------|
 | PASS | Basic export (no samples, no inferred) | Success: 101 tables, 2 schemas, 140 declared FKs, 155KB total. (Issue #11 fixed in bugfix/tier1-issues) |
-| UNTESTED | Export with sample data | Unblocked by Issue #11 fix — not yet tested |
-| UNTESTED | Custom output directory | Unblocked by Issue #11 fix — not yet tested |
-| UNTESTED | Include/exclude inferred relationships | Unblocked by Issue #11 fix — not yet tested (inferred still blocked by Issue #4 timeout) |
+| PASS | Export with sample data | 220KB total (vs 155KB without). Sample data sections confirmed in table .md files (e.g., Calendar shows 3 rows with ISO datetime values). No sample data when `include_sample_data=false` — correctly toggleable |
+| BUG | Custom output directory | Absolute path rejected: `'/tmp/.../overview.md' is not in the subpath of '.'` (security restriction). Relative path `exports/custom_test` writes files correctly and creates valid `.cache_metadata.json`, BUT response `files_created` returns stale paths from default `docs/` location. See Issue #14 |
+| BLOCKED | Include/exclude inferred relationships | Blocked by Issue #4 (infer_relationships timeout) — no inferred relationship data available to export |
 
 ### 10. load_cached_docs
 Load previously exported documentation cache. Returns entity counts and cache age.
 
 | Status | Test | Notes |
 |--------|------|-------|
-| UNTESTED | Load after export | Unblocked by Issue #11 fix — not yet tested |
+| PASS | Load after export | status=loaded, tables=101, declared_fks=140, cache_age_days=0, schema_hash present. All fields consistent with export output. Note: table count discrepancy — see Issue #13 |
 | BUG | Load with incomplete/no cache | Returns `status: "loaded"` on a partial/corrupt cache from a prior failed run. Schema counts present (dbo: 297+142) but `entity_counts.tables: 0`, `declared_fks: 0`, `cache_age_days: null`. Should flag incomplete cache instead of claiming success (see Issue #12) |
 
 ### 11. check_drift
@@ -131,9 +131,10 @@ Compare cached docs hash against current database schema. Detects added/removed/
 
 | Status | Test | Notes |
 |--------|------|-------|
-| UNTESTED | No drift (cache is current) | Unblocked by Issue #11 fix — not yet tested |
+| PASS | No drift (cache is current) | `drift_detected: false`, hashes match, `summary: "No changes detected"`. All diff lists empty |
 | PASS | Drift detection with missing cache | Returns `drift_detected: true`, `summary: "Cache metadata missing"`. Correctly identifies incomplete cache. Current hash computed successfully |
-| UNTESTED | Auto-refresh on drift | Unblocked by Issue #11 fix — not yet tested |
+| PASS | Drift detection with stale hash | Tampered cached hash to zeros. `drift_detected: true`, `summary: "Structural changes detected in existing tables"`. Added/removed/modified lists all empty (correct — tables unchanged, only hash differs) |
+| PASS | Auto-refresh on drift | `auto_refreshed: true`, cache re-exported, hash restored. Note: auto-refresh hardcodes `include_inferred_relationships=True` and uses default `include_sample_data=False` (line 999-1001 in `server.py`) — doesn't preserve prior export settings. Size jumped 155KB→393KB due to inferred relationship computation |
 
 ---
 
@@ -228,6 +229,29 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Description**: When loading a partial cache (from a prior failed export), the tool returns `status: "loaded"` with schema-level data but `entity_counts.tables: 0`, `declared_fks: 0`, `cache_age_days: null`, `schema_hash: null`. The consumer has no indication the cache is incomplete. Should return `status: "partial"` or `status: "incomplete"` with a warning, or validate that entity counts are consistent with schema counts before claiming success.
 **Repro**: `load_cached_docs(connection_id="542f8ffefc15")` after a failed `export_documentation` → `status: "loaded"` with contradictory data (schemas show 440 objects but `tables: 0`).
 
+### Issue #13: `export_documentation` silently truncates tables at 100 per schema
+**Severity**: Medium (data loss — export is incomplete without indication)
+**Location**: `src/mcp_server/server.py` lines 763-766
+**Description**: `export_documentation` calls `metadata_svc.list_tables(schema_name=...)` without passing a `limit` parameter. The `list_tables` method in `src/db/metadata.py` defaults to `limit=100`. Since pagination is never used, only the first 100 tables per schema are exported. For StemSoftClinic: dbo has 439 objects but only 100 are fetched; reporting has 1, so 101 total. The storage layer (`cache/storage.py`) correctly writes whatever it receives — the truncation happens upstream in the collection loop. Schema-level counts in the cache (dbo: 297+142) come from `list_schemas` which queries correctly, creating a visible discrepancy with `entity_counts.tables: 101`.
+**Repro**: `export_documentation(connection_id="542f8ffefc15")` → reports 101 tables. `load_cached_docs` → `entity_counts.tables: 101` but schema counts sum to 440.
+**Fix**: Pass `limit=0` or a sufficiently large limit in the `list_tables` call within `export_documentation`, or loop with pagination until `has_more=false`.
+
+### Issue #14: `export_documentation` custom output_dir — response reports wrong file paths + absolute paths rejected
+**Severity**: Low (files are written correctly; only the response metadata is wrong)
+**Location**: `src/mcp_server/server.py` line 855, `src/cache/storage.py` line 750
+**Description**: Two sub-issues with custom `output_dir`:
+1. **Wrong `files_created` in response**: `server.py:855` calls `storage.get_cache_metadata(connection_id)` which always reads from the default cache location (`docs/{connection_id}/.cache_metadata.json`), not the custom output directory. When exporting to `exports/custom_test`, the response returns stale `files_created` paths from the previous default-location export. The custom export does write a correct `.cache_metadata.json` in the custom dir — it's just never read back.
+2. **Absolute paths rejected**: `output_dir="/tmp/dbmcp_test_export"` fails with `"'/tmp/.../overview.md' is not in the subpath of '.'"` because `relative_to(self.base_dir.parent)` on line 152 of `storage.py` can't compute a relative path outside the project root. This is arguably a reasonable security restriction but should return a clearer error message rather than an internal ValueError.
+**Repro**: `export_documentation(connection_id="542f8ffefc15", output_dir="exports/custom_test")` → files written correctly to `exports/custom_test/` but `files_created` in response shows `docs/542f8ffefc15/...` paths.
+**Fix**: (1) Pass the custom `output_dir` to `get_cache_metadata` or read metadata from the `cache` return value. (2) For absolute paths, either support them or validate early with a clear error.
+
+### Issue #15: `check_drift` auto-refresh doesn't preserve prior export settings
+**Severity**: Low (functional but surprising behavior)
+**Location**: `src/mcp_server/server.py` lines 999-1002
+**Description**: When `check_drift(auto_refresh=True)` triggers a re-export, it hardcodes `include_inferred_relationships=True` and omits `include_sample_data` (defaults to `False`). Prior export settings stored in `.cache_metadata.json` (which records `include_sample_data` and `include_inferred_relationships`) are not read or passed through. This means an auto-refresh can silently change the cache contents — e.g., a cache originally exported with `include_sample_data=True` loses its sample data after drift refresh.
+**Repro**: Export with `include_sample_data=True` (220KB). Tamper cache hash. Run `check_drift(auto_refresh=True)` → re-export uses defaults, sample data lost, size changes.
+**Fix**: Read `include_sample_data` and `include_inferred_relationships` from the existing `.cache_metadata.json` before re-exporting, and pass them to `export_documentation`.
+
 ---
 
 ## Issue Priority
@@ -238,17 +262,20 @@ Compare cached docs hash against current database schema. Detects added/removed/
 3. ~~**#11** — export FK type mismatch crash~~ — fixed (cb4be90), verified against live DB (140 FKs exported)
 
 ### Tier 2: Medium impact, easy fix
-4. **#10** — analyze_column silent failure on bad input
-5. **#6** — tablesample 0 rows for small N
-6. **#2** — list_tables field naming vs spec
-7. **#7** — modulo unimplemented (remove or implement)
+4. **#13** — export_documentation truncates at 100 tables/schema (no pagination)
+5. **#10** — analyze_column silent failure on bad input
+6. **#6** — tablesample 0 rows for small N
+7. **#2** — list_tables field naming vs spec
+8. **#7** — modulo unimplemented (remove or implement)
+9. **#14** — export custom output_dir returns wrong file paths in response
+10. **#15** — check_drift auto-refresh doesn't preserve prior export settings
 
 ### Tier 3: Deprioritize — refactor planned
-8. **#9** — analyze_column inference quality (→ LLM-assisted)
-9. **#8** — analyze_column flag detection (→ LLM-assisted)
-10. **#4** — infer_relationships timeout (→ LLM-assisted)
-11. **#3** — infer_relationships declared FK handling (→ LLM-assisted)
-12. **#12** — load_cached_docs false success (→ export redesign)
+11. **#9** — analyze_column inference quality (→ LLM-assisted)
+12. **#8** — analyze_column flag detection (→ LLM-assisted)
+13. **#4** — infer_relationships timeout (→ LLM-assisted)
+14. **#3** — infer_relationships declared FK handling (→ LLM-assisted)
+15. **#12** — load_cached_docs false success (→ export redesign)
 
 ---
 
@@ -257,3 +284,6 @@ Compare cached docs hash against current database schema. Detects added/removed/
 - **2026-02-26:** Connected to SVWTSTEM04/StemSoftClinic via Windows auth. Connection successful (ID: 542f8ffefc15, 2 schemas found).
 - **2026-02-26:** Tested all 11 tools, found 12 issues (#1–#12). Prioritized into 3 tiers.
 - **2026-02-26:** Fixed Tier 1 issues (#5, #1, #11) on `bugfix/tier1-issues` branch, merged to `integration-test`. All three verified against live DB after MCP server restart.
+- **2026-02-26:** Tested `load_cached_docs` after successful export — PASS. Discovered Issue #13: `export_documentation` silently truncates at 100 tables/schema due to default `limit=100` in `list_tables`. Root cause in `server.py` lines 763-766 (no limit/pagination passed). Added to Tier 2.
+- **2026-02-26:** Tested export with sample data — PASS (220KB, sample sections present, correctly toggleable). Tested custom output_dir — BUG: files written correctly but response `files_created` returns stale paths from default location (`server.py:855` reads metadata from wrong dir). Absolute paths rejected with unclear internal error. Filed as Issue #14.
+- **2026-02-26:** Tested all check_drift scenarios. No drift — PASS. Simulated drift (tampered cache hash) — PASS, correctly detected. Auto-refresh — PASS, re-exported and restored hash. Minor note: auto-refresh hardcodes `include_inferred_relationships=True` and doesn't preserve prior export settings (`server.py:999-1001`).
