@@ -8,7 +8,8 @@ import hashlib
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time as dt_time
+from decimal import Decimal
 from typing import Any
 
 import sqlglot
@@ -422,6 +423,18 @@ class QueryService:
                 return f"<binary: {hex_preview}... ({len(value)} bytes)>", True
             else:
                 return f"<binary: {value.hex()} ({len(value)} bytes)>", True
+
+        # Handle datetime/date/time types (not JSON serializable)
+        if isinstance(value, datetime):
+            return value.isoformat(), False
+        if isinstance(value, date):
+            return value.isoformat(), False
+        if isinstance(value, dt_time):
+            return value.isoformat(), False
+
+        # Handle Decimal (not JSON serializable)
+        if isinstance(value, Decimal):
+            return float(value), False
 
         # Handle large text (>1000 characters)
         if isinstance(value, str):
