@@ -186,10 +186,10 @@ class TestQueryService:
             sampling_method=SamplingMethod.TABLESAMPLE,
         )
 
-        # Verify the call was made
-        assert mock_conn.execute.called
-        # Verify sampling method in result
-        assert sample.sampling_method == SamplingMethod.TABLESAMPLE
+        # Verify both tablesample and fallback top queries were executed
+        assert mock_conn.execute.call_count == 2
+        # When tablesample returns 0 rows, it falls back to TOP
+        assert sample.sampling_method == SamplingMethod.TOP
 
     def test_modulo_query_generation(self, mock_engine):
         """Test modulo-based sampling query is generated."""

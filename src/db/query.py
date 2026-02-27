@@ -272,6 +272,7 @@ class QueryService:
         # Execute query and fetch results
         rows = []
         truncated_columns = []
+        actual_method = sampling_method
 
         try:
             with self.engine.connect() as conn:
@@ -288,6 +289,26 @@ class QueryService:
 
                     rows.append(row_dict)
 
+                # TABLESAMPLE can return 0 rows on large tables with small sample sizes
+                # because SQL Server samples at the 8KB page level, not individual rows.
+                # Fall back to TOP when this happens.
+                if not rows and sampling_method == SamplingMethod.TABLESAMPLE:
+                    logger.warning(
+                        f"TABLESAMPLE returned 0 rows for {schema_name}.{table_name} "
+                        f"with sample_size={sample_size}; falling back to TOP"
+                    )
+                    fallback_query = self._build_top_query(full_table_name, column_sql, sample_size)
+                    fallback_result = conn.execute(text(fallback_query))
+                    actual_method = SamplingMethod.TOP
+                    for row in fallback_result:
+                        row_dict = {}
+                        for column_name, value in row._mapping.items():
+                            truncated_value, was_truncated = self._truncate_value(value, column_name)
+                            row_dict[column_name] = truncated_value
+                            if was_truncated and column_name not in truncated_columns:
+                                truncated_columns.append(column_name)
+                        rows.append(row_dict)
+
         except Exception as e:
             logger.error(f"Error sampling data from {schema_name}.{table_name}: {e}")
             raise
@@ -301,7 +322,7 @@ class QueryService:
             sample_id=sample_id,
             table_id=table_id,
             sample_size=len(rows),
-            sampling_method=sampling_method,
+            sampling_method=actual_method,
             rows=rows,
             truncated_columns=truncated_columns,
             sampled_at=datetime.now(),
