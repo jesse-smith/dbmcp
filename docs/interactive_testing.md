@@ -134,7 +134,7 @@ Compare cached docs hash against current database schema. Detects added/removed/
 | PASS | No drift (cache is current) | `drift_detected: false`, hashes match, `summary: "No changes detected"`. All diff lists empty |
 | PASS | Drift detection with missing cache | Returns `drift_detected: true`, `summary: "Cache metadata missing"`. Correctly identifies incomplete cache. Current hash computed successfully |
 | PASS | Drift detection with stale hash | Tampered cached hash to zeros. `drift_detected: true`, `summary: "Structural changes detected in existing tables"`. Added/removed/modified lists all empty (correct — tables unchanged, only hash differs) |
-| PASS | Auto-refresh on drift | `auto_refreshed: true`, cache re-exported, hash restored. Previously hardcoded export settings (Issue #15) — fixed in commit fc8f639, now reads prior settings from `.cache_metadata.json`. Code verified + unit tests pass; live DB E2E pending |
+| PASS | Auto-refresh on drift | `auto_refreshed: true`, cache re-exported, hash restored. Previously hardcoded export settings (Issue #15) — fixed in commit fc8f639, now reads prior settings from `.cache_metadata.json`. Code verified + unit tests pass; live DB E2E: auto-refresh ran but took >15min (previously ~2-3min for full export). Possible performance regression or server-side issue — needs investigation. |
 
 ---
 
@@ -268,7 +268,7 @@ Compare cached docs hash against current database schema. Detects added/removed/
 7. ~~**#2** — list_tables field naming vs spec~~ — fixed (f75c8e9), verified: `returned_count` replaces `total_tables`
 8. ~~**#7** — modulo unimplemented~~ — fixed (7a05637), verified: evenly-spaced IDs distinct from top's sequential IDs
 9. ~~**#14** — export custom output_dir wrong paths~~ — fixed (e33f666), verified: relative paths correct, absolute paths work
-10. ~~**#15** — auto-refresh doesn't preserve settings~~ — fixed (fc8f639), code verified + unit tests pass; live DB unavailable for full E2E
+10. ~~**#15** — auto-refresh doesn't preserve settings~~ — fixed (fc8f639), code verified + unit tests pass; live E2E: auto-refresh triggered but took >15min (possible perf regression — needs investigation)
 
 ### Tier 3: Deprioritize — refactor planned
 11. **#9** — analyze_column inference quality (→ LLM-assisted)
@@ -295,3 +295,4 @@ Compare cached docs hash against current database schema. Detects added/removed/
   - **#7 VERIFIED**: `modulo` with `sample_size=5` on PerformedActs returns evenly-spaced IDs (494M, 781M, 803M, 814M, 823M) vs `top`'s sequential IDs (822608122–822608166). Response shows `sampling_method: "modulo"`.
   - **#14 VERIFIED**: Relative path `exports/custom_test` → `files_created` correctly shows `exports/custom_test/...` paths (was stale `docs/542f8ffefc15/...`). Absolute path `/tmp/dbmcp_test_export` → succeeds (previously crashed with ValueError), paths shown as `dbmcp_test_export/...` relative to parent.
   - **#15 CODE VERIFIED**: Exported with `include_sample_data=True` (796KB), tampered hash. Server became unreachable before auto-refresh could run. Fix reads prior settings from `.cache_metadata.json` and passes them through — code path verified via unit tests (385 pass).
+- **2026-02-27:** Retried Issue #15 live E2E. Reconnected to SVWTSTEM04/StemSoftClinic (after Cloudflare re-auth). `check_drift(auto_refresh=True)` triggered but took >15 minutes before being cancelled. Previous full exports completed in ~2-3 minutes. **Performance regression noted** — unclear if server-side (SQL Server resource pressure) or code-side (pagination loop in export_documentation adding overhead for 440 tables with sample_data). Needs investigation as a separate issue.
