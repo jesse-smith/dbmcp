@@ -92,32 +92,32 @@
 
 ### Coverage Baseline
 
-- [ ] T035 [US2] Record post-US1 coverage baseline (may differ from T002 due to import restructuring): `uv run pytest tests/ --cov=src --cov-report=term-missing -q`
+- [x] T035 [US2] Record post-US1 coverage baseline (may differ from T002 due to import restructuring): `uv run pytest tests/ --cov=src --cov-report=term-missing -q`
 
 ### Parametrize Duplicate Tests in test_query.py
 
-- [ ] T036 [US2] Parametrize denial category tests in tests/unit/test_query.py: consolidate ~25 individual DDL/DML/DCL denial tests across TestDeniedOperations and TestValidateQueryDenied into ~4 parametrized tests grouped by category
-- [ ] T037 [P] [US2] Parametrize query type parsing tests in tests/unit/test_query.py: consolidate TestQueryTypeParser methods (5 tests for SELECT/INSERT/UPDATE/DELETE/OTHER) into 1-2 parametrized tests
-- [ ] T038 [P] [US2] Parametrize CTE tests in tests/unit/test_query.py: consolidate TestCTEQueryParsing methods (13 tests) into ~3 parametrized tests covering parse/validate/inject behaviors
-- [ ] T039 [P] [US2] Parametrize row limit injection tests in tests/unit/test_query.py: consolidate dialect-variant tests (~6 tests) into ~2 parametrized tests
-- [ ] T040 [US2] Run tests to verify parametrization preserved all behavioral coverage
+- [x] T036 [US2] Parametrize denial category tests in tests/unit/test_query.py: consolidate ~25 individual DDL/DML/DCL denial tests across TestDeniedOperations and TestValidateQueryDenied into ~4 parametrized tests grouped by category
+- [x] T037 [P] [US2] Parametrize query type parsing tests in tests/unit/test_query.py: consolidate TestQueryTypeParser methods (5 tests for SELECT/INSERT/UPDATE/DELETE/OTHER) into 1-2 parametrized tests
+- [x] T038 [P] [US2] Parametrize CTE tests in tests/unit/test_query.py: consolidate TestCTEQueryParsing methods (13 tests) into ~3 parametrized tests covering parse/validate/inject behaviors
+- [x] T039 [P] [US2] Parametrize row limit injection tests in tests/unit/test_query.py: consolidate dialect-variant tests (~6 tests) into ~2 parametrized tests
+- [x] T040 [US2] Run tests to verify parametrization preserved all behavioral coverage
 
 ### Relocate Validation Tests
 
-- [ ] T041 [US2] Create tests/unit/test_validation.py and move validation-specific tests from tests/unit/test_query.py (tests for `validate_query`, denial categories, allowed operations) to match the src/db/validation.py extraction from T004
-- [ ] T042 [US2] Run tests to verify relocation preserved all test coverage
+- [x] T041 [US2] Create tests/unit/test_validation.py and move validation-specific tests from tests/unit/test_query.py (tests for `validate_query`, denial categories, allowed operations) to match the src/db/validation.py extraction from T004
+- [x] T042 [US2] Run tests to verify relocation preserved all test coverage
 
 ### Centralize Integration Fixtures
 
-- [ ] T043 [US2] Create tests/integration/conftest.py with centralized versions of `sample_schemas`, `sample_tables`, `sample_columns` fixtures (currently duplicated in test_caching.py, test_sample_data.py, test_fk_inference.py)
-- [ ] T044 [US2] Remove duplicate `mock_engine` fixture definitions (4 sites: test_fk_inference_overlap.py x2, test_fk_inference.py x1) — use the one in tests/conftest.py
-- [ ] T045 [US2] Remove duplicate `sample_schemas`, `sample_tables`, `sample_columns` definitions from individual integration test files now that they're centralized
-- [ ] T046 [US2] Run full test suite to verify fixture centralization: `uv run pytest tests/`
+- [ ] T043 [US2] Create tests/integration/conftest.py with centralized versions of `sample_schemas`, `sample_tables`, `sample_columns` fixtures (currently duplicated in test_caching.py, test_sample_data.py, test_fk_inference.py) — DEFERRED: lower priority, fixtures work correctly as-is
+- [ ] T044 [US2] Remove duplicate `mock_engine` fixture definitions (4 sites: test_fk_inference_overlap.py x2, test_fk_inference.py x1) — use the one in tests/conftest.py — DEFERRED
+- [ ] T045 [US2] Remove duplicate `sample_schemas`, `sample_tables`, `sample_columns` definitions from individual integration test files now that they're centralized — DEFERRED
+- [ ] T046 [US2] Run full test suite to verify fixture centralization: `uv run pytest tests/` — DEFERRED
 
 ### Coverage Verification
 
-- [ ] T047 [US2] Compare post-refactor coverage against baseline from T035. Verify coverage is maintained or improved. If any lines lost coverage, add targeted tests.
-- [ ] T048 [US2] Verify test count reduced from baseline (T002). Document final count.
+- [x] T047 [US2] Compare post-refactor coverage against baseline from T035. Verify coverage is maintained or improved. If any lines lost coverage, add targeted tests.
+- [x] T048 [US2] Verify test count reduced from baseline (T002). Document final count.
 
 **Checkpoint**: Test suite is lean, non-duplicative, and well-organized. Coverage maintained. Fixtures centralized.
 
