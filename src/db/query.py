@@ -373,8 +373,9 @@ class QueryService:
     def _build_modulo_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
         """Build modulo-based deterministic sampling query.
 
-        Assumes table has an ID or similar sequential column.
-        Falls back to TOP/LIMIT if no suitable column found.
+        Uses ROW_NUMBER to assign sequential numbers, then selects rows
+        where row_number % interval = 0 to get evenly spaced samples.
+        This is deterministic and repeatable for the same data.
 
         Args:
             table_name: Fully qualified table name
@@ -386,17 +387,26 @@ class QueryService:
         """
         dialect_name = self.engine.dialect.name
 
-        # For Phase 1, we use a simple deterministic approach with ordering
-        # More sophisticated modulo sampling would require column metadata
         if dialect_name == "sqlite":
-            # SQLite: deterministic sampling by ordering by ROWID
-            return f"SELECT {column_sql} FROM {table_name} ORDER BY ROWID LIMIT {sample_size}"
-        else:
-            # SQL Server: deterministic sampling with explicit ordering
+            # SQLite: use ROWID for deterministic evenly-spaced sampling
             return f"""
-            SELECT TOP ({sample_size}) {column_sql}
-            FROM {table_name}
-            ORDER BY (SELECT NULL)
+            SELECT {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY ROWID) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {table_name}
+            ) _sampled
+            WHERE _rn % MAX((_total / {sample_size}), 1) = 0
+            LIMIT {sample_size}
+            """
+        else:
+            # SQL Server: use ROW_NUMBER with modulo for evenly-spaced sampling
+            return f"""
+            SELECT TOP ({sample_size}) {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {table_name}
+            ) _sampled
+            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
             """
 
     def _sanitize_identifier(self, identifier: str) -> str:
