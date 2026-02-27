@@ -36,7 +36,7 @@ List tables with row counts and metadata. Supports filtering by schema, name pat
 | PASS | Default listing (by row_count desc) | 100 returned of 440 total, sorted correctly, has_more=true, all metadata fields present |
 | PASS | Schema filter | dbo filter returns 439 (vs 440 total), correctly excludes 1 non-dbo table |
 | PASS | Name pattern filter (LIKE) | Tested: vw_% (12 hits), % (all), nonexistent (empty), bracket escapes %[_]V2[_]% (2 hits), SQL injection `' OR 1=1 --` (0 results, safely parameterized) |
-| BUG | Min row count filter | Filtering works, but total_count ignores min_row_count (see Issue #1). >=1M returns 16 tables correctly, but total_count=440 and has_more=true are wrong |
+| PASS | Min row count filter | >=1M returns 16 tables, total_count=16, has_more=false. (Issue #1 fixed in bugfix/tier1-issues) |
 | PASS | Object type filter (table only) | 298 tables found. All table_type="table" |
 | PASS | Object type filter (view only) | 142 views found, all row_count=null (expected). 298+142=440 checks out. Invalid type "procedure" returns clean validation error |
 | PASS | Pagination (offset + limit) | Pages chain correctly (no overlap/gap), last page has_more=false, offset beyond end returns empty gracefully |
@@ -69,7 +69,7 @@ Retrieve sample rows with multiple sampling strategies (top, tablesample, modulo
 
 | Status | Test | Notes |
 |--------|------|-------|
-| BUG | All columns (default) | Crashes: "Object of type datetime is not JSON serializable" (see Issue #5). Any table with DATETIME columns fails when columns param is omitted |
+| PASS | All columns (default) | 3 rows returned with all 21 columns including datetime fields as ISO strings (e.g. `"1995-07-06T00:00:00"`). (Issue #5 fixed in bugfix/tier1-issues) |
 | PASS | Top N sampling (column subset) | 5 rows returned, sequential from ID 13.4M (clustered index order). Fast, not representative. BIT→bool, NULL preserved, empty string distinct from null |
 | BUG | Tablesample strategy (small N) | `TABLESAMPLE (5 ROWS)` on 60M-row table returned 0 rows — page-level granularity means small N often selects zero pages (see Issue #6) |
 | PASS | Tablesample strategy (larger N) | 100 rows from 3 distinct page clusters (IDs ~802M, ~802.4M, ~818M). Confirms page-level random sampling with sequential rows within pages. Clearly different data region than top |
@@ -113,17 +113,17 @@ Export full database documentation to local markdown files. Includes schemas, ta
 
 | Status | Test | Notes |
 |--------|------|-------|
-| BUG | Basic export (no samples, no inferred) | Crashes: "'dict' object has no attribute 'source_table_id'" (see Issue #11). FK collection returns raw dicts, storage layer expects DeclaredFK model objects |
-| BLOCKED | Export with sample data | Blocked by Issue #11 |
-| BLOCKED | Custom output directory | Blocked by Issue #11 |
-| BLOCKED | Include/exclude inferred relationships | Blocked by Issue #11 |
+| PASS | Basic export (no samples, no inferred) | Success: 101 tables, 2 schemas, 140 declared FKs, 155KB total. (Issue #11 fixed in bugfix/tier1-issues) |
+| UNTESTED | Export with sample data | Unblocked by Issue #11 fix — not yet tested |
+| UNTESTED | Custom output directory | Unblocked by Issue #11 fix — not yet tested |
+| UNTESTED | Include/exclude inferred relationships | Unblocked by Issue #11 fix — not yet tested (inferred still blocked by Issue #4 timeout) |
 
 ### 10. load_cached_docs
 Load previously exported documentation cache. Returns entity counts and cache age.
 
 | Status | Test | Notes |
 |--------|------|-------|
-| BLOCKED | Load after export | Blocked by Issue #11 (export crashes) |
+| UNTESTED | Load after export | Unblocked by Issue #11 fix — not yet tested |
 | BUG | Load with incomplete/no cache | Returns `status: "loaded"` on a partial/corrupt cache from a prior failed run. Schema counts present (dbo: 297+142) but `entity_counts.tables: 0`, `declared_fks: 0`, `cache_age_days: null`. Should flag incomplete cache instead of claiming success (see Issue #12) |
 
 ### 11. check_drift
@@ -131,16 +131,16 @@ Compare cached docs hash against current database schema. Detects added/removed/
 
 | Status | Test | Notes |
 |--------|------|-------|
-| BLOCKED | No drift (cache is current) | Blocked by Issue #11 (no valid cache to compare against) |
+| UNTESTED | No drift (cache is current) | Unblocked by Issue #11 fix — not yet tested |
 | PASS | Drift detection with missing cache | Returns `drift_detected: true`, `summary: "Cache metadata missing"`. Correctly identifies incomplete cache. Current hash computed successfully |
-| BLOCKED | Auto-refresh on drift | Blocked by Issue #11 (auto-refresh calls export_documentation internally) |
+| UNTESTED | Auto-refresh on drift | Unblocked by Issue #11 fix — not yet tested |
 
 ---
 
 ## Issues Found
 
-### Issue #1: `list_tables` total_count ignores min_row_count filter
-**Severity**: Medium (incorrect pagination metadata)
+### Issue #1: `list_tables` total_count ignores min_row_count filter — FIXED
+**Severity**: Medium (incorrect pagination metadata) — **Fixed in `bugfix/tier1-issues` (commit b7207e6)**
 **Location**: `src/db/metadata.py` lines 414-419 (`_list_tables_mssql`)
 **Description**: The count query (`count_query`) builds its WHERE clause from `where_sql`, which includes schema_name, name_pattern, and object_type filters — but does NOT include the `min_row_count >= :min_row_count` condition. The main data query (line 449) adds it separately. This causes `total_count` and `has_more` to reflect the pre-min_row_count population, misleading paginating clients.
 **Fix**: Add the same `min_row_count` condition to the count query. Requires joining `row_counts` CTE in the count query as well, since row counts come from `sys.dm_db_partition_stats`.
@@ -171,8 +171,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Result**: All 4 test tables (PerformedActs, BaseEntities, BaseEntities_Human, BaseEntityPerformedActs) returned `timed_out: true` with `tables_analyzed: 0, total_candidates_evaluated: 0`.
 **Fix**: (1) Add `timeout_seconds` parameter to the MCP tool. (2) Replace `inspector` calls with DMV-based queries matching the `_list_tables_mssql` pattern, or reuse `MetadataService` methods. (3) Consider caching the all-tables column metadata across invocations on the same connection.
 
-### Issue #5: `get_sample_data` crashes on tables with datetime columns
-**Severity**: High (tool is non-functional on most real tables without column filtering workaround)
+### Issue #5: `get_sample_data` crashes on tables with datetime columns — FIXED
+**Severity**: High (tool is non-functional on most real tables without column filtering workaround) — **Fixed in `bugfix/tier1-issues` (commit 597bec1)**
 **Location**: `src/db/query.py` lines 404-432 (`_truncate_value`) and `src/mcp_server/server.py` line 586 (`json.dumps`)
 **Description**: `_truncate_value` handles `None`, `bytes`, and `str` but passes all other types through unchanged. Python `datetime` objects (from SQL Server DATETIME columns) are not JSON-serializable, so `json.dumps` in server.py raises `TypeError`. Also likely affects `date`, `time`, `Decimal`, and `timedelta` types.
 **Repro**: `get_sample_data(table_name="PerformedActs")` → error. Workaround: pass `columns` param excluding datetime columns.
@@ -215,8 +215,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 **Description**: Both nonexistent columns and small tables return `data_type: "unknown", total_rows: 0, distinct_count: 0, inferred_purpose: "unknown"`. No error is raised. A fake column (`TOTALLY_FAKE_COLUMN`) produces identical output to a real column on a 7-row table (`CVs_ProtocolDefinitionType.ElementID`). Nonexistent columns should return an explicit error. Small tables should still return valid metadata.
 **Repro**: `analyze_column(column_name="TOTALLY_FAKE_COLUMN", table_name="PerformedActs")` → no error, `total_rows: 0`. `analyze_column(column_name="ElementID", table_name="CVs_ProtocolDefinitionType")` → same output, `total_rows: 0`.
 
-### Issue #11: `export_documentation` crashes — type mismatch between FK collection and storage layer
-**Severity**: High (tool is completely non-functional)
+### Issue #11: `export_documentation` crashes — type mismatch between FK collection and storage layer — FIXED
+**Severity**: High (tool is completely non-functional) — **Fixed in `bugfix/tier1-issues` (commit cb4be90)**
 **Location**: `src/mcp_server/server.py` lines 779-783, `src/cache/storage.py` line 178
 **Description**: `server.py` line 782 calls `metadata_svc.get_foreign_keys()` which returns `list[dict]` (raw SQLAlchemy inspector output). The result is typed as `list[DeclaredFK]` (line 779) but never actually converted. When `storage.py` line 178 tries `fk.source_table_id`, it fails because dicts use `[]` access not `.` attribute access. This crashes on any database with tables (the FK loop runs for every table).
 **Repro**: `export_documentation(connection_id="542f8ffefc15", include_sample_data=False, include_inferred_relationships=False)` → `"'dict' object has no attribute 'source_table_id'"`
@@ -232,10 +232,10 @@ Compare cached docs hash against current database schema. Detects added/removed/
 
 ## Issue Priority
 
-### Tier 1: High impact, easy fix
-1. **#5** — sample_data datetime crash (~10 lines)
-2. **#1** — list_tables count ignores min_row_count (~15 lines)
-3. **#11** — export FK type mismatch crash (~20 lines, but deprioritize if export refactored)
+### Tier 1: High impact, easy fix — ALL FIXED
+1. ~~**#5** — sample_data datetime crash~~ — fixed (597bec1), verified against live DB
+2. ~~**#1** — list_tables count ignores min_row_count~~ — fixed (b7207e6), verified against live DB
+3. ~~**#11** — export FK type mismatch crash~~ — fixed (cb4be90), verified against live DB (140 FKs exported)
 
 ### Tier 2: Medium impact, easy fix
 4. **#10** — analyze_column silent failure on bad input
@@ -255,3 +255,5 @@ Compare cached docs hash against current database schema. Detects added/removed/
 ## Session Log
 
 - **2026-02-26:** Connected to SVWTSTEM04/StemSoftClinic via Windows auth. Connection successful (ID: 542f8ffefc15, 2 schemas found).
+- **2026-02-26:** Tested all 11 tools, found 12 issues (#1–#12). Prioritized into 3 tiers.
+- **2026-02-26:** Fixed Tier 1 issues (#5, #1, #11) on `bugfix/tier1-issues` branch, merged to `integration-test`. All three verified against live DB after MCP server restart.
