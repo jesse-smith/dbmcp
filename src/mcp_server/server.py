@@ -313,7 +313,7 @@ async def list_tables(
 
         return json.dumps({
             "tables": table_list,
-            "total_tables": len(all_tables),
+            "returned_count": len(all_tables),
             "total_count": total_count,
             "offset": offset,
             "limit": limit,
