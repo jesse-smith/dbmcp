@@ -143,14 +143,14 @@
 
 **Purpose**: Final validation, metrics comparison, and collaborative manual testing
 
-- [ ] T054 Run full test suite with verbose output: `uv run pytest tests/ -v`
-- [ ] T055 Run linter on all source and test files: `uv run ruff check src/ tests/`
-- [ ] T056 Verify no circular import dependencies: `uv run python -c "import src.mcp_server.server; import src.db.query; import src.db.validation; import src.inference.columns; import src.inference.relationships; import src.cache.storage"`
-- [ ] T057 Compare final metrics against baselines (T001-T003): source line counts, test counts, coverage, per-module sizes, class method counts
-- [ ] T058 Verify SC-001: total source lines ≤ 7,100 (hard gate: no increase)
-- [ ] T059 Verify SC-002: no source module exceeds 400 lines (confirm T034 results still hold after US2/US3 changes)
-- [ ] T060 Verify SC-003: no class exceeds 15 public methods (confirm T034 results still hold after US2/US3 changes)
-- [ ] T061 Verify SC-008: no circular import dependencies (confirmed by T056)
+- [x] T054 Run full test suite with verbose output: `uv run pytest tests/ -v`
+- [x] T055 Run linter on all source and test files: `uv run ruff check src/ tests/`
+- [x] T056 Verify no circular import dependencies: `uv run python -c "import src.mcp_server.server; import src.db.query; import src.db.validation; import src.inference.columns; import src.inference.relationships; import src.cache.storage"`
+- [x] T057 Compare final metrics against baselines (T001-T003): source line counts, test counts, coverage, per-module sizes, class method counts
+- [x] T058 Verify SC-001: total source lines ≤ 7,100 (hard gate: no increase)
+- [x] T059 Verify SC-002: no source module exceeds 400 lines (confirm T034 results still hold after US2/US3 changes)
+- [x] T060 Verify SC-003: no class exceeds 15 public methods (confirm T034 results still hold after US2/US3 changes)
+- [x] T061 Verify SC-008: no circular import dependencies (confirmed by T056)
 - [ ] T062 **COLLABORATIVE**: Manual integration testing — restart MCP server and jointly verify all 6 active tools work end-to-end against a live database (requires user participation)
 
 **Checkpoint**: All success criteria verified. Feature complete.
