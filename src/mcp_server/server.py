@@ -760,11 +760,22 @@ async def export_documentation(
         indexes_dict: dict[str, list] = {}
 
         for schema in schemas:
-            schema_tables, _ = metadata_svc.list_tables(
-                schema_name=schema.schema_name,
-                connection_id=connection_id,
-            )
-            tables_dict[schema.schema_name] = schema_tables
+            # Paginate to collect ALL tables (default limit=100 would truncate)
+            all_schema_tables: list = []
+            offset = 0
+            page_size = 1000
+            while True:
+                page_tables, pagination = metadata_svc.list_tables(
+                    schema_name=schema.schema_name,
+                    connection_id=connection_id,
+                    limit=page_size,
+                    offset=offset,
+                )
+                all_schema_tables.extend(page_tables)
+                if not pagination.get("has_more", False):
+                    break
+                offset += page_size
+            tables_dict[schema.schema_name] = all_schema_tables
 
             for table in schema_tables:
                 table_id = table.table_id
