@@ -145,6 +145,25 @@ class TestListTables:
 
         assert len(tables) <= 2
 
+    def test_list_tables_min_row_count_total_count(self, test_engine):
+        """Issue #1: Verify total_count reflects min_row_count filter.
+
+        Test DB has: customers (3 rows), orders (2 rows), products (1 row).
+        Filtering min_row_count=2 should give total_count=2 (customers + orders),
+        not 3 (all tables).
+        """
+        service = MetadataService(test_engine)
+
+        tables, pagination = service.list_tables(min_row_count=2)
+
+        assert len(tables) == 2
+        assert pagination["total_count"] == 2
+        assert pagination["has_more"] is False
+        table_names = {t.table_name for t in tables}
+        assert "customers" in table_names
+        assert "orders" in table_names
+        assert "products" not in table_names
+
 
 class TestSorting:
     """Tests for list_tables sorting - T016A"""

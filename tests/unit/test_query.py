@@ -186,10 +186,10 @@ class TestQueryService:
             sampling_method=SamplingMethod.TABLESAMPLE,
         )
 
-        # Verify the call was made
-        assert mock_conn.execute.called
-        # Verify sampling method in result
-        assert sample.sampling_method == SamplingMethod.TABLESAMPLE
+        # Verify both tablesample and fallback top queries were executed
+        assert mock_conn.execute.call_count == 2
+        # When tablesample returns 0 rows, it falls back to TOP
+        assert sample.sampling_method == SamplingMethod.TOP
 
     def test_modulo_query_generation(self, mock_engine):
         """Test modulo-based sampling query is generated."""
@@ -261,6 +261,70 @@ class TestQueryService:
         assert "<binary:" in sample.rows[0]["SmallBinary"]
         assert "5 bytes" in sample.rows[0]["SmallBinary"]
         assert "..." not in sample.rows[0]["SmallBinary"]
+
+    def test_datetime_serialization(self, mock_engine):
+        """Test datetime values are converted to ISO format strings."""
+        from datetime import date, datetime
+        from datetime import time as dt_time
+
+        mock_result = MagicMock()
+        mock_row = MagicMock()
+        test_dt = datetime(2025, 6, 15, 10, 30, 0)
+        test_date = date(2025, 6, 15)
+        test_time = dt_time(10, 30, 0)
+        mock_row._mapping = {
+            "ID": 1,
+            "CreatedAt": test_dt,
+            "BirthDate": test_date,
+            "StartTime": test_time,
+        }
+        mock_result.__iter__ = lambda x: iter([mock_row])
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine)
+        sample = service.get_sample_data(
+            table_name="Events",
+            schema_name="dbo",
+            sample_size=1,
+        )
+
+        assert sample.rows[0]["CreatedAt"] == "2025-06-15T10:30:00"
+        assert sample.rows[0]["BirthDate"] == "2025-06-15"
+        assert sample.rows[0]["StartTime"] == "10:30:00"
+        # datetime/date/time should not be marked as truncated
+        assert len(sample.truncated_columns) == 0
+
+    def test_decimal_serialization(self, mock_engine):
+        """Test Decimal values are converted to float."""
+        from decimal import Decimal
+
+        mock_result = MagicMock()
+        mock_row = MagicMock()
+        mock_row._mapping = {
+            "ID": 1,
+            "Amount": Decimal("123.45"),
+            "Rate": Decimal("0.0750000000"),
+        }
+        mock_result.__iter__ = lambda x: iter([mock_row])
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine)
+        sample = service.get_sample_data(
+            table_name="Transactions",
+            schema_name="dbo",
+            sample_size=1,
+        )
+
+        assert sample.rows[0]["Amount"] == 123.45
+        assert sample.rows[0]["Rate"] == 0.075
+        assert isinstance(sample.rows[0]["Amount"], float)
+        assert len(sample.truncated_columns) == 0
 
 
 class TestCTEQueryParsing:

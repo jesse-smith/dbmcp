@@ -8,7 +8,9 @@ import hashlib
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from datetime import time as dt_time
+from decimal import Decimal
 from typing import Any
 
 import sqlglot
@@ -270,6 +272,7 @@ class QueryService:
         # Execute query and fetch results
         rows = []
         truncated_columns = []
+        actual_method = sampling_method
 
         try:
             with self.engine.connect() as conn:
@@ -286,6 +289,26 @@ class QueryService:
 
                     rows.append(row_dict)
 
+                # TABLESAMPLE can return 0 rows on large tables with small sample sizes
+                # because SQL Server samples at the 8KB page level, not individual rows.
+                # Fall back to TOP when this happens.
+                if not rows and sampling_method == SamplingMethod.TABLESAMPLE:
+                    logger.warning(
+                        f"TABLESAMPLE returned 0 rows for {schema_name}.{table_name} "
+                        f"with sample_size={sample_size}; falling back to TOP"
+                    )
+                    fallback_query = self._build_top_query(full_table_name, column_sql, sample_size)
+                    fallback_result = conn.execute(text(fallback_query))
+                    actual_method = SamplingMethod.TOP
+                    for row in fallback_result:
+                        row_dict = {}
+                        for column_name, value in row._mapping.items():
+                            truncated_value, was_truncated = self._truncate_value(value, column_name)
+                            row_dict[column_name] = truncated_value
+                            if was_truncated and column_name not in truncated_columns:
+                                truncated_columns.append(column_name)
+                        rows.append(row_dict)
+
         except Exception as e:
             logger.error(f"Error sampling data from {schema_name}.{table_name}: {e}")
             raise
@@ -299,7 +322,7 @@ class QueryService:
             sample_id=sample_id,
             table_id=table_id,
             sample_size=len(rows),
-            sampling_method=sampling_method,
+            sampling_method=actual_method,
             rows=rows,
             truncated_columns=truncated_columns,
             sampled_at=datetime.now(),
@@ -350,8 +373,9 @@ class QueryService:
     def _build_modulo_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
         """Build modulo-based deterministic sampling query.
 
-        Assumes table has an ID or similar sequential column.
-        Falls back to TOP/LIMIT if no suitable column found.
+        Uses ROW_NUMBER to assign sequential numbers, then selects rows
+        where row_number % interval = 0 to get evenly spaced samples.
+        This is deterministic and repeatable for the same data.
 
         Args:
             table_name: Fully qualified table name
@@ -363,17 +387,26 @@ class QueryService:
         """
         dialect_name = self.engine.dialect.name
 
-        # For Phase 1, we use a simple deterministic approach with ordering
-        # More sophisticated modulo sampling would require column metadata
         if dialect_name == "sqlite":
-            # SQLite: deterministic sampling by ordering by ROWID
-            return f"SELECT {column_sql} FROM {table_name} ORDER BY ROWID LIMIT {sample_size}"
-        else:
-            # SQL Server: deterministic sampling with explicit ordering
+            # SQLite: use ROWID for deterministic evenly-spaced sampling
             return f"""
-            SELECT TOP ({sample_size}) {column_sql}
-            FROM {table_name}
-            ORDER BY (SELECT NULL)
+            SELECT {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY ROWID) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {table_name}
+            ) _sampled
+            WHERE _rn % MAX((_total / {sample_size}), 1) = 0
+            LIMIT {sample_size}
+            """
+        else:
+            # SQL Server: use ROW_NUMBER with modulo for evenly-spaced sampling
+            return f"""
+            SELECT TOP ({sample_size}) {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {table_name}
+            ) _sampled
+            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
             """
 
     def _sanitize_identifier(self, identifier: str) -> str:
@@ -422,6 +455,18 @@ class QueryService:
                 return f"<binary: {hex_preview}... ({len(value)} bytes)>", True
             else:
                 return f"<binary: {value.hex()} ({len(value)} bytes)>", True
+
+        # Handle datetime/date/time types (not JSON serializable)
+        if isinstance(value, datetime):
+            return value.isoformat(), False
+        if isinstance(value, date):
+            return value.isoformat(), False
+        if isinstance(value, dt_time):
+            return value.isoformat(), False
+
+        # Handle Decimal (not JSON serializable)
+        if isinstance(value, Decimal):
+            return float(value), False
 
         # Handle large text (>1000 characters)
         if isinstance(value, str):

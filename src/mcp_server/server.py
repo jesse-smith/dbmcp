@@ -313,7 +313,7 @@ async def list_tables(
 
         return json.dumps({
             "tables": table_list,
-            "total_tables": len(all_tables),
+            "returned_count": len(all_tables),
             "total_count": total_count,
             "offset": offset,
             "limit": limit,
@@ -387,7 +387,7 @@ async def get_table_schema(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def infer_relationships(
     connection_id: str,
     table_name: str,
@@ -606,7 +606,7 @@ async def get_sample_data(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def analyze_column(
     connection_id: str,
     column_name: str,
@@ -713,7 +713,7 @@ async def analyze_column(
 # =============================================================================
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def export_documentation(
     connection_id: str,
     output_dir: str | None = None,
@@ -743,7 +743,7 @@ async def export_documentation(
         # Import here to avoid circular imports
         from src.cache.storage import DocumentationStorage
         from src.inference.relationships import ForeignKeyInferencer
-        from src.models.relationship import DeclaredFK
+        from src.models.relationship import DeclaredFK, create_relationship_id
 
         storage = DocumentationStorage()
 
@@ -760,13 +760,24 @@ async def export_documentation(
         indexes_dict: dict[str, list] = {}
 
         for schema in schemas:
-            schema_tables, _ = metadata_svc.list_tables(
-                schema_name=schema.schema_name,
-                connection_id=connection_id,
-            )
-            tables_dict[schema.schema_name] = schema_tables
+            # Paginate to collect ALL tables (default limit=100 would truncate)
+            all_schema_tables: list = []
+            offset = 0
+            page_size = 1000
+            while True:
+                page_tables, pagination = metadata_svc.list_tables(
+                    schema_name=schema.schema_name,
+                    connection_id=connection_id,
+                    limit=page_size,
+                    offset=offset,
+                )
+                all_schema_tables.extend(page_tables)
+                if not pagination.get("has_more", False):
+                    break
+                offset += page_size
+            tables_dict[schema.schema_name] = all_schema_tables
 
-            for table in schema_tables:
+            for table in all_schema_tables:
                 table_id = table.table_id
                 columns_dict[table_id] = metadata_svc.get_columns(
                     table.table_name, schema.schema_name
@@ -775,12 +786,32 @@ async def export_documentation(
                     table.table_name, schema.schema_name
                 )
 
-        # Get declared foreign keys
+        # Get declared foreign keys (convert raw dicts from SQLAlchemy to DeclaredFK objects)
         declared_fks: list[DeclaredFK] = []
         for schema in schemas:
             for table in tables_dict.get(schema.schema_name, []):
-                fks = metadata_svc.get_foreign_keys(table.table_name, schema.schema_name)
-                declared_fks.extend(fks)
+                raw_fks = metadata_svc.get_foreign_keys(table.table_name, schema.schema_name)
+                for fk_dict in raw_fks:
+                    # SQLAlchemy returns multi-column FKs as lists; create one DeclaredFK per column pair
+                    source_cols = fk_dict.get("constrained_columns", [])
+                    target_cols = fk_dict.get("referred_columns", [])
+                    referred_schema = fk_dict.get("referred_schema") or schema.schema_name
+                    referred_table = fk_dict.get("referred_table", "")
+                    constraint_name = fk_dict.get("name", "")
+
+                    for src_col, tgt_col in zip(source_cols, target_cols, strict=False):
+                        rel_id = create_relationship_id(
+                            table.table_id, src_col,
+                            f"{referred_schema}.{referred_table}", tgt_col,
+                        )
+                        declared_fks.append(DeclaredFK(
+                            relationship_id=rel_id,
+                            source_table_id=table.table_id,
+                            source_column=src_col,
+                            target_table_id=f"{referred_schema}.{referred_table}",
+                            target_column=tgt_col,
+                            constraint_name=constraint_name,
+                        ))
 
         # Get inferred relationships if requested
         inferred_fks = []
@@ -831,8 +862,15 @@ async def export_documentation(
             output_dir=output_dir,
         )
 
-        # Get file list from metadata
-        metadata = storage.get_cache_metadata(connection_id)
+        # Get file list from metadata — read from the actual output directory
+        if output_dir:
+            metadata_path = Path(output_dir) / ".cache_metadata.json"
+            if metadata_path.exists():
+                metadata = json.loads(metadata_path.read_text())
+            else:
+                metadata = None
+        else:
+            metadata = storage.get_cache_metadata(connection_id)
         files_created = metadata.get("files_created", []) if metadata else []
         total_size = metadata.get("total_size_bytes", 0) if metadata else 0
         nfr_003_warning = metadata.get("nfr_003_warning") if metadata else None
@@ -866,7 +904,7 @@ async def export_documentation(
         return json.dumps({"error": f"Failed to export documentation: {str(e)}"})
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def load_cached_docs(connection_id: str) -> str:
     """Load previously cached database documentation.
 
@@ -922,7 +960,7 @@ async def load_cached_docs(connection_id: str) -> str:
         return json.dumps({"error": f"Failed to load cached docs: {str(e)}"})
 
 
-@mcp.tool()
+# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
 async def check_drift(
     connection_id: str,
     auto_refresh: bool = False,
@@ -975,10 +1013,16 @@ async def check_drift(
 
         # Auto-refresh if requested and drift detected
         if auto_refresh and result.drift_detected:
-            # Call export_documentation internally
+            # Preserve prior export settings from cache metadata
+            prior_metadata = storage.get_cache_metadata(connection_id)
+            prior_include_sample = prior_metadata.get("include_sample_data", False) if prior_metadata else False
+            prior_include_inferred = prior_metadata.get("include_inferred_relationships", True) if prior_metadata else True
+
+            # Call export_documentation internally with preserved settings
             export_result = await export_documentation(
                 connection_id=connection_id,
-                include_inferred_relationships=True,
+                include_sample_data=prior_include_sample,
+                include_inferred_relationships=prior_include_inferred,
             )
             export_data = json.loads(export_result)
             response["auto_refreshed"] = export_data.get("status") == "success"

@@ -130,11 +130,21 @@ class DocumentationStorage:
         """
         # Determine output directory
         cache_dir = Path(output_dir) if output_dir else self.get_cache_dir(connection_id)
+        cache_dir = cache_dir.resolve()
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Track files created and total size
         files_created: list[str] = []
         total_size = 0
+
+        # Determine the base for relative path computation
+        # Use project root (base_dir.parent) if cache_dir is inside it, else use cache_dir's parent
+        project_root = self.base_dir.parent.resolve()
+        try:
+            cache_dir.relative_to(project_root)
+            rel_base = project_root
+        except ValueError:
+            rel_base = cache_dir.parent
 
         # Create subdirectories
         (cache_dir / "schemas").mkdir(exist_ok=True)
@@ -149,7 +159,7 @@ class DocumentationStorage:
         )
         overview_path = cache_dir / "overview.md"
         overview_path.write_text(overview_content)
-        files_created.append(str(overview_path.relative_to(self.base_dir.parent)))
+        files_created.append(str(overview_path.relative_to(rel_base)))
         total_size += overview_path.stat().st_size
 
         # Generate schema markdown files
@@ -158,7 +168,7 @@ class DocumentationStorage:
             schema_content = self._generate_schema_doc(schema, schema_tables)
             schema_path = cache_dir / "schemas" / f"{schema.schema_name}.md"
             schema_path.write_text(schema_content)
-            files_created.append(str(schema_path.relative_to(self.base_dir.parent)))
+            files_created.append(str(schema_path.relative_to(rel_base)))
             total_size += schema_path.stat().st_size
 
         # Generate table markdown files
@@ -193,7 +203,7 @@ class DocumentationStorage:
                 )
                 table_path = cache_dir / "tables" / f"{schema.schema_name}.{table.table_name}.md"
                 table_path.write_text(table_content)
-                files_created.append(str(table_path.relative_to(self.base_dir.parent)))
+                files_created.append(str(table_path.relative_to(rel_base)))
                 total_size += table_path.stat().st_size
 
         # Generate relationships.md
@@ -203,7 +213,7 @@ class DocumentationStorage:
         )
         relationships_path = cache_dir / "relationships.md"
         relationships_path.write_text(relationships_content)
-        files_created.append(str(relationships_path.relative_to(self.base_dir.parent)))
+        files_created.append(str(relationships_path.relative_to(rel_base)))
         total_size += relationships_path.stat().st_size
 
         # T135: NFR-003 compliance check

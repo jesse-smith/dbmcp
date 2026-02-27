@@ -507,7 +507,7 @@ async def list_tables(
                 }
                 for t in tables
             ],
-            "total_tables": len(tables)
+            "returned_count": len(tables)
         }
 
     except Exception as e:

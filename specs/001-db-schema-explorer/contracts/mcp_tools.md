@@ -303,10 +303,10 @@ This document defines the MCP tool contracts for the Database Schema Explorer se
         "required": ["schema_name", "table_name", "has_primary_key", "access_denied"]
       }
     },
-    "total_tables": { "type": "integer" },
-    "filtered_count": { "type": "integer" }
+    "returned_count": { "type": "integer" },
+    "total_count": { "type": "integer" }
   },
-  "required": ["tables", "total_tables", "filtered_count"]
+  "required": ["tables", "returned_count", "total_count"]
 }
 ```
 
@@ -354,8 +354,8 @@ This document defines the MCP tool contracts for the Database Schema Explorer se
       "access_denied": true
     }
   ],
-  "total_tables": 65,
-  "filtered_count": 20
+  "returned_count": 2,
+  "total_count": 65
 }
 ```
 

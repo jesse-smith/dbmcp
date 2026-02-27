@@ -52,6 +52,7 @@ logs/
 .env.local
 .env.*.local
 *.local
+.mcp.json
 
 # MCP server logs
 dbmcp.log

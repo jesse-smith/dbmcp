@@ -23,7 +23,11 @@ tests/
 
 ## Commands
 
-cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] pytest [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] ruff check .
+**Always use `uv run` to invoke Python and Python-based tools.** Do not use `python`, `python3`, `.venv/bin/python`, or bare tool names. Examples:
+
+- `uv run pytest tests/` — run tests
+- `uv run ruff check src/` — run linter
+- `uv run python script.py` — run a Python script
 
 ## Code Style
 
