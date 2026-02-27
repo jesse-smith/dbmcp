@@ -26,7 +26,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "pyodbc>=5.0.0",
     "azure-identity>=1.14.0",
-    "sqlglot>=26.0.0,<27.0.0",
+    "sqlglot>=26.0.0,<30.0.0",
 ]
 
 [project.optional-dependencies]
