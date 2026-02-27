@@ -777,7 +777,7 @@ async def export_documentation(
                 offset += page_size
             tables_dict[schema.schema_name] = all_schema_tables
 
-            for table in schema_tables:
+            for table in all_schema_tables:
                 table_id = table.table_id
                 columns_dict[table_id] = metadata_svc.get_columns(
                     table.table_name, schema.schema_name
