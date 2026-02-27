@@ -1,5 +1,7 @@
 # Implementation Plan: Denylist Query Validation
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `005-denylist-query-validation`
+
 **Branch**: `005-denylist-query-validation` | **Date**: 2026-02-26 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/005-denylist-query-validation/spec.md`
 

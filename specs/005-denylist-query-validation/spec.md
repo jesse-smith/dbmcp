@@ -1,5 +1,7 @@
 # Feature Specification: Denylist Query Validation
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `005-denylist-query-validation`
+
 **Feature Branch**: `005-denylist-query-validation`
 **Created**: 2026-02-26
 **Status**: Draft

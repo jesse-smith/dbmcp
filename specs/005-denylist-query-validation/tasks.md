@@ -1,5 +1,7 @@
 # Tasks: Denylist Query Validation
 
+> **STATUS: COMPLETE** | Merged: 2026-02-26 | Branch: `005-denylist-query-validation`
+
 **Input**: Design documents from `/specs/005-denylist-query-validation/`
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md, contracts/
 
