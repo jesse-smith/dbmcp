@@ -536,12 +536,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
 examples = [
     { name = "jupyter" },
     { name = "notebook" },
@@ -550,6 +544,10 @@ examples = [
 [package.dev-dependencies]
 dev = [
     { name = "jupyter" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -559,16 +557,18 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
     { name = "notebook", marker = "extra == 'examples'", specifier = ">=7.0.0" },
     { name = "pyodbc", specifier = ">=5.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlglot", specifier = ">=26.0.0,<27.0.0" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "jupyter", specifier = ">=1.1.1" }]
+dev = [
+    { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "pytest", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.21.0" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
+    { name = "ruff", specifier = ">=0.1.0" },
+]
 
 [[package]]
 name = "debugpy"
