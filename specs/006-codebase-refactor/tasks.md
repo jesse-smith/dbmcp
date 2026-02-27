@@ -129,11 +129,11 @@
 
 **Independent Test**: Uncomment each decorator individually → server imports cleanly → associated tests pass → re-comment.
 
-- [ ] T049 [US3] Verify hidden tool `infer_relationships` in src/mcp_server/schema_tools.py: uncomment decorator, run `uv run python -c "import src.mcp_server.server"`, run associated tests, re-comment
-- [ ] T050 [US3] Verify hidden tool `analyze_column` in src/mcp_server/query_tools.py: uncomment decorator, run import check, run associated tests, re-comment
-- [ ] T051 [US3] Verify hidden tool `export_documentation` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
-- [ ] T052 [US3] Verify hidden tool `load_cached_docs` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
-- [ ] T053 [US3] Verify hidden tool `check_drift` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
+- [x] T049 [US3] Verify hidden tool `infer_relationships` in src/mcp_server/schema_tools.py: uncomment decorator, run `uv run python -c "import src.mcp_server.server"`, run associated tests, re-comment
+- [x] T050 [US3] Verify hidden tool `analyze_column` in src/mcp_server/query_tools.py: uncomment decorator, run import check, run associated tests, re-comment
+- [x] T051 [US3] Verify hidden tool `export_documentation` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
+- [x] T052 [US3] Verify hidden tool `load_cached_docs` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
+- [x] T053 [US3] Verify hidden tool `check_drift` in src/mcp_server/doc_tools.py: uncomment decorator, run import check, run associated tests, re-comment
 
 **Checkpoint**: All 5 hidden tools confirmed re-enableable. No code changes needed beyond uncommenting.
 

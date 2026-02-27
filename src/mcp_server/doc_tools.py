@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from src.db.metadata import MetadataService
-from src.mcp_server.server import get_connection_manager, logger
+from src.mcp_server.server import get_connection_manager, logger, mcp  # noqa: F401 - mcp needed when hidden tools are re-enabled
 
 # =============================================================================
 # Documentation Cache Tools (User Story 6)
