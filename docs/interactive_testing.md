@@ -267,8 +267,8 @@ Compare cached docs hash against current database schema. Detects added/removed/
 6. ~~**#6** — tablesample 0 rows for small N~~ — fixed (07a3136), verified: falls back to top, returns 5 rows (was 0)
 7. ~~**#2** — list_tables field naming vs spec~~ — fixed (f75c8e9), verified: `returned_count` replaces `total_tables`
 8. ~~**#7** — modulo unimplemented~~ — fixed (7a05637), verified: evenly-spaced IDs distinct from top's sequential IDs
-9. ~~**#14** — export custom output_dir wrong paths~~ — fixed (e33f666), validation pending
-10. ~~**#15** — auto-refresh doesn't preserve settings~~ — fixed (fc8f639), validation pending
+9. ~~**#14** — export custom output_dir wrong paths~~ — fixed (e33f666), verified: relative paths correct, absolute paths work
+10. ~~**#15** — auto-refresh doesn't preserve settings~~ — fixed (fc8f639), code verified + unit tests pass; live DB unavailable for full E2E
 
 ### Tier 3: Deprioritize — refactor planned
 11. **#9** — analyze_column inference quality (→ LLM-assisted)
@@ -293,3 +293,5 @@ Compare cached docs hash against current database schema. Detects added/removed/
   - **#6 VERIFIED**: `tablesample` with `sample_size=5` on PerformedActs (20M rows) now returns 5 rows via automatic fallback to `top`. Response shows `sampling_method: "top"` indicating fallback occurred.
   - **#2 VERIFIED**: `list_tables` response now uses `returned_count: 3` (was `total_tables: 3`). `total_count: 440` unchanged.
   - **#7 VERIFIED**: `modulo` with `sample_size=5` on PerformedActs returns evenly-spaced IDs (494M, 781M, 803M, 814M, 823M) vs `top`'s sequential IDs (822608122–822608166). Response shows `sampling_method: "modulo"`.
+  - **#14 VERIFIED**: Relative path `exports/custom_test` → `files_created` correctly shows `exports/custom_test/...` paths (was stale `docs/542f8ffefc15/...`). Absolute path `/tmp/dbmcp_test_export` → succeeds (previously crashed with ValueError), paths shown as `dbmcp_test_export/...` relative to parent.
+  - **#15 CODE VERIFIED**: Exported with `include_sample_data=True` (796KB), tampered hash. Server became unreachable before auto-refresh could run. Fix reads prior settings from `.cache_metadata.json` and passes them through — code path verified via unit tests (385 pass).
