@@ -176,6 +176,51 @@ class ColumnAnalyzer:
         """
         self.engine = engine
 
+    def _column_exists(
+        self,
+        column_name: str,
+        table_name: str,
+        schema_name: str,
+    ) -> bool:
+        """Check if a column exists in the specified table.
+
+        Args:
+            column_name: Column name to check
+            table_name: Table name
+            schema_name: Schema name
+
+        Returns:
+            True if the column exists
+        """
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
+            query = f"""
+                SELECT 1 FROM pragma_table_info('{table_name}')
+                WHERE name = '{column_name}'
+            """
+        else:
+            query = """
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+                AND COLUMN_NAME = :column_name
+            """
+
+        try:
+            with self.engine.connect() as conn:
+                if dialect_name == "sqlite":
+                    result = conn.execute(text(query))
+                else:
+                    result = conn.execute(
+                        text(query),
+                        {"schema_name": schema_name, "table_name": table_name, "column_name": column_name},
+                    )
+                return result.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Error checking column existence: {e}")
+            return False
+
     def analyze_column(
         self,
         column_name: str,
@@ -193,8 +238,18 @@ class ColumnAnalyzer:
 
         Returns:
             ColumnAnalysis with inferred purpose and statistics
+
+        Raises:
+            ValueError: If the column does not exist in the specified table
         """
         logger.info(f"Analyzing column {schema_name}.{table_name}.{column_name}")
+
+        # Validate the column exists before running analysis
+        if not self._column_exists(column_name, table_name, schema_name):
+            raise ValueError(
+                f"Column '{column_name}' does not exist in "
+                f"[{schema_name}].[{table_name}]"
+            )
 
         # Get basic statistics
         distinct_count, null_count, total_rows = self._get_basic_stats(

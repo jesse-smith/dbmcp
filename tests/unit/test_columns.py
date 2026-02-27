@@ -302,3 +302,25 @@ class TestConfidenceScores:
             "id", "enum", "status", "flag", "amount",
             "quantity", "percentage", "timestamp", "unknown"
         ]
+
+
+class TestColumnExistenceValidation:
+    """Tests for column existence validation before analysis."""
+
+    def test_nonexistent_column_raises_error(self, test_engine):
+        """Analyzing a nonexistent column should raise ValueError."""
+        analyzer = ColumnAnalyzer(test_engine)
+        with pytest.raises(ValueError, match="does not exist"):
+            analyzer.analyze_column("TOTALLY_FAKE_COLUMN", "test_columns", "main")
+
+    def test_existing_column_succeeds(self, test_engine):
+        """Analyzing an existing column should not raise."""
+        analyzer = ColumnAnalyzer(test_engine)
+        analysis = analyzer.analyze_column("customer_id", "test_columns", "main")
+        assert analysis.total_rows == 5
+
+    def test_column_exists_helper(self, test_engine):
+        """_column_exists should return correct boolean."""
+        analyzer = ColumnAnalyzer(test_engine)
+        assert analyzer._column_exists("customer_id", "test_columns", "main") is True
+        assert analyzer._column_exists("FAKE_COL", "test_columns", "main") is False
