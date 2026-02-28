@@ -109,10 +109,10 @@
 
 ### Centralize Integration Fixtures
 
-- [ ] T043 [US2] Create tests/integration/conftest.py with centralized versions of `sample_schemas`, `sample_tables`, `sample_columns` fixtures (currently duplicated in test_caching.py, test_sample_data.py, test_fk_inference.py) — DEFERRED: lower priority, fixtures work correctly as-is
-- [ ] T044 [US2] Remove duplicate `mock_engine` fixture definitions (4 sites: test_fk_inference_overlap.py x2, test_fk_inference.py x1) — use the one in tests/conftest.py — DEFERRED
-- [ ] T045 [US2] Remove duplicate `sample_schemas`, `sample_tables`, `sample_columns` definitions from individual integration test files now that they're centralized — DEFERRED
-- [ ] T046 [US2] Run full test suite to verify fixture centralization: `uv run pytest tests/` — DEFERRED
+- [x] T043 [US2] Create tests/integration/conftest.py with centralized versions of `sample_schemas`, `sample_tables`, `sample_columns` fixtures (currently duplicated in test_caching.py, test_sample_data.py, test_fk_inference.py)
+- [x] T044 [US2] Remove duplicate `mock_engine` fixture definitions (3 sites: test_fk_inference_overlap.py x3) — use the one in tests/conftest.py
+- [x] T045 [US2] Remove duplicate `sample_schemas`, `sample_tables`, `sample_columns` definitions from individual integration test files now that they're centralized
+- [x] T046 [US2] Run full test suite to verify fixture centralization: `uv run pytest tests/`
 
 ### Coverage Verification
 

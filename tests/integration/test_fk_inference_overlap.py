@@ -6,7 +6,7 @@ analysis is enabled versus disabled (Phase 1 vs Phase 2).
 Target: Improve accuracy from 75-80% (Phase 1) to 85-90% (Phase 2).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -42,12 +42,6 @@ class TestWeightConfiguration:
 
 class TestForeignKeyInferencerWithOverlap:
     """Integration tests for ForeignKeyInferencer with value overlap."""
-
-    @pytest.fixture
-    def mock_engine(self):
-        """Create a mock SQLAlchemy engine."""
-        engine = MagicMock()
-        return engine
 
     def test_overlap_threshold_parameter(self, mock_engine):
         """Test that overlap_threshold is properly initialized."""
@@ -124,12 +118,6 @@ class TestAccuracyImprovement:
     These tests verify the expected behavior that high value overlap
     should boost confidence scores compared to metadata-only inference.
     """
-
-    @pytest.fixture
-    def mock_engine(self):
-        """Create a mock SQLAlchemy engine."""
-        engine = MagicMock()
-        return engine
 
     def test_high_overlap_increases_confidence(self):
         """High value overlap should increase confidence score."""
@@ -319,12 +307,6 @@ class TestAccuracyScenarios:
 
 class TestOverlapMetadataInResponse:
     """Tests for overlap metadata in inference response."""
-
-    @pytest.fixture
-    def mock_engine(self):
-        """Create a mock SQLAlchemy engine."""
-        engine = MagicMock()
-        return engine
 
     def test_metadata_includes_overlap_count(self, mock_engine):
         """Verify metadata includes overlap analysis count."""
