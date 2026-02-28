@@ -1,5 +1,7 @@
 # Implementation Plan: Codebase Refactor
 
+> **STATUS: COMPLETE** | Merged: 2026-02-27 | Branch: `006-codebase-refactor`
+
 **Branch**: `006-codebase-refactor` | **Date**: 2026-02-27 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/006-codebase-refactor/spec.md`
 

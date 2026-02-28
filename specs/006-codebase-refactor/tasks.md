@@ -1,5 +1,7 @@
 # Tasks: Codebase Refactor
 
+> **STATUS: COMPLETE** | Merged: 2026-02-27 | Branch: `006-codebase-refactor`
+
 **Input**: Design documents from `/specs/006-codebase-refactor/`
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md
 

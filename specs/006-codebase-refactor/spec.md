@@ -1,8 +1,10 @@
 # Feature Specification: Codebase Refactor
 
+> **STATUS: COMPLETE** | Merged: 2026-02-27 | Branch: `006-codebase-refactor`
+
 **Feature Branch**: `006-codebase-refactor`
 **Created**: 2026-02-27
-**Status**: Draft
+**Status**: Complete
 **Input**: User description: "Refactor: Simplify and optimize the dbmcp codebase"
 
 ## User Scenarios & Testing *(mandatory)*
