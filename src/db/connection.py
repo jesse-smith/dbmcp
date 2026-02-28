@@ -124,7 +124,7 @@ class ConnectionManager:
         conn_str_hash = f"{server}:{port}/{database}/{user_component}"
         connection_id = hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
 
-        # Check if already connected
+        # Reuse existing connection if available
         if connection_id in self._engines:
             logger.info(f"Reusing existing connection: {connection_id}")
             return self._connections[connection_id]
@@ -141,60 +141,18 @@ class ConnectionManager:
             connection_timeout=connection_timeout,
         )
 
-        # Create SQLAlchemy engine with connection pooling (T113: configurable)
+        # Create engine, test connection, and store metadata
         start_time = time.time()
         try:
-            if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
-                provider = AzureTokenProvider(tenant_id=tenant_id)
-
-                def creator():
-                    token = provider.get_token()
-                    packed = provider.pack_token_for_pyodbc(token)
-                    return pyodbc.connect(odbc_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed})
-
-                engine = create_engine(
-                    "mssql+pyodbc://",
-                    creator=creator,
-                    poolclass=QueuePool,
-                    pool_size=self._pool_config.pool_size,
-                    max_overflow=self._pool_config.max_overflow,
-                    pool_timeout=self._pool_config.pool_timeout,
-                    pool_pre_ping=self._pool_config.pool_pre_ping,
-                    pool_recycle=self._pool_config.pool_recycle,
-                    echo=False,
-                )
-            else:
-                engine = create_engine(
-                    f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
-                    poolclass=QueuePool,
-                    pool_size=self._pool_config.pool_size,
-                    max_overflow=self._pool_config.max_overflow,
-                    pool_timeout=self._pool_config.pool_timeout,
-                    pool_pre_ping=self._pool_config.pool_pre_ping,
-                    pool_recycle=self._pool_config.pool_recycle,
-                    echo=False,
-                )
-
-            # Test connection (T131: timeout already in ODBC string)
-            with engine.connect() as conn:
-                result = conn.execute(text("SELECT @@VERSION AS version, DB_NAME() AS database_name"))
-                row = result.fetchone()
-                version = row.version if row else "Unknown"
-                elapsed_ms = int((time.time() - start_time) * 1000)
-                logger.info(f"Connected to {database} on {server}:{port} in {elapsed_ms}ms")
-                logger.debug(f"SQL Server version: {version[:100]}...")  # Truncate for log
-
-                # T105: Performance logging
-                if elapsed_ms > 5000:
-                    logger.warning(f"Slow connection: {elapsed_ms}ms (>5s threshold)")
-
+            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id)
+            self._test_connection(engine, start_time, server, database, port)
+        except ConnectionError:
+            raise
         except Exception as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
-            # Log error without credentials (T105: include timing)
             logger.error(f"Connection to {server}:{port}/{database} failed after {elapsed_ms}ms: {type(e).__name__}")
             raise ConnectionError(f"Could not connect to {server}:{port}/{database}: {str(e)}") from e
 
-        # Store engine and connection metadata
         self._engines[connection_id] = engine
         connection = Connection(
             connection_id=connection_id,
@@ -208,6 +166,75 @@ class ConnectionManager:
         self._connections[connection_id] = connection
 
         return connection
+
+    def _create_engine(
+        self,
+        odbc_conn_str: str,
+        authentication_method: AuthenticationMethod,
+        tenant_id: str | None,
+    ) -> Engine:
+        """Create a SQLAlchemy engine with connection pooling.
+
+        Args:
+            odbc_conn_str: ODBC connection string
+            authentication_method: Authentication method
+            tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+
+        Returns:
+            Configured SQLAlchemy Engine
+        """
+        pool_kwargs = {
+            "poolclass": QueuePool,
+            "pool_size": self._pool_config.pool_size,
+            "max_overflow": self._pool_config.max_overflow,
+            "pool_timeout": self._pool_config.pool_timeout,
+            "pool_pre_ping": self._pool_config.pool_pre_ping,
+            "pool_recycle": self._pool_config.pool_recycle,
+            "echo": False,
+        }
+
+        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            provider = AzureTokenProvider(tenant_id=tenant_id)
+
+            def creator():
+                token = provider.get_token()
+                packed = provider.pack_token_for_pyodbc(token)
+                return pyodbc.connect(odbc_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed})
+
+            return create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+
+        return create_engine(
+            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+            **pool_kwargs,
+        )
+
+    def _test_connection(
+        self,
+        engine: Engine,
+        start_time: float,
+        server: str,
+        database: str,
+        port: int,
+    ) -> None:
+        """Test a newly created engine by executing a probe query.
+
+        Args:
+            engine: SQLAlchemy engine to test
+            start_time: Timestamp when connection attempt began (for timing)
+            server: Server name (for logging)
+            database: Database name (for logging)
+            port: Port number (for logging)
+        """
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT @@VERSION AS version, DB_NAME() AS database_name"))
+            row = result.fetchone()
+            version = row.version if row else "Unknown"
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"Connected to {database} on {server}:{port} in {elapsed_ms}ms")
+            logger.debug(f"SQL Server version: {version[:100]}...")
+
+            if elapsed_ms > 5000:
+                logger.warning(f"Slow connection: {elapsed_ms}ms (>5s threshold)")
 
     def _build_odbc_connection_string(
         self,

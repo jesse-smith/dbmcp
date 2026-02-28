@@ -10,11 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.inference.relationships import (
-    PHASE1_WEIGHTS,
-    PHASE2_WEIGHTS,
-    ForeignKeyInferencer,
-)
+from src.inference.relationships import ForeignKeyInferencer
+from src.inference.scoring import PHASE1_WEIGHTS, PHASE2_WEIGHTS
 
 
 class TestWeightConfiguration:

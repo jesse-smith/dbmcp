@@ -6,9 +6,19 @@ Tests for ColumnAnalyzer and purpose detection heuristics - T109.
 import pytest
 from sqlalchemy import create_engine, text
 
+from src.inference.column_patterns import (
+    ColumnCategory,
+    _is_likely_amount,
+    _is_likely_flag,
+    _is_likely_id,
+    _is_likely_percentage,
+    _is_likely_quantity,
+    _is_likely_status,
+    categorize_type,
+    is_enum,
+)
 from src.inference.columns import (
     ColumnAnalyzer,
-    ColumnCategory,
     NumericStats,
     StringStats,
 )
@@ -99,34 +109,17 @@ class TestEnumDetection:
 
     def test_enum_detection_for_status_column(self, test_engine):
         """Status columns with few values should be detected as enums."""
-        analyzer = ColumnAnalyzer(test_engine)
-        is_enum = analyzer._is_enum(
-            distinct_count=4,
-            total_rows=5,
-            category=ColumnCategory.STRING,
-        )
-        assert is_enum is True
+        assert is_enum(distinct_count=4, total_rows=5, category=ColumnCategory.STRING) is True
 
     def test_enum_detection_for_unique_column(self, test_engine):
         """Unique columns should NOT be detected as enums."""
-        analyzer = ColumnAnalyzer(test_engine)
-        is_enum = analyzer._is_enum(
-            distinct_count=5,
-            total_rows=5,
-            category=ColumnCategory.STRING,
-        )
+        result = is_enum(distinct_count=5, total_rows=5, category=ColumnCategory.STRING)
         # Unique values in a small table are still not enum-like
-        assert is_enum is True  # In small tables, low distinct count is still considered enum
+        assert result is True  # In small tables, low distinct count is still considered enum
 
     def test_enum_detection_excludes_datetime(self, test_engine):
         """Datetime columns should NOT be detected as enums."""
-        analyzer = ColumnAnalyzer(test_engine)
-        is_enum = analyzer._is_enum(
-            distinct_count=5,
-            total_rows=5,
-            category=ColumnCategory.DATETIME,
-        )
-        assert is_enum is False
+        assert is_enum(distinct_count=5, total_rows=5, category=ColumnCategory.DATETIME) is False
 
 
 class TestTypeCategorization:
@@ -134,32 +127,22 @@ class TestTypeCategorization:
 
     def test_numeric_type_categorization(self):
         """Numeric types should be categorized as NUMERIC."""
-        # Create a dummy analyzer without database connection
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._categorize_type("int") == ColumnCategory.NUMERIC
-        assert analyzer._categorize_type("bigint") == ColumnCategory.NUMERIC
-        assert analyzer._categorize_type("decimal(10,2)") == ColumnCategory.NUMERIC
-        assert analyzer._categorize_type("INTEGER") == ColumnCategory.NUMERIC
+        assert categorize_type("int") == ColumnCategory.NUMERIC
+        assert categorize_type("bigint") == ColumnCategory.NUMERIC
+        assert categorize_type("decimal(10,2)") == ColumnCategory.NUMERIC
+        assert categorize_type("INTEGER") == ColumnCategory.NUMERIC
 
     def test_datetime_type_categorization(self):
         """Datetime types should be categorized as DATETIME."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._categorize_type("datetime") == ColumnCategory.DATETIME
-        assert analyzer._categorize_type("date") == ColumnCategory.DATETIME
-        assert analyzer._categorize_type("timestamp") == ColumnCategory.DATETIME
+        assert categorize_type("datetime") == ColumnCategory.DATETIME
+        assert categorize_type("date") == ColumnCategory.DATETIME
+        assert categorize_type("timestamp") == ColumnCategory.DATETIME
 
     def test_string_type_categorization(self):
         """String types should be categorized as STRING."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._categorize_type("varchar(100)") == ColumnCategory.STRING
-        assert analyzer._categorize_type("nvarchar(50)") == ColumnCategory.STRING
-        assert analyzer._categorize_type("text") == ColumnCategory.STRING
+        assert categorize_type("varchar(100)") == ColumnCategory.STRING
+        assert categorize_type("nvarchar(50)") == ColumnCategory.STRING
+        assert categorize_type("text") == ColumnCategory.STRING
 
 
 class TestNumericPurposeHeuristics:
@@ -167,37 +150,25 @@ class TestNumericPurposeHeuristics:
 
     def test_id_detection_by_name(self):
         """Columns with ID suffix should be detected as ID."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_id("customer_id", "customerid", ColumnCategory.NUMERIC, None, 100, 100) is True
-        assert analyzer._is_likely_id("order_key", "orderkey", ColumnCategory.NUMERIC, None, 100, 100) is True
-        assert analyzer._is_likely_id("id", "id", ColumnCategory.NUMERIC, None, 100, 100) is True
+        assert _is_likely_id("customer_id", "customerid", ColumnCategory.NUMERIC, None, 100, 100) is True
+        assert _is_likely_id("order_key", "orderkey", ColumnCategory.NUMERIC, None, 100, 100) is True
+        assert _is_likely_id("id", "id", ColumnCategory.NUMERIC, None, 100, 100) is True
 
     def test_amount_detection_by_name(self):
         """Columns with amount-related names should be detected as AMOUNT."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_amount("total_amount", "totalamount", ColumnCategory.NUMERIC, None) is True
-        assert analyzer._is_likely_amount("price", "price", ColumnCategory.NUMERIC, None) is True
-        assert analyzer._is_likely_amount("cost", "cost", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_amount("total_amount", "totalamount", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_amount("price", "price", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_amount("cost", "cost", ColumnCategory.NUMERIC, None) is True
 
     def test_quantity_detection_by_name(self):
         """Columns with quantity-related names should be detected as QUANTITY."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_quantity("order_qty", "orderqty", ColumnCategory.NUMERIC, NumericStats(is_integer=True, min_value=0)) is True
-        assert analyzer._is_likely_quantity("item_count", "itemcount", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_quantity("order_qty", "orderqty", ColumnCategory.NUMERIC, NumericStats(is_integer=True, min_value=0)) is True
+        assert _is_likely_quantity("item_count", "itemcount", ColumnCategory.NUMERIC, None) is True
 
     def test_percentage_detection_by_name(self):
         """Columns with percentage-related names should be detected as PERCENTAGE."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_percentage("discount_pct", "discountpct", ColumnCategory.NUMERIC, None) is True
-        assert analyzer._is_likely_percentage("success_rate", "successrate", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_percentage("discount_pct", "discountpct", ColumnCategory.NUMERIC, None) is True
+        assert _is_likely_percentage("success_rate", "successrate", ColumnCategory.NUMERIC, None) is True
 
 
 class TestFlagDetection:
@@ -205,20 +176,14 @@ class TestFlagDetection:
 
     def test_flag_detection_by_name(self):
         """Columns with flag-related names should be detected as FLAG."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_flag("is_active", "isactive", ColumnCategory.NUMERIC, 2, None) is True
-        assert analyzer._is_likely_flag("has_discount", "hasdiscount", ColumnCategory.NUMERIC, 2, None) is True
-        assert analyzer._is_likely_flag("active_flag", "activeflag", ColumnCategory.NUMERIC, 2, None) is True
+        assert _is_likely_flag("is_active", "isactive", ColumnCategory.NUMERIC, 2, None) is True
+        assert _is_likely_flag("has_discount", "hasdiscount", ColumnCategory.NUMERIC, 2, None) is True
+        assert _is_likely_flag("active_flag", "activeflag", ColumnCategory.NUMERIC, 2, None) is True
 
     def test_flag_detection_by_values(self):
         """Columns with binary values should be detected as FLAG."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
         string_stats = StringStats(top_values=[("Y", 10), ("N", 5)])
-        assert analyzer._is_likely_flag("some_column", "somecolumn", ColumnCategory.STRING, 2, string_stats) is True
+        assert _is_likely_flag("some_column", "somecolumn", ColumnCategory.STRING, 2, string_stats) is True
 
 
 class TestStatusDetection:
@@ -226,20 +191,14 @@ class TestStatusDetection:
 
     def test_status_detection_by_name(self):
         """Columns with status-related names should be detected as STATUS."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
-        assert analyzer._is_likely_status("order_status", "orderstatus", True, 4, None) is True
-        assert analyzer._is_likely_status("state", "state", True, 3, None) is True
-        assert analyzer._is_likely_status("workflow_stage", "workflowstage", True, 5, None) is True
+        assert _is_likely_status("order_status", "orderstatus", True, 4, None) is True
+        assert _is_likely_status("state", "state", True, 3, None) is True
+        assert _is_likely_status("workflow_stage", "workflowstage", True, 5, None) is True
 
     def test_status_detection_by_values(self):
         """Columns with status-like values should be detected as STATUS."""
-        from unittest.mock import MagicMock
-        analyzer = ColumnAnalyzer(MagicMock())
-
         string_stats = StringStats(top_values=[("active", 10), ("pending", 5), ("completed", 3)])
-        assert analyzer._is_likely_status("some_field", "somefield", True, 3, string_stats) is True
+        assert _is_likely_status("some_field", "somefield", True, 3, string_stats) is True
 
 
 class TestFullColumnAnalysis:
@@ -320,7 +279,7 @@ class TestColumnExistenceValidation:
         assert analysis.total_rows == 5
 
     def test_column_exists_helper(self, test_engine):
-        """_column_exists should return correct boolean."""
+        """column_exists should return correct boolean."""
         analyzer = ColumnAnalyzer(test_engine)
-        assert analyzer._column_exists("customer_id", "test_columns", "main") is True
-        assert analyzer._column_exists("FAKE_COL", "test_columns", "main") is False
+        assert analyzer._stats.column_exists("customer_id", "test_columns", "main") is True
+        assert analyzer._stats.column_exists("FAKE_COL", "test_columns", "main") is False

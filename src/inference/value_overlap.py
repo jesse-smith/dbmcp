@@ -156,17 +156,22 @@ class ValueOverlapAnalyzer:
             OverlapResult with similarity scores and metrics
         """
         start_time = time.time()
-        timed_out = False
-
-        # Use default sample size if not specified
         if sample_size is None:
             sample_size = self.default_sample_size
 
-        # Track with performance metrics
-        operation_name = f"overlap_{strategy.value}"
+        # Shared fields for OverlapResult construction
+        effective_sample_size = sample_size if strategy == OverlapStrategy.SAMPLING else None
+        shared = {
+            "source_table": f"{source_schema}.{source_table}",
+            "source_column": source_column,
+            "target_table": f"{target_schema}.{target_table}",
+            "target_column": target_column,
+            "strategy": strategy,
+            "sample_size": effective_sample_size,
+        }
 
         try:
-            with self._metrics.track(operation_name):
+            with self._metrics.track(f"overlap_{strategy.value}"):
                 if strategy == OverlapStrategy.FULL_COMPARISON:
                     result = self._full_comparison(
                         source_table=source_table,
@@ -187,51 +192,36 @@ class ValueOverlapAnalyzer:
                         sample_size=sample_size,
                     )
 
-                # Check timeout
                 elapsed = time.time() - start_time
-                if elapsed > self.timeout_seconds:
-                    timed_out = True
+                timed_out = elapsed > self.timeout_seconds
+                if timed_out:
                     logger.warning(
                         f"Overlap analysis timed out after {elapsed:.1f}s for "
                         f"{source_schema}.{source_table}.{source_column} -> "
                         f"{target_schema}.{target_table}.{target_column}"
                     )
 
-                elapsed_ms = int((time.time() - start_time) * 1000)
-
                 return OverlapResult(
-                    source_table=f"{source_schema}.{source_table}",
-                    source_column=source_column,
-                    target_table=f"{target_schema}.{target_table}",
-                    target_column=target_column,
+                    **shared,
                     overlap_score=result["overlap_score"],
                     source_distinct_count=result["source_distinct_count"],
                     target_distinct_count=result["target_distinct_count"],
                     intersection_count=result["intersection_count"],
-                    strategy=strategy,
-                    sample_size=sample_size if strategy == OverlapStrategy.SAMPLING else None,
-                    analysis_time_ms=elapsed_ms,
+                    analysis_time_ms=int((time.time() - start_time) * 1000),
                     timed_out=timed_out,
                 )
 
         except Exception as e:
-            elapsed_ms = int((time.time() - start_time) * 1000)
             logger.error(
                 f"Overlap analysis failed for {source_schema}.{source_table}.{source_column}: {e}"
             )
-            # Return zero overlap on error
             return OverlapResult(
-                source_table=f"{source_schema}.{source_table}",
-                source_column=source_column,
-                target_table=f"{target_schema}.{target_table}",
-                target_column=target_column,
+                **shared,
                 overlap_score=0.0,
                 source_distinct_count=0,
                 target_distinct_count=0,
                 intersection_count=0,
-                strategy=strategy,
-                sample_size=sample_size if strategy == OverlapStrategy.SAMPLING else None,
-                analysis_time_ms=elapsed_ms,
+                analysis_time_ms=int((time.time() - start_time) * 1000),
                 timed_out=True,
             )
 
@@ -292,14 +282,9 @@ class ValueOverlapAnalyzer:
             """)
             intersection_count = conn.execute(intersection_query).scalar() or 0
 
-            # Calculate Jaccard similarity: |A ∩ B| / |A ∪ B|
-            # |A ∪ B| = |A| + |B| - |A ∩ B|
+            # Jaccard similarity: |A ∩ B| / |A ∪ B| where |A ∪ B| = |A| + |B| - |A ∩ B|
             union_count = source_distinct + target_distinct - intersection_count
-
-            if union_count == 0:
-                overlap_score = 0.0
-            else:
-                overlap_score = intersection_count / union_count
+            overlap_score = intersection_count / union_count if union_count else 0.0
 
             logger.debug(
                 f"Full comparison: {source_schema}.{source_table}.{source_column} -> "
@@ -369,31 +354,19 @@ class ValueOverlapAnalyzer:
             """)
             target_distinct = conn.execute(target_count_query).scalar() or 0
 
-            # Check how many sampled source values exist in target
-            # Create a temp table or use IN clause (IN clause is simpler for moderate samples)
-            if source_sample_count > 0:
-                # Use parameterized query for safety
-                # For SQL Server, we need to construct the IN clause carefully
-                placeholders = ", ".join([f":val_{i}" for i in range(len(source_samples))])
-                params = {f"val_{i}": v for i, v in enumerate(source_samples)}
+            # Check how many sampled source values exist in target using parameterized IN clause
+            placeholders = ", ".join([f":val_{i}" for i in range(source_sample_count)])
+            params = {f"val_{i}": v for i, v in enumerate(source_samples)}
 
-                match_query = text(f"""
-                    SELECT COUNT(DISTINCT [{target_column}])
-                    FROM [{target_schema}].[{target_table}]
-                    WHERE [{target_column}] IN ({placeholders})
-                """)
-                intersection_count = conn.execute(match_query, params).scalar() or 0
-            else:
-                intersection_count = 0
+            match_query = text(f"""
+                SELECT COUNT(DISTINCT [{target_column}])
+                FROM [{target_schema}].[{target_table}]
+                WHERE [{target_column}] IN ({placeholders})
+            """)
+            intersection_count = conn.execute(match_query, params).scalar() or 0
 
-            # Calculate overlap based on sample
-            # This gives us the containment ratio (what % of source exists in target)
-            # which is more relevant for FK inference than Jaccard
-            if source_sample_count == 0:
-                overlap_score = 0.0
-            else:
-                # Containment-based overlap: what fraction of source values exist in target
-                overlap_score = intersection_count / source_sample_count
+            # Containment-based overlap: what fraction of source values exist in target
+            overlap_score = intersection_count / source_sample_count
 
             logger.debug(
                 f"Sampling comparison ({sample_size}): "

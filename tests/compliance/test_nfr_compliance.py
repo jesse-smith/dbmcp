@@ -25,7 +25,8 @@ from sqlalchemy import create_engine, text
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.db.metadata import MetadataService
-from src.db.query import QueryService, validate_query
+from src.db.query import QueryService
+from src.db.validation import validate_query
 from src.models.schema import DenialCategory, SamplingMethod
 
 # =============================================================================
