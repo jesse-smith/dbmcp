@@ -230,6 +230,66 @@ class MetadataService:
         pattern = name_pattern.replace("%", "*").replace("_", "?")
         return fnmatch.fnmatch(name, pattern)
 
+    def _collect_objects_from_schema(
+        self,
+        schema: str | None,
+        table_type: TableType,
+        name_pattern: str | None,
+        min_row_count: int | None,
+    ) -> list[Table]:
+        """Collect tables or views from a single schema.
+
+        Args:
+            schema: Schema name (None for default schema)
+            table_type: TABLE or VIEW
+            name_pattern: SQL LIKE pattern for name filtering
+            min_row_count: Minimum row count threshold (tables only)
+
+        Returns:
+            List of matching Table objects
+        """
+        display_schema = schema or "main"
+        is_table = table_type == TableType.TABLE
+
+        if is_table:
+            names = self.inspector.get_table_names(schema=schema)
+        else:
+            names = self.inspector.get_view_names(schema=schema)
+
+        results: list[Table] = []
+        for name in names:
+            if not self._matches_name_pattern(name, name_pattern):
+                continue
+
+            row_count = self._get_row_count_generic(name, schema) if is_table else None
+
+            if min_row_count is not None and (row_count or 0) < min_row_count:
+                continue
+
+            has_pk = self._has_primary_key(name, schema) if is_table else False
+
+            results.append(Table(
+                table_id=f"{display_schema}.{name}",
+                schema_id=display_schema,
+                table_name=name,
+                table_type=table_type,
+                row_count=row_count,
+                row_count_updated=datetime.now(),
+                has_primary_key=has_pk,
+                last_modified=None,
+                access_denied=False,
+            ))
+
+        return results
+
+    def _has_primary_key(self, table_name: str, schema: str | None) -> bool:
+        """Check if a table has a primary key constraint."""
+        try:
+            pk = self.inspector.get_pk_constraint(table_name, schema=schema)
+            return bool(pk.get("constrained_columns"))
+        except Exception:
+            return False
+
     def _list_tables_generic(
         self,
         schema_name: str | None = None,
@@ -243,7 +303,7 @@ class MetadataService:
         connection_id: str = "",
     ) -> tuple[list[Table], dict]:
         """Generic table listing using SQLAlchemy inspector."""
-        tables = []
+        tables: list[Table] = []
 
         # Determine schema to query
         if schema_name:
@@ -254,59 +314,19 @@ class MetadataService:
             except Exception:
                 schemas_to_check = [None]
 
+        # T133: Determine which object types to collect
+        types_to_collect: list[TableType] = []
+        if object_type is None or object_type == "table":
+            types_to_collect.append(TableType.TABLE)
+        if object_type is None or object_type == "view":
+            types_to_collect.append(TableType.VIEW)
+
         for schema in schemas_to_check:
-            display_schema = schema or "main"
-
-            # T133: Support object_type filtering
-            if object_type is None or object_type == "table":
+            for table_type in types_to_collect:
                 try:
-                    for table_name in self.inspector.get_table_names(schema=schema):
-                        if not self._matches_name_pattern(table_name, name_pattern):
-                            continue
-
-                        row_count = self._get_row_count_generic(table_name, schema)
-
-                        if min_row_count is not None and (row_count or 0) < min_row_count:
-                            continue
-
-                        try:
-                            pk = self.inspector.get_pk_constraint(table_name, schema=schema)
-                            has_pk = bool(pk.get("constrained_columns"))
-                        except Exception:
-                            has_pk = False
-
-                        tables.append(Table(
-                            table_id=f"{display_schema}.{table_name}",
-                            schema_id=display_schema,
-                            table_name=table_name,
-                            table_type=TableType.TABLE,
-                            row_count=row_count,
-                            row_count_updated=datetime.now(),
-                            has_primary_key=has_pk,
-                            last_modified=None,
-                            access_denied=False,
-                        ))
-                except Exception:
-                    pass
-
-            # T133: Include views if requested
-            if object_type is None or object_type == "view":
-                try:
-                    for view_name in self.inspector.get_view_names(schema=schema):
-                        if not self._matches_name_pattern(view_name, name_pattern):
-                            continue
-
-                        tables.append(Table(
-                            table_id=f"{display_schema}.{view_name}",
-                            schema_id=display_schema,
-                            table_name=view_name,
-                            table_type=TableType.VIEW,
-                            row_count=None,
-                            row_count_updated=datetime.now(),
-                            has_primary_key=False,
-                            last_modified=None,
-                            access_denied=False,
-                        ))
+                    tables.extend(self._collect_objects_from_schema(
+                        schema, table_type, name_pattern, min_row_count,
+                    ))
                 except Exception:
                     pass
 

@@ -157,6 +157,25 @@
 
 ---
 
+## Phase 6: Cognitive Complexity Reduction (Bonus)
+
+**Purpose**: Post-verification complexipy analysis found 5 active functions with cognitive complexity >15. These are behavior-preserving simplifications — no new files, no new abstractions, just clearer control flow.
+
+**Justification**: FR-013 (added post-analysis). The original refactor addressed structural complexity (module sizes, class sizes) but not within-function cognitive complexity. complexipy revealed that the 5 highest-scoring active functions all suffer from deep nesting and interleaved concerns, which harms readability even in correctly-sized modules.
+
+**Independent Test**: All existing tests pass after each simplification. `uv run pytest tests/ && uv run ruff check src/` clean after each task. Complexipy scores decrease.
+
+- [x] T063 [US1] Simplify `QueryService.execute_query` (score: 43→6) in src/db/query.py: extract SELECT result processing and total-row-count logic into helper methods to reduce nesting depth
+- [x] T064 [P] [US1] Simplify `MetadataService._list_tables_generic` (score: 42→15) in src/db/metadata.py: extract table collection and view collection loops into helper methods to flatten nesting
+- [x] T065 [P] [US1] Simplify `ConnectionManager.connect` (score: 22→14) in src/db/connection.py: extract engine creation into a helper method to separate auth-method branching from connection lifecycle
+- [x] T066 [P] [US1] Simplify `list_tables` MCP tool wrapper (score: 19→6) in src/mcp_server/schema_tools.py: extract parameter validation and response building into helpers
+- [x] T067 [P] [US1] Simplify `QueryService.inject_row_limit` (score: 16→10) in src/db/query.py: flatten conditional branches with early returns
+- [x] T068 Run tests, linter, and complexipy to verify all 5 functions now score ≤15: `uv run pytest tests/ && uv run ruff check src/ && uv run complexipy src/`
+
+**Checkpoint**: All 5 active functions at or below cognitive complexity threshold. Conciseness maintained or improved.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

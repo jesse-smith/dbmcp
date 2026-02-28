@@ -40,6 +40,7 @@ Simplify and restructure the dbmcp codebase (~7,100 source lines, ~8,900 test li
 | Max file length: 400 lines | VIOLATION | 5 modules exceed this today; refactor aims to bring all ≤400 lines (aligned with constitution) |
 | Max function length: 50 lines | VIOLATION | Multiple God methods (130-191 lines); decomposition planned |
 | Max cyclomatic complexity: 10 | CHECK | God methods likely exceed this; decomposition will address |
+| Max cognitive complexity: 15 | VIOLATION | 5 active functions exceed 15 (complexipy); bonus phase added |
 
 ## Project Structure
 
@@ -175,6 +176,18 @@ The **code-simplifier agent** should be used for:
 - Reducing conditional nesting within individual files
 - Cleaning up boilerplate patterns within tool definition files
 - Simplifying complex regex or SQL generation patterns
+
+### Phase 4: Cognitive Complexity Reduction (Bonus)
+
+Post-verification analysis with complexipy identified 5 active functions exceeding the cognitive complexity threshold of 15. These are behavior-preserving simplifications targeting deep nesting, long conditional chains, and interleaved concerns within individual functions. No new files or abstractions — just clearer control flow within existing functions.
+
+| Score | Function | File | Strategy |
+|-------|----------|------|----------|
+| 43 | `execute_query` | query.py | Extract SELECT result processing and total-row-count logic into helpers |
+| 42 | `_list_tables_generic` | metadata.py | Extract table collection and view collection into helpers to reduce nesting |
+| 22 | `connect` | connection.py | Extract engine creation into helper to separate auth-method branching from connection lifecycle |
+| 19 | `list_tables` | schema_tools.py | Extract validation and response building into helpers |
+| 16 | `inject_row_limit` | query.py | Flatten conditional branches with early returns |
 
 The code-simplifier should NOT be used for:
 - Cross-file structural splits (manual coordination needed)

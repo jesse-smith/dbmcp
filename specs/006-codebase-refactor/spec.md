@@ -84,6 +84,7 @@ A developer decides to re-enable one of the 5 currently hidden MCP tools (infer_
 - **FR-010**: All existing import paths used by active code MUST continue to work, or all references MUST be updated consistently
 - **FR-011**: Runtime complexity MUST not increase — refactoring should simplify or maintain existing complexity
 - **FR-012**: When simplification and maintainability conflict, maintainability MUST be preferred — but only when the added structural overhead is very modest (e.g., one extra file or a thin delegation layer, not deep abstraction hierarchies)
+- **FR-013**: Functions in active code paths with cognitive complexity >15 (as measured by complexipy) SHOULD be simplified to reduce nesting and branching
 
 ## Success Criteria *(mandatory)*
 

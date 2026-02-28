@@ -13,6 +13,56 @@ from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import AuthenticationMethod
 
 
+def _validate_list_tables_params(
+    limit: int,
+    offset: int,
+    object_type: str | None,
+    sort_by: str,
+) -> str | None:
+    """Validate list_tables parameters, returning an error message or None."""
+    if limit < 1:
+        return "limit must be at least 1"
+    if limit > 1000:
+        return "limit cannot exceed 1000"
+    if offset < 0:
+        return "offset cannot be negative"
+    valid_object_types = [None, "table", "view"]
+    if object_type not in valid_object_types:
+        return f"object_type must be one of: {valid_object_types}"
+    valid_sort_by = ["name", "row_count", "last_modified"]
+    if sort_by not in valid_sort_by:
+        return f"sort_by must be one of: {valid_sort_by}"
+    return None
+
+
+def _build_table_entry(
+    t,
+    output_mode: str,
+    metadata_svc: MetadataService,
+) -> dict:
+    """Build a response dict for a single table entry."""
+    entry = {
+        "schema_name": t.schema_id,
+        "table_name": t.table_name,
+        "table_type": t.table_type.value,
+        "row_count": t.row_count,
+        "has_primary_key": t.has_primary_key,
+        "last_modified": t.last_modified.isoformat() if t.last_modified else None,
+        "access_denied": t.access_denied,
+    }
+    if output_mode == "detailed":
+        entry["columns"] = [
+            {
+                "column_name": c.column_name,
+                "data_type": c.data_type,
+                "is_nullable": c.is_nullable,
+                "is_primary_key": c.is_primary_key,
+            }
+            for c in metadata_svc.get_columns(t.table_name, t.schema_id)
+        ]
+    return entry
+
+
 def _get_metadata_service(connection_id: str) -> MetadataService:
     """Get a MetadataService for the given connection."""
     conn_manager = get_connection_manager()
@@ -195,27 +245,12 @@ async def list_tables(
     Returns:
         JSON string with table list and pagination metadata
     """
+    # Validate parameters with early return
+    validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
+    if validation_error is not None:
+        return json.dumps({"error": validation_error})
+
     try:
-        # Validate limit
-        if limit < 1:
-            return json.dumps({"error": "limit must be at least 1"})
-        if limit > 1000:
-            return json.dumps({"error": "limit cannot exceed 1000"})
-
-        # Validate offset (T132)
-        if offset < 0:
-            return json.dumps({"error": "offset cannot be negative"})
-
-        # Validate object_type (T133)
-        valid_object_types = [None, "table", "view"]
-        if object_type not in valid_object_types:
-            return json.dumps({"error": f"object_type must be one of: {valid_object_types}"})
-
-        # Validate sort_by
-        valid_sort_by = ["name", "row_count", "last_modified"]
-        if sort_by not in valid_sort_by:
-            return json.dumps({"error": f"sort_by must be one of: {valid_sort_by}"})
-
         metadata_svc = _get_metadata_service(connection_id)
 
         all_tables = []
@@ -241,30 +276,9 @@ async def list_tables(
         # Apply limit after combining schemas (for schema_filter case)
         all_tables = all_tables[:limit]
 
-        # Build response based on output_mode
-        def _table_entry(t):
-            entry = {
-                "schema_name": t.schema_id,
-                "table_name": t.table_name,
-                "table_type": t.table_type.value,
-                "row_count": t.row_count,
-                "has_primary_key": t.has_primary_key,
-                "last_modified": t.last_modified.isoformat() if t.last_modified else None,
-                "access_denied": t.access_denied,
-            }
-            if output_mode == "detailed":
-                entry["columns"] = [
-                    {
-                        "column_name": c.column_name,
-                        "data_type": c.data_type,
-                        "is_nullable": c.is_nullable,
-                        "is_primary_key": c.is_primary_key,
-                    }
-                    for c in metadata_svc.get_columns(t.table_name, t.schema_id)
-                ]
-            return entry
-
-        table_list = [_table_entry(t) for t in all_tables]
+        table_list = [
+            _build_table_entry(t, output_mode, metadata_svc) for t in all_tables
+        ]
 
         return json.dumps({
             "tables": table_list,

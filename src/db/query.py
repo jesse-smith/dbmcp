@@ -404,35 +404,34 @@ class QueryService:
 
         dialect_name = self.engine.dialect.name
 
+        # SQLite: Add LIMIT clause if not present
         if dialect_name == "sqlite":
-            # SQLite: Add LIMIT clause if not present
             if " LIMIT " not in query_text.upper():
                 return f"{query_text} LIMIT {row_limit}"
             return query_text
-        else:
-            # SQL Server: Inject TOP clause after the final SELECT
-            # Check if TOP already exists
-            if re.search(r'\bTOP\s*\(?\s*\d+\s*\)?', query_text, re.IGNORECASE):
-                return query_text
 
-            if is_cte_select:
-                # For CTE queries, find the final SELECT and inject TOP there
-                return self._inject_top_in_cte(cleaned, row_limit)
-            else:
-                # Regular SELECT: Inject TOP after SELECT
-                # Handle SELECT DISTINCT, SELECT ALL, etc.
-                select_pattern = re.compile(
-                    r'^(SELECT\s+(?:DISTINCT\s+|ALL\s+)?)',
-                    re.IGNORECASE
-                )
-
-                match = select_pattern.match(cleaned)
-                if match:
-                    prefix = match.group(1)
-                    rest = cleaned[len(prefix):]
-                    return f"{prefix}TOP ({row_limit}) {rest}"
-
+        # SQL Server: Return early if TOP already exists
+        if re.search(r'\bTOP\s*\(?\s*\d+\s*\)?', query_text, re.IGNORECASE):
             return query_text
+
+        # For CTE queries, find the final SELECT and inject TOP there
+        if is_cte_select:
+            return self._inject_top_in_cte(cleaned, row_limit)
+
+        # Regular SELECT: Inject TOP after SELECT
+        # Handle SELECT DISTINCT, SELECT ALL, etc.
+        select_pattern = re.compile(
+            r'^(SELECT\s+(?:DISTINCT\s+|ALL\s+)?)',
+            re.IGNORECASE
+        )
+
+        match = select_pattern.match(cleaned)
+        if match:
+            prefix = match.group(1)
+            rest = cleaned[len(prefix):]
+            return f"{prefix}TOP ({row_limit}) {rest}"
+
+        return query_text
 
     def _inject_top_in_cte(self, cleaned_query: str, row_limit: int) -> str:
         """Inject TOP clause into the final SELECT of a CTE query.
@@ -502,94 +501,32 @@ class QueryService:
         Raises:
             ValueError: If parameters are invalid or query is blocked
         """
-        # Validate parameters
         if not query_text or not query_text.strip():
             raise ValueError("query_text is required and cannot be empty")
 
         if row_limit < 1 or row_limit > 10000:
             raise ValueError("row_limit must be between 1 and 10000")
 
-        # Generate query ID
         query_id = str(uuid.uuid4())
-
-        # AST-based validation (replaces keyword blocklist + type-based allow/deny)
         validation = validate_query(query_text, allow_write=allow_write)
         query_type = self.parse_query_type(query_text)
 
         if not validation.is_safe:
-            # Build human-readable error message from denial reasons
-            reason_strs = [f"{r.category.value.upper()} - {r.detail}" for r in validation.reasons]
-            error_message = f"Query blocked: {'; '.join(reason_strs)}"
-            return Query(
-                query_id=query_id,
-                connection_id=connection_id,
-                query_text=query_text,
-                query_type=query_type,
-                is_allowed=False,
-                row_limit=row_limit,
-                error_message=error_message,
-                denial_reasons=validation.reasons,
+            return self._build_blocked_query(
+                query_id, connection_id, query_text, query_type, row_limit, validation.reasons
             )
 
-        # Inject row limit for SELECT queries
-        if query_type == QueryType.SELECT:
-            executed_query = self.inject_row_limit(query_text, row_limit)
-        else:
-            executed_query = query_text
+        executed_query = (
+            self.inject_row_limit(query_text, row_limit)
+            if query_type == QueryType.SELECT
+            else query_text
+        )
 
-        # Execute query
         start_time = time.perf_counter()
-        columns: list[str] = []
-        rows: list[dict[str, Any]] = []
-        rows_affected = 0
-        error_message = None
-        total_rows_available: int | None = None
-
-        try:
-            with self.engine.connect() as conn:
-                result = conn.execute(text(executed_query))
-
-                if query_type == QueryType.SELECT:
-                    # Get column names
-                    columns = list(result.keys())
-
-                    # Fetch all rows (already limited by TOP/LIMIT)
-                    fetched_rows = result.fetchall()
-                    rows_affected = len(fetched_rows)
-
-                    # Convert to list of dicts with value truncation
-                    for row in fetched_rows:
-                        row_dict = {}
-                        for col_name, value in zip(columns, row, strict=True):
-                            truncated_value, _ = self._truncate_value(value, col_name)
-                            row_dict[col_name] = truncated_value
-                        rows.append(row_dict)
-
-                    # Check if we hit the limit (more rows might be available)
-                    if len(rows) == row_limit:
-                        # Try to get count of total rows
-                        try:
-                            count_query = self._build_count_query(query_text)
-                            if count_query:
-                                count_result = conn.execute(text(count_query))
-                                count_value = count_result.scalar()
-                                # Only use count if it's a valid integer
-                                if isinstance(count_value, int):
-                                    total_rows_available = count_value
-                        except Exception:
-                            # If count fails, leave total_rows_available as None
-                            pass
-                else:
-                    # For write operations, get rowcount
-                    rows_affected = result.rowcount if result.rowcount >= 0 else 0
-                    conn.commit()
-
-        except Exception as e:
-            error_message = f"Query execution failed: {type(e).__name__}: {str(e)}"
-            logger.error(f"Query execution error: {e}")
-
-        end_time = time.perf_counter()
-        execution_time_ms = int((end_time - start_time) * 1000)
+        columns, rows, rows_affected, error_message, total_rows_available = (
+            self._run_query(executed_query, query_type, query_text, row_limit)
+        )
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
         query = Query(
             query_id=query_id,
@@ -611,6 +548,145 @@ class QueryService:
         query._total_rows_available = total_rows_available  # type: ignore
 
         return query
+
+    def _build_blocked_query(
+        self,
+        query_id: str,
+        connection_id: str,
+        query_text: str,
+        query_type: QueryType,
+        row_limit: int,
+        reasons: list,
+    ) -> Query:
+        """Build a Query object for a blocked (unsafe) query.
+
+        Args:
+            query_id: Unique query identifier
+            connection_id: Connection ID
+            query_text: Original SQL query text
+            query_type: Parsed query type
+            row_limit: Requested row limit
+            reasons: List of denial reasons from validation
+
+        Returns:
+            Query object marked as not allowed
+        """
+        reason_strs = [f"{r.category.value.upper()} - {r.detail}" for r in reasons]
+        error_message = f"Query blocked: {'; '.join(reason_strs)}"
+        return Query(
+            query_id=query_id,
+            connection_id=connection_id,
+            query_text=query_text,
+            query_type=query_type,
+            is_allowed=False,
+            row_limit=row_limit,
+            error_message=error_message,
+            denial_reasons=reasons,
+        )
+
+    def _run_query(
+        self,
+        executed_query: str,
+        query_type: QueryType,
+        original_query: str,
+        row_limit: int,
+    ) -> tuple[list[str], list[dict[str, Any]], int, str | None, int | None]:
+        """Execute a query and return raw results.
+
+        Args:
+            executed_query: SQL query to execute (may have row limit injected)
+            query_type: Parsed query type
+            original_query: Original query text (used for count query)
+            row_limit: Requested row limit
+
+        Returns:
+            Tuple of (columns, rows, rows_affected, error_message, total_rows_available)
+        """
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(executed_query))
+
+                if query_type == QueryType.SELECT:
+                    return self._process_select_results(result, conn, original_query, row_limit)
+
+                rows_affected = result.rowcount if result.rowcount >= 0 else 0
+                conn.commit()
+                return [], [], rows_affected, None, None
+
+        except Exception as e:
+            error_message = f"Query execution failed: {type(e).__name__}: {str(e)}"
+            logger.error(f"Query execution error: {e}")
+            return [], [], 0, error_message, None
+
+    def _process_select_results(
+        self,
+        result,
+        conn,
+        original_query: str,
+        row_limit: int,
+    ) -> tuple[list[str], list[dict[str, Any]], int, str | None, int | None]:
+        """Process results from a SELECT query.
+
+        Fetches rows, applies value truncation, and optionally queries total row count.
+
+        Args:
+            result: SQLAlchemy result proxy
+            conn: Active database connection
+            original_query: Original query text (used for count query)
+            row_limit: Requested row limit
+
+        Returns:
+            Tuple of (columns, rows, rows_affected, error_message, total_rows_available)
+        """
+        columns = list(result.keys())
+        fetched_rows = result.fetchall()
+
+        rows = []
+        for row in fetched_rows:
+            row_dict = {}
+            for col_name, value in zip(columns, row, strict=True):
+                truncated_value, _ = self._truncate_value(value, col_name)
+                row_dict[col_name] = truncated_value
+            rows.append(row_dict)
+
+        total_rows_available = self._get_total_row_count(conn, original_query, row_limit, len(rows))
+
+        return columns, rows, len(fetched_rows), None, total_rows_available
+
+    def _get_total_row_count(
+        self,
+        conn,
+        original_query: str,
+        row_limit: int,
+        fetched_count: int,
+    ) -> int | None:
+        """Get total row count when results hit the row limit.
+
+        Args:
+            conn: Active database connection
+            original_query: Original query text
+            row_limit: Requested row limit
+            fetched_count: Number of rows actually fetched
+
+        Returns:
+            Total row count, or None if not applicable or count fails
+        """
+        if fetched_count != row_limit:
+            return None
+
+        count_query = self._build_count_query(original_query)
+        if not count_query:
+            return None
+
+        try:
+            count_result = conn.execute(text(count_query))
+            count_value = count_result.scalar()
+            if isinstance(count_value, int):
+                return count_value
+        except Exception:
+            pass
+
+        return None
 
     def _build_count_query(self, query_text: str) -> str | None:
         """Build a COUNT(*) query from a SELECT query to get total row count.
