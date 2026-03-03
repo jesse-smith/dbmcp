@@ -9,10 +9,11 @@ All tools expose raw statistics and structural metadata only — no interpretati
 """
 
 import json
-from typing import Optional
+
 from sqlalchemy import text
 
 from src.analysis.column_stats import ColumnStatsCollector
+from src.analysis.pk_discovery import PKDiscovery
 from src.mcp_server.server import get_connection_manager, mcp
 
 
@@ -21,8 +22,8 @@ async def get_column_info(
     connection_id: str,
     table_name: str,
     schema_name: str = "dbo",
-    columns: Optional[list[str]] = None,
-    column_pattern: Optional[str] = None,
+    columns: list[str] | None = None,
+    column_pattern: str | None = None,
     sample_size: int = 10,
 ) -> str:
     """Retrieve per-column statistical profiles for a table.
@@ -105,6 +106,87 @@ async def get_column_info(
         })
     except Exception as e:
         # Unexpected error
+        return json.dumps({
+            "status": "error",
+            "error_message": f"Unexpected error: {str(e)}",
+        })
+
+
+@mcp.tool()
+async def find_pk_candidates(
+    connection_id: str,
+    table_name: str,
+    schema_name: str = "dbo",
+    type_filter: list[str] | None = None,
+) -> str:
+    """Identify columns that meet primary key candidacy criteria.
+
+    Discovers PK candidates via two approaches:
+    1. Constraint-backed: Columns with PK or UNIQUE constraints
+    2. Structural: Columns that are unique, non-null, and match the type filter
+
+    Args:
+        connection_id: Connection ID from connect_database
+        table_name: Table to search for PK candidates
+        schema_name: Schema name (default: 'dbo')
+        type_filter: SQL types considered for structural PK candidacy.
+            Default: ["int", "bigint", "smallint", "tinyint", "uniqueidentifier"].
+            Set to empty list to disable type filtering.
+
+    Returns:
+        JSON string with status, table/schema metadata, and candidates list
+
+    Error conditions:
+        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
+        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
+        - No candidates found: {"status": "success", "candidates": []} (not an error)
+    """
+    try:
+        conn_manager = get_connection_manager()
+        if connection_id not in conn_manager.connections:
+            return json.dumps({
+                "status": "error",
+                "error_message": f"Connection '{connection_id}' not found",
+            })
+
+        connection_info = conn_manager.connections[connection_id]
+        connection = connection_info["connection"]
+
+        # Verify table exists
+        table_exists_query = text("""
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+        """)
+        result = connection.execute(
+            table_exists_query,
+            {"schema_name": schema_name, "table_name": table_name},
+        )
+        if result.scalar() == 0:
+            return json.dumps({
+                "status": "error",
+                "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+            })
+
+        discovery = PKDiscovery(
+            connection=connection,
+            schema_name=schema_name,
+            table_name=table_name,
+        )
+
+        candidates = discovery.find_candidates(type_filter=type_filter)
+
+        response = {
+            "status": "success",
+            "table_name": table_name,
+            "schema_name": schema_name,
+            "candidates": [c.to_dict() for c in candidates],
+        }
+
+        return json.dumps(response)
+
+    except Exception as e:
         return json.dumps({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",

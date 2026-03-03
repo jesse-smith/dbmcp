@@ -77,7 +77,7 @@
 - [X] T020 [US1] Implement `ColumnStatsCollector` class in `src/analysis/column_stats.py` — adapt SQL patterns from former `src/inference/column_stats.py` (basic stats, numeric stats, datetime stats, string stats, column existence) with support for batch column analysis and column filtering (name list or LIKE pattern); return `ColumnStatistics` model instances per data-model.md
 - [X] T021 [US1] Implement `get_column_info` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, schema_name, columns, column_pattern), JSON response format, error handling for invalid connection/table/column
 - [X] T022 [US1] Register `get_column_info` import in `src/mcp_server/server.py`
-- [ ] T023 [US1] Run unit and integration tests for US1, verify all pass (`uv run pytest tests/unit/test_column_stats.py tests/integration/test_get_column_info.py tests/unit/test_analysis_models.py -v`)
+- [X] T023 [US1] Run unit and integration tests for US1, verify all pass (`uv run pytest tests/unit/test_column_stats.py tests/integration/test_get_column_info.py tests/unit/test_analysis_models.py -v`)
 
 **Checkpoint**: `get_column_info` tool functional end-to-end. All US1 acceptance scenarios (1-5) verified.
 
@@ -93,15 +93,15 @@
 
 > **Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T024 [P] [US2] Write unit tests for `PKDiscovery` in `tests/unit/test_pk_discovery.py`: constraint-backed PK detected, UNIQUE constraint detected, structural candidate (unique + non-null + type match), VARCHAR excluded by default type filter, custom type_filter override includes VARCHAR, no-candidates returns empty list, default schema behavior
-- [ ] T025 [P] [US2] Write integration tests for `find_pk_candidates` MCP tool in `tests/integration/test_pk_discovery.py`: declared PK table, UNIQUE constraint table, structural candidate detection, type filter override, empty result, error responses
+- [X] T024 [P] [US2] Write unit tests for `PKDiscovery` in `tests/unit/test_pk_discovery.py`: constraint-backed PK detected, UNIQUE constraint detected, structural candidate (unique + non-null + type match), VARCHAR excluded by default type filter, custom type_filter override includes VARCHAR, no-candidates returns empty list, default schema behavior
+- [X] T025 [P] [US2] Write integration tests for `find_pk_candidates` MCP tool in `tests/integration/test_pk_discovery.py`: declared PK table, UNIQUE constraint table, structural candidate detection, type filter override, empty result, error responses
 
 ### Implementation for US2
 
-- [ ] T026 [US2] Implement `PKDiscovery` class in `src/analysis/pk_discovery.py` — query PK/UNIQUE constraints via MetadataService/INFORMATION_SCHEMA, check structural candidacy (unique values via COUNT(DISTINCT)=COUNT(*) WHERE NOT NULL, non-null, type set match), return `PKCandidate` model instances per data-model.md; configurable `type_filter` parameter defaulting to `["int", "bigint", "smallint", "tinyint", "uniqueidentifier"]`
-- [ ] T027 [US2] Implement `find_pk_candidates` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, schema_name, type_filter), JSON response with table/schema as top-level metadata, error handling
-- [ ] T028 [US2] Register `find_pk_candidates` import in `src/mcp_server/server.py`
-- [ ] T029 [US2] Run unit and integration tests for US2, verify all pass (`uv run pytest tests/unit/test_pk_discovery.py tests/integration/test_pk_discovery.py -v`)
+- [X] T026 [US2] Implement `PKDiscovery` class in `src/analysis/pk_discovery.py` — query PK/UNIQUE constraints via MetadataService/INFORMATION_SCHEMA, check structural candidacy (unique values via COUNT(DISTINCT)=COUNT(*) WHERE NOT NULL, non-null, type set match), return `PKCandidate` model instances per data-model.md; configurable `type_filter` parameter defaulting to `["int", "bigint", "smallint", "tinyint", "uniqueidentifier"]`
+- [X] T027 [US2] Implement `find_pk_candidates` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, schema_name, type_filter), JSON response with table/schema as top-level metadata, error handling
+- [X] T028 [US2] Register `find_pk_candidates` import in `src/mcp_server/server.py`
+- [X] T029 [US2] Run unit and integration tests for US2, verify all pass (`uv run pytest tests/unit/test_pk_discovery.py tests/integration/test_pk_discovery.py -v`)
 
 **Checkpoint**: `find_pk_candidates` tool functional end-to-end. All US2 acceptance scenarios (1-7) verified.
 
