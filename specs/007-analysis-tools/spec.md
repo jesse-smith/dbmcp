@@ -37,15 +37,15 @@ An LLM consumer wants to understand the statistical profile of columns in a data
 
 **Why this priority**: Column-level statistics are the foundational building block. Every downstream analysis (including FK candidate discovery) depends on understanding individual column characteristics first.
 
-**Independent Test**: Can be fully tested by requesting column info for a known table and verifying that returned statistics (distinct count, null percentage, row count, type-specific stats) match expected values computed from the underlying data.
+**Independent Test**: Can be fully tested by requesting get_column_info for a known table and verifying that returned statistics (distinct count, null percentage, row count, type-specific stats) match expected values computed from the underlying data.
 
 **Acceptance Scenarios**:
 
-1. **Given** a connected database with a table containing numeric, string, datetime, and boolean columns, **When** the consumer requests column info for all columns, **Then** each column returns its distinct count, total row count, null percentage, and type-appropriate statistics (min/max/mean/stddev for numeric, min/max/avg length and sample patterns for string, min/max/range for datetime).
-2. **Given** a table with many columns, **When** the consumer requests column info filtered by a name pattern, **Then** only columns matching the pattern are analyzed and returned.
-3. **Given** a table with many columns, **When** the consumer requests column info for a specific list of column names, **Then** only those named columns are analyzed and returned.
-4. **Given** a request with no schema specified, **When** the consumer requests column info, **Then** the default schema is used.
-5. **Given** an invalid connection, table, or column name, **When** the consumer requests column info, **Then** a clear error message is returned identifying what was not found.
+1. **Given** a connected database with a table containing numeric, string, datetime, and boolean columns, **When** the consumer requests get_column_info for all columns, **Then** each column returns its distinct count, total row count, null percentage, and type-appropriate statistics (min/max/mean/stddev for numeric, min/max/avg length and sample patterns for string, min/max/range for datetime).
+2. **Given** a table with many columns, **When** the consumer requests get_column_info filtered by a name pattern, **Then** only columns matching the pattern are analyzed and returned.
+3. **Given** a table with many columns, **When** the consumer requests get_column_info for a specific list of column names, **Then** only those named columns are analyzed and returned.
+4. **Given** a request with no schema specified, **When** the consumer requests get_column_info, **Then** the default schema is used.
+5. **Given** an invalid connection, table, or column name, **When** the consumer requests get_column_info, **Then** a clear error message is returned identifying what was not found.
 
 ---
 
@@ -114,27 +114,37 @@ A developer maintaining the codebase wants all disabled inference tools, documen
 - What happens when a column has all NULL values? Column info should still return valid statistics (100% null rate, 0 distinct values).
 - What happens when a table has zero rows? Column info should return zeroed statistics without error.
 - What happens when the source column for FK candidate search has no non-null values? The tool should return an empty candidate list or a meaningful empty result.
-- What happens when value overlap analysis is requested but the source column has very high cardinality? The operation should complete within a reasonable time or indicate that overlap was not computed due to cardinality limits.
+- What happens when value overlap analysis is requested but the source column has very high cardinality (>1M distinct values)? Per NFR-006, the operation may skip overlap computation or time out after 30 seconds, returning null values for `overlap_count` and `overlap_percentage` with no error raised.
 - What happens when multiple columns share the same name across different schemas? FK candidate search should distinguish candidates by schema.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide a tool that returns per-column statistical profiles including distinct count, total row count, null percentage, and type-specific statistics (numeric: min/max/mean/stddev; string: min/max/avg length and sample patterns; datetime: min/max/range).
-- **FR-002**: The column info tool MUST expose the distinct value count and total row count as raw statistics. The system MUST NOT interpret these values (e.g., no "is_enum" flag or categorical classification).
-- **FR-003**: The column info tool MUST support filtering by an explicit list of column names or by a name pattern (SQL LIKE syntax), returning info for only matching columns. When no schema is provided, the default schema MUST be used.
-- **FR-004**: System MUST provide a tool that identifies primary key candidate columns in a given table — columns with declared PK or UNIQUE constraints, as well as columns meeting all three structural criteria (unique values, non-null, and matching a configurable type set). The type set MUST default to integer/bigint/UUID-like types and MUST accept an optional parameter to override it. The tool MUST distinguish constraint-backed candidates from structural (not constraint-backed) ones. When no schema is provided, the default schema MUST be used.
-- **FR-005**: The FK candidate tool MUST, given a single source column, return raw data for each candidate: source and target column names, source and target table names, source and target data types, and structural metadata (constraints, indexes, nullability). The system MUST NOT compute similarity scores, compatibility judgments, or interpretive labels from this data.
+- **FR-001**: System MUST provide a tool that returns per-column statistical profiles including distinct count, total row count, null percentage, and type-specific statistics. Type-specific statistics are: numeric types (min/max/mean/stddev), string types (min/max/avg length and top N value samples with frequency counts where N defaults to 10 and MUST be configurable), datetime types (min/max/date range in days, and whether non-midnight times exist).
+- **FR-002**: All analysis tools MUST return raw statistics and metadata only. The system MUST NOT interpret, infer, or label meaning from data. Specifically prohibited: similarity scores, type compatibility judgments, confidence scores, weighted aggregates, natural-language reasoning, categorical classifications (e.g., "is_enum" flags), and pattern-based labels (e.g., "looks like a junction table"). All interpretation is the consumer's responsibility.
+- **FR-003**: The `get_column_info` tool MUST support filtering by an explicit list of column names or by a name pattern (SQL LIKE syntax), returning info for only matching columns. When no schema is provided, the default schema MUST be used.
+- **FR-004**: System MUST provide a tool that identifies primary key candidate columns in a given table — columns with declared PK or UNIQUE constraints, as well as columns meeting all three structural criteria (unique values, non-null, and matching a configurable type set). The type set MUST default to integer, bigint, smallint, tinyint, and uniqueidentifier types and MUST accept an optional parameter to override it. The tool MUST distinguish constraint-backed candidates from structural (not constraint-backed) ones. When no schema is provided, the default schema MUST be used.
+- **FR-005**: The FK candidate tool MUST, given a single source column, return raw data for each candidate: source and target column names, source and target table names, source and target data types, and structural metadata (constraints, indexes, nullability). Compliance with FR-002 raw-data constraint is mandatory.
 - **FR-006**: The FK candidate tool MUST default to comparing only against PK-candidate columns (as defined by FR-004) and MUST provide a toggle to disable this filter and compare against all columns in target tables.
 - **FR-007**: The FK candidate tool MUST support scoping candidate targets by schema, by an explicit list of table names, or by a table name pattern. When no target filters are provided, the search MUST default to the source column's schema (never a full-database scan).
 - **FR-008**: The FK candidate tool MUST return a default maximum of 100 candidates total across all target tables, with an optional parameter to override or remove the limit.
 - **FR-009**: The FK candidate tool MUST support an optional value overlap mode that adds two data-level overlap values per candidate: the raw count of source distinct values found in the candidate column, and the percentage of source distinct values found in the candidate column.
-- **FR-010**: The FK candidate tool MUST return raw data only — no similarity scores, no type compatibility judgments, no confidence scores, no weighted aggregates, and no natural-language reasoning. All interpretation is the consumer's responsibility.
-- **FR-011**: System MUST remove all documentation caching infrastructure (storage, drift detection, document generation), the documentation MCP tools, the `DocumentationCache` model, the `InferredPurpose` enum, inference-related fields on `Column`, the `InferredFK` and `InferenceFactors` types, the entire inference module, and all associated tool registrations and imports.
-- **FR-012**: System MUST introduce a data structure to hold raw FK candidate data (source/target names, data types, structural metadata, optional value overlap count and percentage) that replaces the removed `InferredFK`/`InferenceFactors`.
-- **FR-013**: The `DeclaredFK` model and its behavior MUST remain unchanged.
-- **FR-014**: All existing tests that reference removed code MUST be removed or updated, and the full test suite MUST pass after changes.
+- **FR-010**: System MUST remove all documentation caching infrastructure (storage, drift detection, document generation), the documentation MCP tools, the `DocumentationCache` model, the `InferredPurpose` enum, inference-related fields on `Column`, the `InferredFK` and `InferenceFactors` types, the entire inference module, and all associated tool registrations and imports.
+- **FR-011**: System MUST introduce a data structure to hold raw FK candidate data (source/target names, data types, structural metadata, optional value overlap count and percentage) that replaces the removed `InferredFK`/`InferenceFactors`.
+- **FR-012**: The `DeclaredFK` model and its behavior MUST remain unchanged.
+- **FR-013**: All existing tests that reference removed code MUST be removed or updated, and the full test suite MUST pass after changes.
+
+### Non-Functional Requirements
+
+**Test Environment Baseline**: Performance requirements measured on SQL Server 2019+ with 4-core CPU, 16GB RAM, SSD storage, under idle query load (no concurrent queries).
+
+- **NFR-001**: The `get_column_info` tool MUST return results within 5 seconds for tables up to 10 million rows under the test environment baseline.
+- **NFR-002**: The `find_pk_candidates` tool MUST complete within 5 seconds for tables up to 10 million rows under the test environment baseline.
+- **NFR-003**: The `find_fk_candidates` tool MUST complete within 10 seconds (metadata-only mode) or 30 seconds (with value overlap enabled) for searches that evaluate up to 100 candidate columns under the test environment baseline.
+- **NFR-004**: The `find_fk_candidates` tool MUST use a default result limit of 100 candidates to prevent unbounded result sets and excessive query times.
+- **NFR-005**: When no explicit target filters are provided, the `find_fk_candidates` tool MUST default to searching only the source column's schema to prevent expensive full-database scans.
+- **NFR-006**: Value overlap computation for high-cardinality columns (>1 million distinct values) MAY be skipped or time out after 30 seconds, with the tool returning null overlap values and an indication that overlap was not computed.
 
 ### Key Entities
 
@@ -151,13 +161,13 @@ A developer maintaining the codebase wants all disabled inference tools, documen
 - **SC-002**: Consumers can discover PK candidates for any table in a single tool call, receiving constraint-backed and structural candidates with the raw properties that qualified each.
 - **SC-003**: Consumers can discover FK candidates for any column and receive raw comparison data in a single tool call, with results scoped by schema, table list, or name pattern as needed.
 - **SC-004**: The codebase contains zero references to removed modules, classes, enums, or fields after cleanup — verified by automated search and a passing test suite.
-- **SC-005**: All returned data across all analysis tools consists of raw statistics and metadata only — no similarity scores, compatibility judgments, categorical labels, confidence values, or generated reasoning.
+- **SC-005**: All analysis tools comply with FR-002 raw-data constraint: zero interpretive output across all tool responses.
 - **SC-006**: Existing active tools (connect, list schemas, list tables, get table schema, get sample data, execute query) continue to function identically after all changes.
 
 ## Assumptions
 
-- The column info tool reuses proven statistical query logic from the existing (to-be-removed) inference module, adapted for direct exposure rather than internal scoring.
-- The FK candidate tool reuses proven data-gathering logic (column metadata, value overlap) from the existing inference module, but exposes raw data instead of computed scores or interpretive labels.
+- The `get_column_info` tool reuses existing statistical query logic from the existing (to-be-removed) inference module, adapted for direct exposure rather than internal scoring.
+- The FK candidate tool reuses existing data-gathering logic (column metadata, value overlap) from the existing inference module, but exposes raw data instead of computed scores or interpretive labels.
 - Value overlap computation for FK candidates is opt-in because it involves cross-table data queries that may be expensive on large datasets.
 - The system does not need to persist analysis results — all tools return results on demand per invocation.
 - "Default schema" means the database's standard default schema (e.g., `dbo` for SQL Server), consistent with existing tool behavior.
