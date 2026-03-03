@@ -28,7 +28,7 @@ from sqlalchemy import create_engine, text
 from src.db.metadata import MetadataService
 from src.db.query import QueryService
 from src.models.schema import SamplingMethod
-from tests.performance.benchmark import Benchmark, BenchmarkResult
+from tests.performance.benchmark import Benchmark
 
 
 @dataclass
@@ -187,7 +187,7 @@ class PerformanceReportGenerator:
 
             result = self.benchmark.run(
                 name=f"list_tables_{size}",
-                func=lambda: service.list_tables(limit=1000),
+                func=lambda s=service: s.list_tables(limit=1000),
                 iterations=3,
             )
 
@@ -236,7 +236,7 @@ class PerformanceReportGenerator:
 
             result = self.benchmark.run(
                 name=f"sample_data_{size}_rows",
-                func=lambda: service.get_sample_data(
+                func=lambda s=service: s.get_sample_data(
                     table_name="sample_table",
                     schema_name="main",
                     sample_size=50,

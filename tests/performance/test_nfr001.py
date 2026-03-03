@@ -19,7 +19,6 @@ from sqlalchemy import create_engine, text
 from src.db.metadata import MetadataService
 from tests.performance.benchmark import Benchmark, assert_performance
 
-
 # NFR-001 threshold: 30 seconds for 1000 tables
 NFR_001_THRESHOLD_MS = 30_000
 NFR_001_TABLE_COUNT = 1000
@@ -152,7 +151,7 @@ class TestNFR001MetadataPerformance:
             # Benchmark
             result = bench.run(
                 name=f"list_tables_{count}",
-                func=lambda: service.list_tables(limit=1000),
+                func=lambda s=service: s.list_tables(limit=1000),
                 iterations=3,
             )
 

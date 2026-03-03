@@ -143,6 +143,10 @@
 - [X] T041 Final orphan scan: `grep -rn "InferredPurpose\|InferredFK\|InferenceFactors\|DocumentationCache\|inferred_purpose\|inferred_confidence\|src\.inference\|src\.cache\|doc_tools" src/ tests/` returns zero matches
 - [X] T042 Manual code review: Verify analysis modules (`src/analysis/column_stats.py`, `src/analysis/pk_discovery.py`, `src/analysis/fk_candidates.py`) contain zero interpretive logic per FR-002 — no similarity scores, confidence calculations, categorical labels (e.g., "is_enum"), compatibility judgments, or pattern-based classifications; all returned data must be raw statistics and structural metadata only
 
+### Bonus: Pre-existing lint cleanup
+
+- [X] T043 (bonus) Fix 8 pre-existing ruff warnings in `tests/performance/` files: UP035 (`Callable` import from `typing` instead of `collections.abc` in `benchmark.py`), F401 (unused `BenchmarkResult` import in `report.py`), B023 (unbound loop variable in lambdas in `report.py`, `test_nfr001.py`, `test_nfr002.py`), I001 (unsorted imports in `test_nfr001.py`, `test_nfr002.py`). Register `performance` pytest mark in `pyproject.toml` to eliminate PytestUnknownMarkWarning. Result: `uv run ruff check src/ tests/` reports zero warnings; `uv run pytest tests/` reports zero warnings.
+
 ---
 
 ## Dependencies & Execution Order
