@@ -150,31 +150,19 @@ class TestNFR003DocumentationSize:
 
     Target: Generated documentation should be <1MB for 500-table databases.
 
-    Note: Size limits are enforced in the export_documentation MCP tool.
-    These tests validate the size checking mechanism works correctly.
+    Note: These tests are disabled as the documentation caching feature
+    has been removed in favor of data-exposure analysis tools (007-analysis-tools).
     """
 
+    @pytest.mark.skip(reason="Documentation caching feature removed (007-analysis-tools)")
     def test_documentation_size_warning_threshold(self):
         """NFR-003: Verify documentation size warning mechanism exists."""
-        from src.cache.storage import DocumentationStorage
+        pass
 
-        # Verify the class has size checking capability
-        assert hasattr(DocumentationStorage, 'get_total_size') or \
-               hasattr(DocumentationStorage, 'export_documentation'), \
-               "DocumentationStorage should have size tracking capability"
-
+    @pytest.mark.skip(reason="Documentation caching feature removed (007-analysis-tools)")
     def test_markdown_generation_is_efficient(self, tmp_path):
         """NFR-003: Verify markdown generation doesn't produce excessive output."""
-        from src.cache.storage import NFR_003_SIZE_LIMIT_BYTES, DocumentationStorage
-
-        # Create a storage instance
-        storage = DocumentationStorage(tmp_path)
-
-        # Verify storage can be instantiated
-        assert storage is not None
-
-        # Verify size limit constant is defined correctly
-        assert NFR_003_SIZE_LIMIT_BYTES == 1_000_000, "NFR-003 size limit should be 1MB"
+        pass
 
 
 # =============================================================================

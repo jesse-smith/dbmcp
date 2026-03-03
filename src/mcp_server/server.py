@@ -1,8 +1,8 @@
 """FastMCP server for Database Schema Explorer.
 
 This module implements the MCP server entry point. Tool definitions are in
-separate modules (schema_tools, query_tools, doc_tools) which register
-themselves via the shared `mcp` instance.
+separate modules (schema_tools, query_tools) which register themselves via
+the shared `mcp` instance.
 
 CRITICAL: Never use print() or stdout - it corrupts JSON-RPC messages.
 All logging goes to file and stderr only.
@@ -34,20 +34,13 @@ def get_connection_manager() -> ConnectionManager:
 # Import tool modules to register @mcp.tool() decorated functions.
 # These imports MUST come after mcp, logger, and get_connection_manager are defined,
 # since the tool modules import those symbols from this module.
-from src.mcp_server.doc_tools import (  # noqa: E402, F401
-    check_drift,
-    export_documentation,
-    load_cached_docs,
-)
 from src.mcp_server.query_tools import (  # noqa: E402, F401
-    analyze_column,
     execute_query,
     get_sample_data,
 )
 from src.mcp_server.schema_tools import (  # noqa: E402, F401
     connect_database,
     get_table_schema,
-    infer_relationships,
     list_schemas,
     list_tables,
 )
