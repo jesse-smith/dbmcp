@@ -69,14 +69,14 @@
 
 > **Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T018 [P] [US1] Write unit tests for `ColumnStatsCollector` in `tests/unit/test_column_stats.py`: basic stats (distinct_count, null_count, total_rows), numeric stats (min/max/mean/stddev), datetime stats (min/max/range/has_time_component), string stats (min/max/avg length, sample_values), column existence check, column filtering by name list and by LIKE pattern, edge cases (all-NULL column, zero-row table, empty pattern match)
-- [ ] T019 [P] [US1] Write integration tests for `get_column_info` MCP tool in `tests/integration/test_get_column_info.py`: all-columns request, column name list filter, column pattern filter, default schema behavior, invalid connection/table/column error responses, columns-takes-precedence-over-pattern behavior
+- [X] T018 [P] [US1] Write unit tests for `ColumnStatsCollector` in `tests/unit/test_column_stats.py`: basic stats (distinct_count, null_count, total_rows), numeric stats (min/max/mean/stddev), datetime stats (min/max/range/has_time_component), string stats (min/max/avg length, sample_values), column existence check, column filtering by name list and by LIKE pattern, edge cases (all-NULL column, zero-row table, empty pattern match)
+- [X] T019 [P] [US1] Write integration tests for `get_column_info` MCP tool in `tests/integration/test_get_column_info.py`: all-columns request, column name list filter, column pattern filter, default schema behavior, invalid connection/table/column error responses, columns-takes-precedence-over-pattern behavior
 
 ### Implementation for US1
 
-- [ ] T020 [US1] Implement `ColumnStatsCollector` class in `src/analysis/column_stats.py` — adapt SQL patterns from former `src/inference/column_stats.py` (basic stats, numeric stats, datetime stats, string stats, column existence) with support for batch column analysis and column filtering (name list or LIKE pattern); return `ColumnStatistics` model instances per data-model.md
-- [ ] T021 [US1] Implement `get_column_info` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, schema_name, columns, column_pattern), JSON response format, error handling for invalid connection/table/column
-- [ ] T022 [US1] Register `get_column_info` import in `src/mcp_server/server.py`
+- [X] T020 [US1] Implement `ColumnStatsCollector` class in `src/analysis/column_stats.py` — adapt SQL patterns from former `src/inference/column_stats.py` (basic stats, numeric stats, datetime stats, string stats, column existence) with support for batch column analysis and column filtering (name list or LIKE pattern); return `ColumnStatistics` model instances per data-model.md
+- [X] T021 [US1] Implement `get_column_info` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, schema_name, columns, column_pattern), JSON response format, error handling for invalid connection/table/column
+- [X] T022 [US1] Register `get_column_info` import in `src/mcp_server/server.py`
 - [ ] T023 [US1] Run unit and integration tests for US1, verify all pass (`uv run pytest tests/unit/test_column_stats.py tests/integration/test_get_column_info.py tests/unit/test_analysis_models.py -v`)
 
 **Checkpoint**: `get_column_info` tool functional end-to-end. All US1 acceptance scenarios (1-5) verified.

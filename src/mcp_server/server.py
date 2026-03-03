@@ -34,6 +34,9 @@ def get_connection_manager() -> ConnectionManager:
 # Import tool modules to register @mcp.tool() decorated functions.
 # These imports MUST come after mcp, logger, and get_connection_manager are defined,
 # since the tool modules import those symbols from this module.
+from src.mcp_server.analysis_tools import (  # noqa: E402, F401
+    get_column_info,
+)
 from src.mcp_server.query_tools import (  # noqa: E402, F401
     execute_query,
     get_sample_data,
