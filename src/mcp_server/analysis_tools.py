@@ -13,6 +13,7 @@ import json
 from sqlalchemy import text
 
 from src.analysis.column_stats import ColumnStatsCollector
+from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.mcp_server.server import get_connection_manager, mcp
 
@@ -182,6 +183,135 @@ async def find_pk_candidates(
             "table_name": table_name,
             "schema_name": schema_name,
             "candidates": [c.to_dict() for c in candidates],
+        }
+
+        return json.dumps(response)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "error_message": f"Unexpected error: {str(e)}",
+        })
+
+
+@mcp.tool()
+async def find_fk_candidates(
+    connection_id: str,
+    table_name: str,
+    column_name: str,
+    schema_name: str = "dbo",
+    target_schema: str | None = None,
+    target_tables: list[str] | None = None,
+    target_table_pattern: str | None = None,
+    pk_candidates_only: bool = True,
+    include_overlap: bool = False,
+    limit: int = 100,
+) -> str:
+    """Discover potential foreign key relationships for a source column.
+
+    Args:
+        connection_id: Connection ID from connect_database
+        table_name: Source table name
+        column_name: Source column name
+        schema_name: Source schema name (default: 'dbo')
+        target_schema: Filter targets to this schema. Defaults to source schema.
+        target_tables: Explicit list of target table names
+        target_table_pattern: SQL LIKE pattern for target table names
+        pk_candidates_only: Only compare against PK-candidate columns (default: True)
+        include_overlap: Compute value overlap metrics (default: False)
+        limit: Maximum candidates to return, 0 = no limit (default: 100)
+
+    Returns:
+        JSON string with status, source metadata, candidates list, and search info
+
+    Error conditions:
+        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
+        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
+        - Column not found: {"status": "error", "error_message": "Column '...' not found in table '...'"}
+        - No candidates: {"status": "success", "candidates": [], "total_found": 0} (not an error)
+    """
+    try:
+        conn_manager = get_connection_manager()
+        if connection_id not in conn_manager.connections:
+            return json.dumps({
+                "status": "error",
+                "error_message": f"Connection '{connection_id}' not found",
+            })
+
+        connection_info = conn_manager.connections[connection_id]
+        connection = connection_info["connection"]
+
+        # Verify table exists
+        table_exists_query = text("""
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+        """)
+        result = connection.execute(
+            table_exists_query,
+            {"schema_name": schema_name, "table_name": table_name},
+        )
+        if result.scalar() == 0:
+            return json.dumps({
+                "status": "error",
+                "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+            })
+
+        # Verify column exists and get data type
+        col_query = text("""
+            SELECT DATA_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+                AND COLUMN_NAME = :column_name
+        """)
+        col_result = connection.execute(
+            col_query,
+            {
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "column_name": column_name,
+            },
+        )
+        col_row = col_result.fetchone()
+        if col_row is None:
+            return json.dumps({
+                "status": "error",
+                "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
+            })
+
+        source_data_type = col_row[0]
+
+        search = FKCandidateSearch(
+            connection=connection,
+            source_schema=schema_name,
+            source_table=table_name,
+            source_column=column_name,
+            source_data_type=source_data_type,
+        )
+
+        fk_result = search.find_candidates(
+            target_schema=target_schema,
+            target_tables=target_tables,
+            target_table_pattern=target_table_pattern,
+            pk_candidates_only=pk_candidates_only,
+            include_overlap=include_overlap,
+            limit=limit,
+        )
+
+        response = {
+            "status": "success",
+            "source": {
+                "column_name": column_name,
+                "table_name": table_name,
+                "schema_name": schema_name,
+                "data_type": source_data_type,
+            },
+            "candidates": [c.to_dict() for c in fk_result.candidates],
+            "total_found": fk_result.total_found,
+            "was_limited": fk_result.was_limited,
+            "search_scope": fk_result.search_scope,
         }
 
         return json.dumps(response)

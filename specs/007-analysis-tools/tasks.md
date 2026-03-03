@@ -117,15 +117,15 @@
 
 > **Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T030 [P] [US3] Write unit tests for `FKCandidateSearch` in `tests/unit/test_fk_candidates.py`: known FK finds true target with PK filter on, PK filter disabled returns all columns, schema scoping (default to source schema), target table list filter, target table pattern filter, value overlap returns count+percentage, default limit of 100 with was_limited flag, high-cardinality column (>1M distinct values) times out after 30s and returns null overlap values with no error (NFR-006), empty result for no candidates, error cases
-- [ ] T031 [P] [US3] Write integration tests for `find_fk_candidates` MCP tool in `tests/integration/test_fk_candidates.py`: end-to-end with default settings, PK filter toggle, schema/table/pattern scoping, value overlap enabled, limit enforcement, empty result, error responses
+- [X] T030 [P] [US3] Write unit tests for `FKCandidateSearch` in `tests/unit/test_fk_candidates.py`: known FK finds true target with PK filter on, PK filter disabled returns all columns, schema scoping (default to source schema), target table list filter, target table pattern filter, value overlap returns count+percentage, default limit of 100 with was_limited flag, high-cardinality column (>1M distinct values) times out after 30s and returns null overlap values with no error (NFR-006), empty result for no candidates, error cases
+- [X] T031 [P] [US3] Write integration tests for `find_fk_candidates` MCP tool in `tests/integration/test_fk_candidates.py`: end-to-end with default settings, PK filter toggle, schema/table/pattern scoping, value overlap enabled, limit enforcement, empty result, error responses
 
 ### Implementation for US3
 
-- [ ] T032 [US3] Implement `FKCandidateSearch` class in `src/analysis/fk_candidates.py` — resolve target tables (apply schema/table/pattern filters, default to source schema), collect candidate columns (all or PK-only via `PKDiscovery`), gather structural metadata per candidate (constraints, indexes, nullability), optional value overlap via SQL INTERSECT (adapted from former `ValueOverlapAnalyzer._full_comparison`), apply limit, return `FKCandidateResult` per data-model.md
-- [ ] T033 [US3] Implement `find_fk_candidates` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, column_name, schema_name, target_schema, target_tables, target_table_pattern, pk_candidates_only, include_overlap, limit), JSON response format, error handling
-- [ ] T034 [US3] Register `find_fk_candidates` import in `src/mcp_server/server.py`
-- [ ] T035 [US3] Run unit and integration tests for US3, verify all pass (`uv run pytest tests/unit/test_fk_candidates.py tests/integration/test_fk_candidates.py -v`)
+- [X] T032 [US3] Implement `FKCandidateSearch` class in `src/analysis/fk_candidates.py` — resolve target tables (apply schema/table/pattern filters, default to source schema), collect candidate columns (all or PK-only via `PKDiscovery`), gather structural metadata per candidate (constraints, indexes, nullability), optional value overlap via SQL INTERSECT (adapted from former `ValueOverlapAnalyzer._full_comparison`), apply limit, return `FKCandidateResult` per data-model.md
+- [X] T033 [US3] Implement `find_fk_candidates` MCP tool function in `src/mcp_server/analysis_tools.py` per contracts/mcp-tools.md: parameters (connection_id, table_name, column_name, schema_name, target_schema, target_tables, target_table_pattern, pk_candidates_only, include_overlap, limit), JSON response format, error handling
+- [X] T034 [US3] Register `find_fk_candidates` import in `src/mcp_server/server.py`
+- [X] T035 [US3] Run unit and integration tests for US3, verify all pass (`uv run pytest tests/unit/test_fk_candidates.py tests/integration/test_fk_candidates.py -v`)
 
 **Checkpoint**: `find_fk_candidates` tool functional end-to-end. All US3 acceptance scenarios (1-9) verified.
 

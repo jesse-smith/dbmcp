@@ -35,6 +35,7 @@ def get_connection_manager() -> ConnectionManager:
 # These imports MUST come after mcp, logger, and get_connection_manager are defined,
 # since the tool modules import those symbols from this module.
 from src.mcp_server.analysis_tools import (  # noqa: E402, F401
+    find_fk_candidates,
     find_pk_candidates,
     get_column_info,
 )
