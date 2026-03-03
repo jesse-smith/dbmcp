@@ -47,66 +47,57 @@ async def get_column_info(
         - No columns match pattern: {"status": "success", "columns": [], "total_columns_analyzed": 0}
     """
     try:
-        # Get connection from connection manager
         conn_manager = get_connection_manager()
-        if connection_id not in conn_manager.connections:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Connection '{connection_id}' not found",
-            })
+        engine = conn_manager.get_engine(connection_id)
 
-        connection_info = conn_manager.connections[connection_id]
-        connection = connection_info["connection"]
+        with engine.connect() as connection:
+            # Verify table exists
+            table_exists_query = text("""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = :schema_name
+                    AND TABLE_NAME = :table_name
+            """)
+            result = connection.execute(
+                table_exists_query,
+                {"schema_name": schema_name, "table_name": table_name}
+            )
+            if result.scalar() == 0:
+                return json.dumps({
+                    "status": "error",
+                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                })
 
-        # Verify table exists
-        table_exists_query = text("""
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = :schema_name
-                AND TABLE_NAME = :table_name
-        """)
-        result = connection.execute(
-            table_exists_query,
-            {"schema_name": schema_name, "table_name": table_name}
-        )
-        if result.scalar() == 0:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-            })
+            # Create collector and gather statistics
+            collector = ColumnStatsCollector(
+                connection=connection,
+                schema_name=schema_name,
+                table_name=table_name,
+            )
 
-        # Create collector and gather statistics
-        collector = ColumnStatsCollector(
-            connection=connection,
-            schema_name=schema_name,
-            table_name=table_name,
-        )
+            column_stats = collector.get_columns_info(
+                columns=columns,
+                column_pattern=column_pattern,
+                sample_size=sample_size,
+            )
 
-        column_stats = collector.get_columns_info(
-            columns=columns,
-            column_pattern=column_pattern,
-            sample_size=sample_size,
-        )
+            # Build response
+            response = {
+                "status": "success",
+                "table_name": table_name,
+                "schema_name": schema_name,
+                "total_columns_analyzed": len(column_stats),
+                "columns": [stat.to_dict() for stat in column_stats],
+            }
 
-        # Build response
-        response = {
-            "status": "success",
-            "table_name": table_name,
-            "schema_name": schema_name,
-            "total_columns_analyzed": len(column_stats),
-            "columns": [stat.to_dict() for stat in column_stats],
-        }
-
-        return json.dumps(response, default=str)  # default=str handles datetime serialization
+            return json.dumps(response, default=str)
 
     except ValueError as e:
-        # Column not found error from collector
         return json.dumps({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        # Unexpected error
         return json.dumps({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
@@ -144,49 +135,48 @@ async def find_pk_candidates(
     """
     try:
         conn_manager = get_connection_manager()
-        if connection_id not in conn_manager.connections:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Connection '{connection_id}' not found",
-            })
+        engine = conn_manager.get_engine(connection_id)
 
-        connection_info = conn_manager.connections[connection_id]
-        connection = connection_info["connection"]
+        with engine.connect() as connection:
+            # Verify table exists
+            table_exists_query = text("""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = :schema_name
+                    AND TABLE_NAME = :table_name
+            """)
+            result = connection.execute(
+                table_exists_query,
+                {"schema_name": schema_name, "table_name": table_name},
+            )
+            if result.scalar() == 0:
+                return json.dumps({
+                    "status": "error",
+                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                })
 
-        # Verify table exists
-        table_exists_query = text("""
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = :schema_name
-                AND TABLE_NAME = :table_name
-        """)
-        result = connection.execute(
-            table_exists_query,
-            {"schema_name": schema_name, "table_name": table_name},
-        )
-        if result.scalar() == 0:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-            })
+            discovery = PKDiscovery(
+                connection=connection,
+                schema_name=schema_name,
+                table_name=table_name,
+            )
 
-        discovery = PKDiscovery(
-            connection=connection,
-            schema_name=schema_name,
-            table_name=table_name,
-        )
+            candidates = discovery.find_candidates(type_filter=type_filter)
 
-        candidates = discovery.find_candidates(type_filter=type_filter)
+            response = {
+                "status": "success",
+                "table_name": table_name,
+                "schema_name": schema_name,
+                "candidates": [c.to_dict() for c in candidates],
+            }
 
-        response = {
-            "status": "success",
-            "table_name": table_name,
-            "schema_name": schema_name,
-            "candidates": [c.to_dict() for c in candidates],
-        }
+            return json.dumps(response)
 
-        return json.dumps(response)
-
+    except ValueError as e:
+        return json.dumps({
+            "status": "error",
+            "error_message": str(e),
+        })
     except Exception as e:
         return json.dumps({
             "status": "error",
@@ -232,90 +222,89 @@ async def find_fk_candidates(
     """
     try:
         conn_manager = get_connection_manager()
-        if connection_id not in conn_manager.connections:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Connection '{connection_id}' not found",
-            })
+        engine = conn_manager.get_engine(connection_id)
 
-        connection_info = conn_manager.connections[connection_id]
-        connection = connection_info["connection"]
+        with engine.connect() as connection:
+            # Verify table exists
+            table_exists_query = text("""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = :schema_name
+                    AND TABLE_NAME = :table_name
+            """)
+            result = connection.execute(
+                table_exists_query,
+                {"schema_name": schema_name, "table_name": table_name},
+            )
+            if result.scalar() == 0:
+                return json.dumps({
+                    "status": "error",
+                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                })
 
-        # Verify table exists
-        table_exists_query = text("""
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = :schema_name
-                AND TABLE_NAME = :table_name
-        """)
-        result = connection.execute(
-            table_exists_query,
-            {"schema_name": schema_name, "table_name": table_name},
-        )
-        if result.scalar() == 0:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-            })
+            # Verify column exists and get data type
+            col_query = text("""
+                SELECT DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = :schema_name
+                    AND TABLE_NAME = :table_name
+                    AND COLUMN_NAME = :column_name
+            """)
+            col_result = connection.execute(
+                col_query,
+                {
+                    "schema_name": schema_name,
+                    "table_name": table_name,
+                    "column_name": column_name,
+                },
+            )
+            col_row = col_result.fetchone()
+            if col_row is None:
+                return json.dumps({
+                    "status": "error",
+                    "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
+                })
 
-        # Verify column exists and get data type
-        col_query = text("""
-            SELECT DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = :schema_name
-                AND TABLE_NAME = :table_name
-                AND COLUMN_NAME = :column_name
-        """)
-        col_result = connection.execute(
-            col_query,
-            {
-                "schema_name": schema_name,
-                "table_name": table_name,
-                "column_name": column_name,
-            },
-        )
-        col_row = col_result.fetchone()
-        if col_row is None:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
-            })
+            source_data_type = col_row[0]
 
-        source_data_type = col_row[0]
+            search = FKCandidateSearch(
+                connection=connection,
+                source_schema=schema_name,
+                source_table=table_name,
+                source_column=column_name,
+                source_data_type=source_data_type,
+            )
 
-        search = FKCandidateSearch(
-            connection=connection,
-            source_schema=schema_name,
-            source_table=table_name,
-            source_column=column_name,
-            source_data_type=source_data_type,
-        )
+            fk_result = search.find_candidates(
+                target_schema=target_schema,
+                target_tables=target_tables,
+                target_table_pattern=target_table_pattern,
+                pk_candidates_only=pk_candidates_only,
+                include_overlap=include_overlap,
+                limit=limit,
+            )
 
-        fk_result = search.find_candidates(
-            target_schema=target_schema,
-            target_tables=target_tables,
-            target_table_pattern=target_table_pattern,
-            pk_candidates_only=pk_candidates_only,
-            include_overlap=include_overlap,
-            limit=limit,
-        )
+            response = {
+                "status": "success",
+                "source": {
+                    "column_name": column_name,
+                    "table_name": table_name,
+                    "schema_name": schema_name,
+                    "data_type": source_data_type,
+                },
+                "candidates": [c.to_dict() for c in fk_result.candidates],
+                "total_found": fk_result.total_found,
+                "was_limited": fk_result.was_limited,
+                "search_scope": fk_result.search_scope,
+            }
 
-        response = {
-            "status": "success",
-            "source": {
-                "column_name": column_name,
-                "table_name": table_name,
-                "schema_name": schema_name,
-                "data_type": source_data_type,
-            },
-            "candidates": [c.to_dict() for c in fk_result.candidates],
-            "total_found": fk_result.total_found,
-            "was_limited": fk_result.was_limited,
-            "search_scope": fk_result.search_scope,
-        }
+            return json.dumps(response)
 
-        return json.dumps(response)
-
+    except ValueError as e:
+        return json.dumps({
+            "status": "error",
+            "error_message": str(e),
+        })
     except Exception as e:
         return json.dumps({
             "status": "error",

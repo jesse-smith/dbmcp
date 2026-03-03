@@ -10,16 +10,17 @@ Tests cover:
 - Edge cases (all-NULL column, zero-row table, empty pattern match)
 """
 
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, MagicMock
+from unittest.mock import MagicMock, Mock
+
+import pytest
 from sqlalchemy.engine import Connection
 
 from src.analysis.column_stats import ColumnStatsCollector
 from src.models.analysis import (
     ColumnStatistics,
-    NumericStats,
     DateTimeStats,
+    NumericStats,
     StringStats,
 )
 

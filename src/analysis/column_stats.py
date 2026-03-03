@@ -7,14 +7,13 @@ Adapts SQL patterns from former src/inference/column_stats.py with key differenc
 - No interpretive logic (raw statistics only)
 """
 
-from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from src.models.analysis import (
     ColumnStatistics,
-    NumericStats,
     DateTimeStats,
+    NumericStats,
     StringStats,
 )
 
@@ -416,8 +415,8 @@ class ColumnStatsCollector:
 
     def get_columns_info(
         self,
-        columns: Optional[list[str]] = None,
-        column_pattern: Optional[str] = None,
+        columns: list[str] | None = None,
+        column_pattern: str | None = None,
         sample_size: int = 10,
     ) -> list[ColumnStatistics]:
         """Collect statistics for multiple columns with optional filtering.

@@ -135,13 +135,13 @@
 
 **Purpose**: Full validation, performance, and quality gates.
 
-- [ ] T036 Run performance tests and verify NFR requirements met (`uv run pytest tests/performance/test_analysis_perf.py -v`)
-- [ ] T037 Run full test suite across all phases (`uv run pytest tests/ -v`) and verify zero failures
-- [ ] T038 Run linter (`uv run ruff check src/ tests/`) and verify zero warnings
-- [ ] T039 Run complexity check (`uv run complexipy src/`) and verify all functions under thresholds (cyclomatic <10, file <400 lines, function <50 lines)
-- [ ] T040 Verify existing active tools unchanged: run existing integration tests for connect_database, list_schemas, list_tables, get_table_schema, get_sample_data, execute_query (`uv run pytest tests/integration/test_discovery.py tests/integration/test_sample_data.py -v`)
-- [ ] T041 Final orphan scan: `grep -rn "InferredPurpose\|InferredFK\|InferenceFactors\|DocumentationCache\|inferred_purpose\|inferred_confidence\|src\.inference\|src\.cache\|doc_tools" src/ tests/` returns zero matches
-- [ ] T042 Manual code review: Verify analysis modules (`src/analysis/column_stats.py`, `src/analysis/pk_discovery.py`, `src/analysis/fk_candidates.py`) contain zero interpretive logic per FR-002 — no similarity scores, confidence calculations, categorical labels (e.g., "is_enum"), compatibility judgments, or pattern-based classifications; all returned data must be raw statistics and structural metadata only
+- [X] T036 Run performance tests and verify NFR requirements met (`uv run pytest tests/performance/test_analysis_perf.py -v`)
+- [X] T037 Run full test suite across all phases (`uv run pytest tests/ -v`) and verify zero failures
+- [X] T038 Run linter (`uv run ruff check src/ tests/`) and verify zero warnings
+- [X] T039 Run complexity check (`uv run complexipy src/`) and verify all functions under thresholds (cyclomatic <10, file <400 lines, function <50 lines)
+- [X] T040 Verify existing active tools unchanged: run existing integration tests for connect_database, list_schemas, list_tables, get_table_schema, get_sample_data, execute_query (`uv run pytest tests/integration/test_discovery.py tests/integration/test_sample_data.py -v`)
+- [X] T041 Final orphan scan: `grep -rn "InferredPurpose\|InferredFK\|InferenceFactors\|DocumentationCache\|inferred_purpose\|inferred_confidence\|src\.inference\|src\.cache\|doc_tools" src/ tests/` returns zero matches
+- [X] T042 Manual code review: Verify analysis modules (`src/analysis/column_stats.py`, `src/analysis/pk_discovery.py`, `src/analysis/fk_candidates.py`) contain zero interpretive logic per FR-002 — no similarity scores, confidence calculations, categorical labels (e.g., "is_enum"), compatibility judgments, or pattern-based classifications; all returned data must be raw statistics and structural metadata only
 
 ---
 

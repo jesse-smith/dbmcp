@@ -1,16 +1,15 @@
 """Unit tests for analysis data models."""
 
-import pytest
 from datetime import datetime
 
 from src.models.analysis import (
-    NumericStats,
-    DateTimeStats,
-    StringStats,
     ColumnStatistics,
-    PKCandidate,
+    DateTimeStats,
     FKCandidateData,
     FKCandidateResult,
+    NumericStats,
+    PKCandidate,
+    StringStats,
 )
 
 

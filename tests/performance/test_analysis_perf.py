@@ -6,7 +6,6 @@ SSD storage, under idle query load.
 """
 
 import pytest
-import time
 
 
 @pytest.mark.performance
