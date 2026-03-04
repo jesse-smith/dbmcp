@@ -62,7 +62,8 @@ class TestListSchemasMCPTool:
         result = await list_schemas("nonexistent_connection")
         data = json.loads(result)
 
-        assert "error" in data
+        assert data["status"] == "error"
+        assert "error_message" in data
 
 
 class TestListTablesMCPTool:
@@ -204,8 +205,8 @@ class TestLimitEnforcement:
         result = await list_tables("test123", limit=1500)
         data = json.loads(result)
 
-        assert "error" in data
-        assert "1000" in data["error"]
+        assert data["status"] == "error"
+        assert "1000" in data["error_message"]
 
     @pytest.mark.asyncio
     async def test_limit_error_on_zero(self):
@@ -215,4 +216,5 @@ class TestLimitEnforcement:
         result = await list_tables("test123", limit=0)
         data = json.loads(result)
 
-        assert "error" in data
+        assert data["status"] == "error"
+        assert "error_message" in data

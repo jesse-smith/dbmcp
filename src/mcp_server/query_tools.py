@@ -44,6 +44,7 @@ async def get_sample_data(
         JSON string with sample rows and metadata::
 
             {
+                "status": <"success" | "error">,
                 "sample_id": <string>,
                 "table_id": <string>,
                 "sample_size": <int>,
@@ -51,25 +52,24 @@ async def get_sample_data(
                 "sampling_method": <"top" | "tablesample" | "modulo">,
                 "rows": [<object>],
                 "truncated_columns": [<string>],
-                "sampled_at": <ISO 8601 string>
+                "sampled_at": <ISO 8601 string>,
+                "error_message": <string>            // on error only
             }
-
-    Error conditions:
-        - Invalid connection_id: {"error": "Connection '...' not found"}
-        - Invalid parameters: {"error": "<validation message>"}
     """
     try:
         # Validate sample_size
         if sample_size < 1 or sample_size > 1000:
             return json.dumps({
-                "error": "sample_size must be between 1 and 1000",
+                "status": "error",
+                "error_message": "sample_size must be between 1 and 1000",
             })
 
         # Validate sampling_method
         valid_methods = ["top", "tablesample", "modulo"]
         if sampling_method not in valid_methods:
             return json.dumps({
-                "error": f"sampling_method must be one of: {valid_methods}",
+                "status": "error",
+                "error_message": f"sampling_method must be one of: {valid_methods}",
             })
 
         # Parse sampling method enum
@@ -77,7 +77,8 @@ async def get_sample_data(
             method_enum = SamplingMethod(sampling_method.lower())
         except ValueError:
             return json.dumps({
-                "error": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
+                "status": "error",
+                "error_message": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
             })
 
         conn_manager = get_connection_manager()
@@ -94,6 +95,7 @@ async def get_sample_data(
         )
 
         return json.dumps({
+            "status": "success",
             "sample_id": sample.sample_id,
             "table_id": sample.table_id,
             "sample_size": sample.sample_size,
@@ -105,10 +107,10 @@ async def get_sample_data(
         })
 
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_sample_data")
-        return json.dumps({"error": f"Failed to get sample data: {str(e)}"})
+        return json.dumps({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
 
 
 # =============================================================================
