@@ -11,14 +11,14 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **SRLZ-01**: `toon-format` added as project dependency, pinned `>=0.9.0b1,<1.0.0`
 - [x] **SRLZ-02**: Wrapper module encapsulates `toon_format.encode()` calls, insulating codebase from library API changes
-- [ ] **SRLZ-03**: All 9 MCP tools return TOON-encoded string content (MCP JSON-RPC envelope unchanged)
+- [x] **SRLZ-03**: All 9 MCP tools return TOON-encoded string content (MCP JSON-RPC envelope unchanged)
 - [x] **SRLZ-04**: Non-primitive types (datetime, Decimal, Enum) pre-serialized before TOON encoding (no silent null coercion)
 
 ### Testing
 
 - [x] **TEST-01**: `parse_tool_response()` test helper abstracts deserialization across all test files
-- [ ] **TEST-02**: All existing test assertions updated to use test helper (no direct `json.loads` for tool responses in tests)
-- [ ] **TEST-03**: Integration tests verify TOON output decodes correctly for each tool's response shapes
+- [x] **TEST-02**: All existing test assertions updated to use test helper (no direct `json.loads` for tool responses in tests)
+- [x] **TEST-03**: Integration tests verify TOON output decodes correctly for each tool's response shapes
 
 ### Documentation
 
@@ -49,11 +49,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | SRLZ-01 | Phase 1 | Complete |
 | SRLZ-02 | Phase 1 | Complete |
-| SRLZ-03 | Phase 1 | Pending |
+| SRLZ-03 | Phase 1 | Complete |
 | SRLZ-04 | Phase 1 | Complete |
 | TEST-01 | Phase 1 | Complete |
-| TEST-02 | Phase 1 | Pending |
-| TEST-03 | Phase 1 | Pending |
+| TEST-02 | Phase 1 | Complete |
+| TEST-03 | Phase 1 | Complete |
 | DOCS-01 | Phase 1 | Pending |
 | DOCS-02 | Phase 2 | Pending |
 
