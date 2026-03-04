@@ -3,11 +3,10 @@
 Tools: get_sample_data, execute_query
 """
 
-import json
-
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import SamplingMethod
+from src.serialization import encode_response
 
 # =============================================================================
 # Sample Data Tools (User Story 4)
@@ -59,7 +58,7 @@ async def get_sample_data(
     try:
         # Validate sample_size
         if sample_size < 1 or sample_size > 1000:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": "sample_size must be between 1 and 1000",
             })
@@ -67,7 +66,7 @@ async def get_sample_data(
         # Validate sampling_method
         valid_methods = ["top", "tablesample", "modulo"]
         if sampling_method not in valid_methods:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": f"sampling_method must be one of: {valid_methods}",
             })
@@ -76,7 +75,7 @@ async def get_sample_data(
         try:
             method_enum = SamplingMethod(sampling_method.lower())
         except ValueError:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
             })
@@ -94,7 +93,7 @@ async def get_sample_data(
             columns=columns,
         )
 
-        return json.dumps({
+        return encode_response({
             "status": "success",
             "sample_id": sample.sample_id,
             "table_id": sample.table_id,
@@ -107,10 +106,10 @@ async def get_sample_data(
         })
 
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_sample_data")
-        return json.dumps({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
 
 
 # =============================================================================
@@ -157,19 +156,19 @@ async def execute_query(
     try:
         # Validate row_limit
         if row_limit < 1:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": "row_limit must be at least 1",
             })
         if row_limit > 10000:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": "row_limit cannot exceed 10000",
             })
 
         # Validate query_text
         if not query_text or not query_text.strip():
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": "query_text is required and cannot be empty",
             })
@@ -189,16 +188,16 @@ async def execute_query(
         # Get formatted results
         result = query_svc.get_query_results(query)
 
-        return json.dumps(result)
+        return encode_response(result)
 
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
         logger.exception("Error in execute_query")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Query execution failed: {type(e).__name__}: {str(e)}",
         })

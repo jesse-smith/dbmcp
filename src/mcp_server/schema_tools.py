@@ -3,13 +3,13 @@
 Tools: connect_database, list_schemas, list_tables, get_table_schema
 """
 
-import json
 from pathlib import Path
 
 from src.db.connection import ConnectionError
 from src.db.metadata import MetadataService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import AuthenticationMethod
+from src.serialization import encode_response
 
 
 def _validate_list_tables_params(
@@ -119,7 +119,7 @@ async def connect_database(
         try:
             auth_method = AuthenticationMethod(authentication_method.lower())
         except ValueError:
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
             })
@@ -149,7 +149,7 @@ async def connect_database(
 
         logger.info(f"Connected to {database} on {server}:{port}")
 
-        return json.dumps({
+        return encode_response({
             "connection_id": connection.connection_id,
             "status": "success",
             "message": f"Successfully connected to {database}",
@@ -159,19 +159,19 @@ async def connect_database(
 
     except ConnectionError as e:
         logger.error(f"Connection failed: {type(e).__name__}")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except ValueError as e:
         logger.error(f"Validation error: {e}")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
         logger.exception("Unexpected error in connect_database")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {type(e).__name__}: {str(e)}",
         })
@@ -215,7 +215,7 @@ async def list_schemas(connection_id: str) -> str:
         metadata_svc = _get_metadata_service(connection_id)
         schemas = metadata_svc.list_schemas(connection_id=connection_id)
 
-        return json.dumps({
+        return encode_response({
             "status": "success",
             "schemas": [
                 {
@@ -229,10 +229,10 @@ async def list_schemas(connection_id: str) -> str:
         })
 
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_schemas")
-        return json.dumps({"status": "error", "error_message": f"Failed to list schemas: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to list schemas: {str(e)}"})
 
 
 @mcp.tool()
@@ -295,7 +295,7 @@ async def list_tables(
     # Validate parameters with early return
     validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
     if validation_error is not None:
-        return json.dumps({"status": "error", "error_message": validation_error})
+        return encode_response({"status": "error", "error_message": validation_error})
 
     try:
         metadata_svc = _get_metadata_service(connection_id)
@@ -327,7 +327,7 @@ async def list_tables(
             _build_table_entry(t, output_mode, metadata_svc) for t in all_tables
         ]
 
-        return json.dumps({
+        return encode_response({
             "status": "success",
             "tables": table_list,
             "returned_count": len(all_tables),
@@ -338,10 +338,10 @@ async def list_tables(
         })
 
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_tables")
-        return json.dumps({"status": "error", "error_message": f"Failed to list tables: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to list tables: {str(e)}"})
 
 
 # =============================================================================
@@ -418,7 +418,7 @@ async def get_table_schema(
         metadata_svc = _get_metadata_service(connection_id)
 
         if not metadata_svc.table_exists(table_name, schema_name):
-            return json.dumps({
+            return encode_response({
                 "status": "error",
                 "error_message": f"Table '{schema_name}.{table_name}' not found",
             })
@@ -430,10 +430,10 @@ async def get_table_schema(
             include_relationships=include_relationships,
         )
 
-        return json.dumps({"status": "success", "table": schema})
+        return encode_response({"status": "success", "table": schema})
 
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_table_schema")
-        return json.dumps({"status": "error", "error_message": f"Failed to get table schema: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to get table schema: {str(e)}"})

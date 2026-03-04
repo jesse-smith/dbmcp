@@ -8,14 +8,13 @@ Provides three analysis tools:
 All tools expose raw statistics and structural metadata only — no interpretation.
 """
 
-import json
-
 from sqlalchemy import text
 
 from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.mcp_server.server import get_connection_manager, mcp
+from src.serialization import encode_response
 
 
 @mcp.tool()
@@ -107,7 +106,7 @@ async def get_column_info(
                 {"schema_name": schema_name, "table_name": table_name}
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return encode_response({
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
                 })
@@ -134,15 +133,15 @@ async def get_column_info(
                 "columns": [stat.to_dict() for stat in column_stats],
             }
 
-            return json.dumps(response, default=str)
+            return encode_response(response)
 
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })
@@ -218,7 +217,7 @@ async def find_pk_candidates(
                 {"schema_name": schema_name, "table_name": table_name},
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return encode_response({
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
                 })
@@ -238,15 +237,15 @@ async def find_pk_candidates(
                 "candidates": [c.to_dict() for c in candidates],
             }
 
-            return json.dumps(response)
+            return encode_response(response)
 
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })
@@ -346,7 +345,7 @@ async def find_fk_candidates(
                 {"schema_name": schema_name, "table_name": table_name},
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return encode_response({
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
                 })
@@ -369,7 +368,7 @@ async def find_fk_candidates(
             )
             col_row = col_result.fetchone()
             if col_row is None:
-                return json.dumps({
+                return encode_response({
                     "status": "error",
                     "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
                 })
@@ -407,15 +406,15 @@ async def find_fk_candidates(
                 "search_scope": fk_result.search_scope,
             }
 
-            return json.dumps(response)
+            return encode_response(response)
 
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })
