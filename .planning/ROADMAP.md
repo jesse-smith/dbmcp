@@ -44,10 +44,11 @@ Plans:
   2. The staleness test passes in the current codebase (baseline correctness after Phase 1 migration)
   3. CI runs the staleness test on every commit (no special invocation required -- it lives in the standard test suite)
   4. Staleness test module has 90%+ test coverage
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 02-01: TBD
+- [ ] 02-01-PLAN.md -- TDD: Docstring parser and field comparison utilities with meta-tests
+- [ ] 02-02-PLAN.md -- TDD: Parametrized staleness guard test over all 9 MCP tools
 
 ## Progress
 
@@ -57,4 +58,4 @@ Phases execute in numeric order: 1 -> 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Atomic TOON Migration | 0/3 | Not started | - |
-| 2. Staleness Guard | 0/? | Not started | - |
+| 2. Staleness Guard | 0/2 | Not started | - |
