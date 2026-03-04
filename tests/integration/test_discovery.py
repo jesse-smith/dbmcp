@@ -4,11 +4,11 @@ Tests for list_schemas, list_tables MCP tools.
 These tests require mocked MCP server responses.
 """
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.helpers import parse_tool_response
 from tests.utils import SAMPLE_SCHEMA_ROWS, SAMPLE_TABLE_ROWS, create_mock_engine
 
 
@@ -30,7 +30,7 @@ class TestListSchemasMCPTool:
             result = await list_schemas("test123")
 
             # Should be valid JSON
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert "schemas" in data
             assert "total_schemas" in data
 
@@ -46,7 +46,7 @@ class TestListSchemasMCPTool:
             mock_get_engine.return_value = mock_engine
 
             result = await list_schemas("test123")
-            data = json.loads(result)
+            data = parse_tool_response(result)
 
             # Each schema should have required fields
             for schema in data["schemas"]:
@@ -60,7 +60,7 @@ class TestListSchemasMCPTool:
         from src.mcp_server.server import list_schemas
 
         result = await list_schemas("nonexistent_connection")
-        data = json.loads(result)
+        data = parse_tool_response(result)
 
         assert data["status"] == "error"
         assert "error_message" in data
@@ -82,7 +82,7 @@ class TestListTablesMCPTool:
             mock_get_engine.return_value = mock_engine
 
             result = await list_tables("test123", schema_filter=["dbo"])
-            data = json.loads(result)
+            data = parse_tool_response(result)
 
             # All tables should be from dbo schema
             for table in data["tables"]:
@@ -102,7 +102,7 @@ class TestListTablesMCPTool:
             mock_get_engine.return_value = mock_engine
 
             result = await list_tables("test123", name_pattern="Customer%")
-            data = json.loads(result)
+            data = parse_tool_response(result)
 
             for table in data["tables"]:
                 assert table["table_name"].startswith("Customer")
@@ -121,7 +121,7 @@ class TestListTablesMCPTool:
             mock_get_engine.return_value = mock_engine
 
             result = await list_tables("test123", min_row_count=1000)
-            data = json.loads(result)
+            data = parse_tool_response(result)
 
             for table in data["tables"]:
                 assert table["row_count"] >= 1000
@@ -143,7 +143,7 @@ class TestOutputMode:
 
             # Get summary mode result
             summary_result = await list_tables("test123", output_mode="summary")
-            summary_data = json.loads(summary_result)
+            summary_data = parse_tool_response(summary_result)
 
             # Summary should not include columns
             for table in summary_data["tables"]:
@@ -171,7 +171,7 @@ class TestOutputMode:
                 mock_inspect.return_value = mock_inspector
 
                 detailed_result = await list_tables("test123", output_mode="detailed")
-                detailed_data = json.loads(detailed_result)
+                detailed_data = parse_tool_response(detailed_result)
 
                 # Detailed should include columns
                 if detailed_data["tables"]:
@@ -193,7 +193,7 @@ class TestLimitEnforcement:
             mock_get_engine.return_value = mock_engine
 
             result = await list_tables("test123", limit=2)
-            data = json.loads(result)
+            data = parse_tool_response(result)
 
             assert len(data["tables"]) <= 2
 
@@ -203,7 +203,7 @@ class TestLimitEnforcement:
         from src.mcp_server.server import list_tables
 
         result = await list_tables("test123", limit=1500)
-        data = json.loads(result)
+        data = parse_tool_response(result)
 
         assert data["status"] == "error"
         assert "1000" in data["error_message"]
@@ -214,7 +214,7 @@ class TestLimitEnforcement:
         from src.mcp_server.server import list_tables
 
         result = await list_tables("test123", limit=0)
-        data = json.loads(result)
+        data = parse_tool_response(result)
 
         assert data["status"] == "error"
         assert "error_message" in data

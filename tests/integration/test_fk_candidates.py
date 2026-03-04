@@ -5,10 +5,11 @@ Requires TEST_DB_SERVER, TEST_DB_DATABASE, TEST_DB_USERNAME, TEST_DB_PASSWORD
 environment variables.
 """
 
-import json
 import os
 
 import pytest
+
+from tests.helpers import parse_tool_response
 
 # Skip all integration tests if env vars not set
 pytestmark = pytest.mark.skipif(
@@ -38,7 +39,7 @@ def connection_id():
             trust_server_cert=True,
         )
     )
-    data = json.loads(result)
+    data = parse_tool_response(result)
     assert data["status"] == "success", f"Connection failed: {data}"
     return data["connection_id"]
 
@@ -55,7 +56,7 @@ class TestFindFKCandidatesBasic:
         """Default settings return candidates for a known FK column."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -75,7 +76,7 @@ class TestFindFKCandidatesBasic:
         """Each candidate has all required fields from FKCandidateData model."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -110,7 +111,7 @@ class TestPKFilterToggle:
         """pk_candidates_only=True only returns PK candidate columns."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -125,7 +126,7 @@ class TestPKFilterToggle:
         """pk_candidates_only=False may return more candidates."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result_on = json.loads(await find_fk_candidates(
+        result_on = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -133,7 +134,7 @@ class TestPKFilterToggle:
             pk_candidates_only=True,
         ))
 
-        result_off = json.loads(await find_fk_candidates(
+        result_off = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -159,7 +160,7 @@ class TestValueOverlap:
         """Default behavior does not include overlap fields."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -176,7 +177,7 @@ class TestValueOverlap:
         """include_overlap=True returns overlap count and percentage."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -205,7 +206,7 @@ class TestScopingFilters:
         """target_table_pattern filters target tables."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -222,7 +223,7 @@ class TestScopingFilters:
         """target_tables explicit list filters results."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -247,7 +248,7 @@ class TestLimitEnforcement:
         """Limit parameter caps the number of candidates."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -271,7 +272,7 @@ class TestErrorHandling:
         """Invalid connection_id returns error."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id="nonexistent",
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -285,7 +286,7 @@ class TestErrorHandling:
         """Nonexistent table returns error."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="NonexistentTable12345",
             column_name="SomeColumn",
@@ -299,7 +300,7 @@ class TestErrorHandling:
         """Nonexistent column returns error."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="NonexistentColumn12345",
@@ -314,7 +315,7 @@ class TestErrorHandling:
         """No candidates returns success with empty list, not error."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",
@@ -340,7 +341,7 @@ class TestDefaultSchema:
         """When no schema specified, defaults to 'dbo'."""
         from src.mcp_server.analysis_tools import find_fk_candidates
 
-        result = json.loads(await find_fk_candidates(
+        result = parse_tool_response(await find_fk_candidates(
             connection_id=connection_id,
             table_name="SalesOrderHeader",
             column_name="CustomerID",

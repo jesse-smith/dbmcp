@@ -4,13 +4,13 @@ Tests the complete flow of get_sample_data MCP tool with real database.
 Uses the SQLite example database for testing.
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
 from src.db.query import QueryService
 from src.models.schema import SamplingMethod
+from tests.helpers import parse_tool_response
 
 
 @pytest.fixture
@@ -189,7 +189,7 @@ class TestSampleDataMCPTool:
         )
 
         # Parse result
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         # Verify response structure
         assert "sample_id" in result
