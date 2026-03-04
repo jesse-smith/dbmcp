@@ -103,7 +103,15 @@ async def connect_database(
         tenant_id: Azure AD tenant ID for azure_ad_integrated auth (optional, default: None)
 
     Returns:
-        JSON string with connection details including connection_id
+        JSON string with connection details::
+
+            {
+                "connection_id": <string>,       // on success only
+                "status": <"connected" | "failed">,
+                "message": <string>,
+                "schema_count": <int>,           // on success only
+                "has_cached_docs": <bool>         // on success only
+            }
     """
     try:
         # Parse authentication method
@@ -184,7 +192,21 @@ async def list_schemas(connection_id: str) -> str:
         connection_id: Connection ID from connect_database
 
     Returns:
-        JSON string with schema list
+        JSON string with schema list::
+
+            {
+                "schemas": [
+                    {
+                        "schema_name": <string>,
+                        "table_count": <int>,
+                        "view_count": <int>
+                    }
+                ],
+                "total_schemas": <int>
+            }
+
+    Error conditions:
+        - Invalid connection_id: {"error": "Connection '...' not found"}
     """
     try:
         metadata_svc = _get_metadata_service(connection_id)
@@ -226,8 +248,8 @@ async def list_tables(
 
     Efficiently retrieves table metadata using SQL Server DMVs.
     Supports filtering by schema, name pattern, and minimum row count.
-    Supports pagination via offset parameter (T132).
-    Supports filtering by object type to include/exclude views (T133).
+    Supports pagination via offset parameter.
+    Supports filtering by object type to include/exclude views.
 
     Args:
         connection_id: Connection ID from connect_database
@@ -242,7 +264,31 @@ async def list_tables(
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
 
     Returns:
-        JSON string with table list and pagination metadata
+        JSON string with table list and pagination metadata::
+
+            {
+                "tables": [
+                    {
+                        "schema_name": <string>,
+                        "table_name": <string>,
+                        "table_type": <"table" | "view">,
+                        "row_count": <int>,
+                        "has_primary_key": <bool>,
+                        "last_modified": <ISO 8601 string | null>,
+                        "access_denied": <bool>,
+                        "columns": [...]             // detailed mode only
+                    }
+                ],
+                "returned_count": <int>,
+                "total_count": <int>,
+                "offset": <int>,
+                "limit": <int>,
+                "has_more": <bool>
+            }
+
+    Error conditions:
+        - Invalid connection_id: {"error": "Connection '...' not found"}
+        - Invalid parameters: {"error": "<validation message>"}
     """
     # Validate parameters with early return
     validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
@@ -321,7 +367,51 @@ async def get_table_schema(
         include_relationships: Include declared foreign keys (default: True)
 
     Returns:
-        JSON string with table schema details
+        JSON string with table schema details::
+
+            {
+                "table": {
+                    "table_name": <string>,
+                    "schema_name": <string>,
+                    "columns": [
+                        {
+                            "column_name": <string>,
+                            "ordinal_position": <int>,
+                            "data_type": <string>,
+                            "max_length": <int | null>,
+                            "is_nullable": <bool>,
+                            "default_value": <string | null>,
+                            "is_identity": <bool>,
+                            "is_computed": <bool>,
+                            "is_primary_key": <bool>,
+                            "is_foreign_key": <bool>
+                        }
+                    ],
+                    "indexes": [                     // if include_indexes=True
+                        {
+                            "index_name": <string>,
+                            "is_unique": <bool>,
+                            "is_primary_key": <bool>,
+                            "is_clustered": <bool>,
+                            "columns": [<string>],
+                            "included_columns": [<string>]
+                        }
+                    ],
+                    "foreign_keys": [                // if include_relationships=True
+                        {
+                            "constraint_name": <string | null>,
+                            "source_columns": [<string>],
+                            "target_schema": <string>,
+                            "target_table": <string>,
+                            "target_columns": [<string>]
+                        }
+                    ]
+                }
+            }
+
+    Error conditions:
+        - Table not found: {"error": "Table '...' not found"}
+        - Invalid connection_id: {"error": "Connection '...' not found"}
     """
     try:
         metadata_svc = _get_metadata_service(connection_id)

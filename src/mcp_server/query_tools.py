@@ -41,7 +41,22 @@ async def get_sample_data(
         columns: Optional list of column names to include (default: all columns)
 
     Returns:
-        JSON string with sample rows and metadata
+        JSON string with sample rows and metadata::
+
+            {
+                "sample_id": <string>,
+                "table_id": <string>,
+                "sample_size": <int>,
+                "actual_rows_returned": <int>,
+                "sampling_method": <"top" | "tablesample" | "modulo">,
+                "rows": [<object>],
+                "truncated_columns": [<string>],
+                "sampled_at": <ISO 8601 string>
+            }
+
+    Error conditions:
+        - Invalid connection_id: {"error": "Connection '...' not found"}
+        - Invalid parameters: {"error": "<validation message>"}
     """
     try:
         # Validate sample_size
@@ -110,7 +125,7 @@ async def execute_query(
     """Execute a SQL SELECT query and return results.
 
     Executes ad-hoc SELECT queries with automatic row limiting for safety.
-    Write operations (INSERT, UPDATE, DELETE) are blocked by default.
+    Write operations (INSERT, UPDATE, DELETE) are blocked.
     Results are returned as a structured JSON with columns and rows.
 
     Large text values (>1000 chars) and binary data are automatically truncated
@@ -118,21 +133,24 @@ async def execute_query(
 
     Args:
         connection_id: Connection ID from connect_database
-        query_text: SQL query to execute (SELECT only by default)
+        query_text: SQL query to execute (SELECT only)
         row_limit: Maximum rows to return, 1-10000 (default: 1000)
 
     Returns:
-        JSON string with query results including:
-        - status: 'success', 'blocked', or 'error'
-        - query_id: Unique identifier for this execution
-        - query_type: Detected query type (select, insert, update, delete, other)
-        - columns: List of column names (for SELECT)
-        - rows: Array of row objects (for SELECT)
-        - rows_returned: Number of rows in the response
-        - rows_available: Total rows available (if limit was applied)
-        - limited: Whether results were truncated due to row_limit
-        - execution_time_ms: Query execution time in milliseconds
-        - error_message: Error details if status is 'error' or 'blocked'
+        JSON string with query results::
+
+            {
+                "status": <"success" | "blocked" | "error">,
+                "query_id": <string>,
+                "query_type": <"select" | "insert" | "update" | "delete" | "other">,
+                "columns": [<string>],               // on success only
+                "rows": [<object>],                   // on success only
+                "rows_returned": <int>,
+                "rows_available": <int>,              // if limit was applied
+                "limited": <bool>,
+                "execution_time_ms": <float>,
+                "error_message": <string>             // on error/blocked only
+            }
     """
     try:
         # Validate row_limit
