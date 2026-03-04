@@ -1,27 +1,16 @@
 """Shared fixtures for integration tests.
 
-Centralizes fixtures previously duplicated across test_caching.py,
-test_sample_data.py, and test_fk_inference.py.
+Centralizes fixtures previously duplicated across test_sample_data.py.
 
 Note: These fixtures use dict-organized structures (tables by schema,
-columns by table) matching the DocumentationStorage API. The root
-conftest.py provides list-organized versions for unit tests.
+columns by table). The root conftest.py provides list-organized versions
+for unit tests.
 """
-
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from src.models.relationship import DeclaredFK, InferredFK, RelationshipType
+from src.models.relationship import DeclaredFK, RelationshipType
 from src.models.schema import Column, Schema, Table, TableType
-
-
-@pytest.fixture
-def temp_cache_dir():
-    """Create a temporary directory for cache storage."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
 
 
 @pytest.fixture
@@ -45,7 +34,7 @@ def sample_schemas():
 def sample_tables():
     """Sample table objects organized by schema name.
 
-    Returns a dict[str, list[Table]] matching the DocumentationStorage API.
+    Returns a dict[str, list[Table]] organized by schema.
     """
     return {
         "main": [
@@ -81,7 +70,7 @@ def sample_tables():
 def sample_columns():
     """Sample column objects organized by table ID.
 
-    Returns a dict[str, list[Column]] matching the DocumentationStorage API.
+    Returns a dict[str, list[Column]] organized by table.
     """
     return {
         "main.customers": [
@@ -113,22 +102,5 @@ def sample_declared_fks():
             target_column="customer_id",
             relationship_type=RelationshipType.DECLARED,
             constraint_name="fk_orders_customers",
-        ),
-    ]
-
-
-@pytest.fixture
-def sample_inferred_fks():
-    """Sample inferred foreign keys for integration testing."""
-    return [
-        InferredFK(
-            relationship_id="inferred_order_items_products",
-            source_table_id="main.order_items",
-            source_column="product_id",
-            target_table_id="main.products",
-            target_column="product_id",
-            relationship_type=RelationshipType.INFERRED,
-            confidence_score=0.92,
-            reasoning="Name match; PK target; type compatible",
         ),
     ]

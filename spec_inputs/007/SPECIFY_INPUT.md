@@ -1,0 +1,9 @@
+Rewrite the disabled inference tools as data-exposure tools. Remove `src/cache/` (storage, drift, doc_generator), `src/mcp_server/doc_tools.py`, `DocumentationCache` model, `InferredPurpose` enum, and `inferred_purpose`/`inferred_confidence` fields on `Column`. Remove `src/inference/` entirely. Clean up all references to removed code (imports, server.py registrations, tests).
+
+Replace with a new `src/analysis/` package containing: `column_stats.py` (per-column statistical queries — reuse logic from old `inference/column_stats.py`), `fk_metrics.py` (PK discovery + pairwise comparison metrics — name similarity, type compatibility, structural hints), `value_overlap.py` (data-level overlap between column pairs — reuse logic from old `inference/value_overlap.py`).
+
+Add two new MCP tools in `src/mcp_server/analysis_tools.py`:
+1. `get_column_info(connection_id, table_name, schema_name, columns: list[str] | None, name_pattern: str | None)` — returns per-column stats (distinct count, null%, type-specific stats for numeric/datetime/string, enum detection flag). Supports specifying multiple columns or filtering by LIKE pattern.
+2. `find_fk_candidates(connection_id, table_name, schema_name, column_name, target_schema: str | None, target_tables: list[str] | None, target_name_pattern: str | None, include_value_overlap: bool = False)` — single source column, returns raw comparison metrics per candidate PK (name similarity, type compatibility, structural hints, optionally value overlap). No pre-scored confidence or reasoning — raw metrics only.
+
+Replace `InferredFK`/`InferenceFactors` in `src/models/relationship.py` with a simpler `FKCandidateMetrics` dataclass holding raw metric values. Keep `DeclaredFK` unchanged. Remove old `infer_relationships` and `analyze_column` tool functions from schema_tools.py and query_tools.py.

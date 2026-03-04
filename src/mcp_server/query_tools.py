@@ -1,7 +1,6 @@
 """Query and data sampling MCP tools.
 
 Tools: get_sample_data, execute_query
-Hidden: analyze_column
 """
 
 import json
@@ -95,113 +94,6 @@ async def get_sample_data(
     except Exception as e:
         logger.exception("Error in get_sample_data")
         return json.dumps({"error": f"Failed to get sample data: {str(e)}"})
-
-
-# =============================================================================
-# Column Analysis Tools (User Story 5)
-# =============================================================================
-
-
-# @mcp.tool()  # Hidden: not useful in current form, kept for future refactoring
-async def analyze_column(
-    connection_id: str,
-    column_name: str,
-    table_name: str,
-    schema_name: str = "dbo",
-) -> str:
-    """Analyze a column to infer its purpose and characteristics.
-
-    Performs statistical analysis on a column to determine its likely purpose
-    (e.g., ID, enum, status, flag, amount, quantity, percentage, timestamp).
-    Returns type-specific statistics and a confidence score for the inference.
-
-    Useful for understanding cryptic column names like FLG_1, STATUS_CD, or AMT_3.
-
-    Args:
-        connection_id: Connection ID from connect_database
-        column_name: Name of the column to analyze
-        table_name: Table containing the column
-        schema_name: Schema name (default: 'dbo')
-
-    Returns:
-        JSON string with column analysis results including:
-        - inferred_purpose: The detected purpose (id, enum, status, flag, amount, quantity, percentage, timestamp, unknown)
-        - confidence: Confidence score (0.0-1.0)
-        - reasoning: Explanation of why this purpose was inferred
-        - is_enum: Whether the column appears to be an enumeration
-        - statistics: Type-specific statistics (numeric, datetime, or string)
-    """
-    try:
-        conn_manager = get_connection_manager()
-        engine = conn_manager.get_engine(connection_id)
-
-        # Import here to avoid circular imports
-        from src.inference.columns import ColumnAnalyzer
-
-        analyzer = ColumnAnalyzer(engine)
-        analysis = analyzer.analyze_column(
-            column_name=column_name,
-            table_name=table_name,
-            schema_name=schema_name,
-        )
-
-        # Build response with type-specific statistics
-        result = {
-            "column_name": analysis.column_name,
-            "table_name": analysis.table_name,
-            "schema_name": analysis.schema_name,
-            "data_type": analysis.data_type,
-            "inferred_purpose": analysis.inferred_purpose.value,
-            "confidence": analysis.confidence,
-            "reasoning": analysis.reasoning,
-            "is_enum": analysis.is_enum,
-            "distinct_count": analysis.distinct_count,
-            "null_count": analysis.null_count,
-            "null_percentage": analysis.null_percentage,
-            "total_rows": analysis.total_rows,
-            "analyzed_at": analysis.analyzed_at.isoformat(),
-        }
-
-        # Add type-specific statistics
-        if analysis.numeric_stats:
-            result["numeric_statistics"] = {
-                "min": analysis.numeric_stats.min_value,
-                "max": analysis.numeric_stats.max_value,
-                "mean": analysis.numeric_stats.mean_value,
-                "median": analysis.numeric_stats.median_value,
-                "std_dev": analysis.numeric_stats.std_dev,
-                "is_integer": analysis.numeric_stats.is_integer,
-            }
-
-        if analysis.datetime_stats:
-            result["datetime_statistics"] = {
-                "min_date": analysis.datetime_stats.min_date.isoformat() if analysis.datetime_stats.min_date else None,
-                "max_date": analysis.datetime_stats.max_date.isoformat() if analysis.datetime_stats.max_date else None,
-                "date_range_days": analysis.datetime_stats.date_range_days,
-                "has_time_component": analysis.datetime_stats.has_time_component,
-                "business_hours_percentage": analysis.datetime_stats.business_hours_percentage,
-            }
-
-        if analysis.string_stats:
-            result["string_statistics"] = {
-                "top_values": [
-                    {"value": v, "frequency": f}
-                    for v, f in analysis.string_stats.top_values
-                ],
-                "avg_length": analysis.string_stats.avg_length,
-                "min_length": analysis.string_stats.min_length,
-                "max_length": analysis.string_stats.max_length,
-                "all_uppercase": analysis.string_stats.all_uppercase,
-                "contains_numbers": analysis.string_stats.contains_numbers,
-            }
-
-        return json.dumps(result)
-
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-    except Exception as e:
-        logger.exception("Error in analyze_column")
-        return json.dumps({"error": f"Failed to analyze column: {str(e)}"})
 
 
 # =============================================================================

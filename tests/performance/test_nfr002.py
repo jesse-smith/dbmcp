@@ -20,7 +20,6 @@ from src.db.query import QueryService
 from src.models.schema import SamplingMethod
 from tests.performance.benchmark import Benchmark, assert_performance
 
-
 # NFR-002 threshold: 10 seconds for any table size
 NFR_002_THRESHOLD_MS = 10_000
 
@@ -237,7 +236,7 @@ class TestNFR002SampleDataPerformance:
             # Benchmark
             result = bench.run(
                 name=f"sample_{row_count}_rows",
-                func=lambda: service.get_sample_data(
+                func=lambda s=service: s.get_sample_data(
                     table_name="scaling_table",
                     schema_name="main",
                     sample_size=50,

@@ -335,7 +335,7 @@ def create_relationship_test_db(
             selected_dims = random.sample(dimension_tables, num_fks)
 
             # Build columns
-            columns = [f"id INTEGER PRIMARY KEY"]
+            columns = ["id INTEGER PRIMARY KEY"]
             for dim_table, dim_pk in selected_dims:
                 # FK column naming patterns
                 fk_column = random.choice([

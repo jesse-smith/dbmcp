@@ -25,20 +25,6 @@ class TableType(StrEnum):
     VIEW = "view"
 
 
-class InferredPurpose(StrEnum):
-    """Possible inferred purposes for columns."""
-
-    ID = "id"
-    ENUM = "enum"
-    STATUS = "status"
-    FLAG = "flag"
-    AMOUNT = "amount"
-    QUANTITY = "quantity"
-    PERCENTAGE = "percentage"
-    TIMESTAMP = "timestamp"
-    UNKNOWN = "unknown"
-
-
 class SamplingMethod(StrEnum):
     """Methods for sampling table data."""
 
@@ -162,7 +148,7 @@ class Table:
 
 @dataclass
 class Column:
-    """A table column with metadata and inferred purpose.
+    """A table column with metadata.
 
     Attributes:
         column_id: Unique identifier (table_id + column_name)
@@ -177,10 +163,6 @@ class Column:
         is_computed: Whether computed column
         is_primary_key: Whether part of primary key
         is_foreign_key: Whether declared as foreign key
-        distinct_count: Number of distinct values (if analyzed)
-        null_percentage: Percentage of NULL values (if analyzed)
-        inferred_purpose: Inferred column purpose
-        inferred_confidence: Confidence in inferred purpose
     """
 
     column_id: str
@@ -195,10 +177,6 @@ class Column:
     is_computed: bool = False
     is_primary_key: bool = False
     is_foreign_key: bool = False
-    distinct_count: int | None = None
-    null_percentage: float | None = None
-    inferred_purpose: InferredPurpose | None = None
-    inferred_confidence: float | None = None
 
 
 @dataclass
@@ -224,31 +202,6 @@ class Index:
     is_clustered: bool = False
     columns: list[str] = field(default_factory=list)
     included_columns: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DocumentationCache:
-    """Cached knowledge about a database.
-
-    Attributes:
-        cache_id: Same as connection_id
-        connection_id: Connection this cache represents
-        cache_dir: Local directory for markdown files
-        created_at: Initial cache creation timestamp
-        last_updated: Last cache update timestamp
-        schema_hash: Hash of all table/column names for drift detection
-        drift_detected: True if schema differs from cached
-        drift_summary: Human-readable drift description
-    """
-
-    cache_id: str
-    connection_id: str
-    cache_dir: str
-    created_at: datetime = field(default_factory=datetime.now)
-    last_updated: datetime = field(default_factory=datetime.now)
-    schema_hash: str = ""
-    drift_detected: bool = False
-    drift_summary: str | None = None
 
 
 @dataclass

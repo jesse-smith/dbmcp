@@ -27,9 +27,8 @@ from sqlalchemy import create_engine, text
 
 from src.db.metadata import MetadataService
 from src.db.query import QueryService
-from src.inference.relationships import ForeignKeyInferencer
 from src.models.schema import SamplingMethod
-from tests.performance.benchmark import Benchmark, BenchmarkResult
+from tests.performance.benchmark import Benchmark
 
 
 @dataclass
@@ -162,7 +161,7 @@ class PerformanceReportGenerator:
         """Run all performance benchmarks."""
         self._run_metadata_benchmarks()
         self._run_sample_data_benchmarks()
-        self._run_inference_benchmarks()
+        # self._run_inference_benchmarks()  # Disabled: inference feature removed (007-analysis-tools)
         self._validate_nfrs()
 
     def _run_metadata_benchmarks(self):
@@ -188,7 +187,7 @@ class PerformanceReportGenerator:
 
             result = self.benchmark.run(
                 name=f"list_tables_{size}",
-                func=lambda: service.list_tables(limit=1000),
+                func=lambda s=service: s.list_tables(limit=1000),
                 iterations=3,
             )
 
@@ -237,7 +236,7 @@ class PerformanceReportGenerator:
 
             result = self.benchmark.run(
                 name=f"sample_data_{size}_rows",
-                func=lambda: service.get_sample_data(
+                func=lambda s=service: s.get_sample_data(
                     table_name="sample_table",
                     schema_name="main",
                     sample_size=50,
@@ -258,58 +257,12 @@ class PerformanceReportGenerator:
 
         self.report.scaling_data["Sample Data Retrieval"] = scaling_data
 
-    def _run_inference_benchmarks(self):
-        """Run FK inference benchmarks."""
-        sizes = [25, 50]
-        scaling_data = []
-
-        for size in sizes:
-            engine = create_engine("sqlite:///:memory:", echo=False)
-            with engine.connect() as conn:
-                # Create dimension tables
-                for i in range(5):
-                    conn.execute(text(f"""
-                        CREATE TABLE dim_{i} (
-                            id INTEGER PRIMARY KEY,
-                            name TEXT
-                        )
-                    """))
-
-                # Create fact tables with FK-like columns
-                for i in range(size - 5):
-                    conn.execute(text(f"""
-                        CREATE TABLE fact_{i:04d} (
-                            id INTEGER PRIMARY KEY,
-                            dim_0_id INTEGER,
-                            dim_1_id INTEGER,
-                            amount REAL
-                        )
-                    """))
-                conn.commit()
-
-            inferencer = ForeignKeyInferencer(engine, threshold=0.50)
-
-            result = self.benchmark.run(
-                name=f"inference_{size}_tables",
-                func=lambda: inferencer.infer_relationships(
-                    table_name="fact_0000",
-                    schema_name="main",
-                    max_candidates=20,
-                ),
-                iterations=3,
-            )
-
-            scaling_data.append({
-                "table_count": size,
-                "mean_ms": result.mean_ms,
-                "p95_ms": result.p95_ms,
-                "memory_mb": result.memory_peak_mb,
-            })
-
-            self.report.benchmarks.append(result.to_dict())
-            engine.dispose()
-
-        self.report.scaling_data["FK Inference"] = scaling_data
+    # def _run_inference_benchmarks(self):
+    #     """Run FK inference benchmarks.
+    #
+    #     Note: Disabled as inference feature removed (007-analysis-tools).
+    #     """
+    #     pass
 
     def _validate_nfrs(self):
         """Validate NFR compliance based on benchmark results."""
