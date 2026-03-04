@@ -22,7 +22,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Documentation
 
-- [ ] **DOCS-01**: All 9 tool docstrings updated to document TOON response format (structure, types, enum literals)
+- [x] **DOCS-01**: All 9 tool docstrings updated to document TOON response format (structure, types, enum literals)
 - [ ] **DOCS-02**: Staleness test validates docstring field declarations match actual response schemas
 
 ## v2 Requirements
@@ -54,7 +54,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-01 | Phase 1 | Complete |
 | TEST-02 | Phase 1 | Complete |
 | TEST-03 | Phase 1 | Complete |
-| DOCS-01 | Phase 1 | Pending |
+| DOCS-01 | Phase 1 | Complete |
 | DOCS-02 | Phase 2 | Pending |
 
 **Coverage:**
