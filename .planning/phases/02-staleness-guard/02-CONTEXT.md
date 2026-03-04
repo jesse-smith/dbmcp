@@ -16,7 +16,7 @@ An automated test that catches docstring-schema drift on every commit. When a to
 ### Detection strategy
 - Call each of the 9 tools with mocked DB connections to get real response dicts
 - Extract declared fields from docstring Returns sections and compare against actual response keys
-- Cover all 9 tools including the 3 currently-hidden analysis tools (get_column_info, find_pk_candidates, find_fk_candidates) — catches drift if they're re-enabled
+- Cover all 9 active tools (all have @mcp.tool() decorators)
 
 ### Tool coverage
 - All 9 tools: connect_database, list_schemas, list_tables, get_table_schema, get_sample_data, execute_query, get_column_info, find_pk_candidates, find_fk_candidates
