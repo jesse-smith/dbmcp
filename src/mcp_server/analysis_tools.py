@@ -29,6 +29,15 @@ async def get_column_info(
 ) -> str:
     """Retrieve per-column statistical profiles for a table.
 
+    **EXPERIMENTAL** — Statistics are based on common practices but have not been
+    battle-tested for utility. Use as a starting point for investigation, not as
+    definitive answers.
+
+    Computes row counts, distinct counts, null counts/percentages, and type-specific
+    statistics for each column. Numeric columns get min/max/mean/stddev. Datetime
+    columns get min/max dates, range in days, and whether a time component is present.
+    String columns get min/max/avg length and a sample of top frequent values.
+
     Args:
         connection_id: Connection ID from connect_database
         table_name: Table name to analyze
@@ -38,7 +47,42 @@ async def get_column_info(
         sample_size: Number of top frequent value samples for string columns (default: 10)
 
     Returns:
-        JSON string with status, table/schema metadata, and column statistics
+        JSON string with status, table/schema metadata, and column statistics::
+
+            {
+                "status": <"success" | "error">,
+                "table_name": <string>,
+                "schema_name": <string>,
+                "total_columns_analyzed": <int>,
+                "columns": [
+                    {
+                        "column_name": <string>,
+                        "data_type": <string>,
+                        "total_rows": <int>,
+                        "distinct_count": <int>,
+                        "null_count": <int>,
+                        "null_percentage": <float>,
+                        "numeric_stats": {          // numeric columns only
+                            "min_value": <float | null>,
+                            "max_value": <float | null>,
+                            "mean_value": <float | null>,
+                            "std_dev": <float | null>
+                        },
+                        "datetime_stats": {         // datetime columns only
+                            "min_date": <ISO 8601 string | null>,
+                            "max_date": <ISO 8601 string | null>,
+                            "date_range_days": <int | null>,
+                            "has_time_component": <bool>
+                        },
+                        "string_stats": {           // string columns only
+                            "min_length": <int | null>,
+                            "max_length": <int | null>,
+                            "avg_length": <float | null>,
+                            "sample_values": [[<string>, <int>], ...]
+                        }
+                    }
+                ]
+            }
 
     Error conditions:
         - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
@@ -113,9 +157,16 @@ async def find_pk_candidates(
 ) -> str:
     """Identify columns that meet primary key candidacy criteria.
 
+    **EXPERIMENTAL** — Results are based on common heuristics but have not been
+    battle-tested for utility. They may contain false positives or exclude valid
+    candidates. Use as a starting point for investigation, not as definitive answers.
+
     Discovers PK candidates via two approaches:
-    1. Constraint-backed: Columns with PK or UNIQUE constraints
+    1. Constraint-backed: Columns with declared PK or UNIQUE constraints
     2. Structural: Columns that are unique, non-null, and match the type filter
+
+    Does not detect composite keys. Structural uniqueness checks query the full table
+    and may be slow on very large tables.
 
     Args:
         connection_id: Connection ID from connect_database
@@ -126,7 +177,24 @@ async def find_pk_candidates(
             Set to empty list to disable type filtering.
 
     Returns:
-        JSON string with status, table/schema metadata, and candidates list
+        JSON string with status, table/schema metadata, and candidates list::
+
+            {
+                "status": <"success" | "error">,
+                "table_name": <string>,
+                "schema_name": <string>,
+                "candidates": [
+                    {
+                        "column_name": <string>,
+                        "data_type": <string>,
+                        "is_constraint_backed": <bool>,
+                        "constraint_type": <"PRIMARY KEY" | "UNIQUE" | null>,
+                        "is_unique": <bool>,    // all values distinct
+                        "is_non_null": <bool>,  // no nulls
+                        "is_pk_type": <bool>    // data_type matches type_filter
+                    }
+                ]
+            }
 
     Error conditions:
         - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
@@ -199,6 +267,16 @@ async def find_fk_candidates(
 ) -> str:
     """Discover potential foreign key relationships for a source column.
 
+    **EXPERIMENTAL** — Results are based on common heuristics but have not been
+    battle-tested for utility. They may contain false positives or exclude valid
+    candidates. Use as a starting point for investigation, not as definitive answers.
+
+    Searches for target columns that could be the referenced side of a foreign key
+    relationship. Matches by compatible data type. By default only considers target
+    columns that are PK candidates (constraint-backed or structurally unique);
+    set pk_candidates_only=False to broaden the search to all type-compatible columns.
+    Optionally computes value overlap between source and target via SQL INTERSECT.
+
     Args:
         connection_id: Connection ID from connect_database
         table_name: Source table name
@@ -212,7 +290,38 @@ async def find_fk_candidates(
         limit: Maximum candidates to return, 0 = no limit (default: 100)
 
     Returns:
-        JSON string with status, source metadata, candidates list, and search info
+        JSON string with status, source metadata, candidates list, and search info::
+
+            {
+                "status": <"success" | "error">,
+                "source": {
+                    "column_name": <string>,
+                    "table_name": <string>,
+                    "schema_name": <string>,
+                    "data_type": <string>
+                },
+                "candidates": [
+                    {
+                        "source_column": <string>,
+                        "source_table": <string>,
+                        "source_schema": <string>,
+                        "source_data_type": <string>,
+                        "target_column": <string>,
+                        "target_table": <string>,
+                        "target_schema": <string>,
+                        "target_data_type": <string>,
+                        "target_is_primary_key": <bool>,
+                        "target_is_unique": <bool>,
+                        "target_is_nullable": <bool>,
+                        "target_has_index": <bool>,
+                        "overlap_count": <int>,         // only when include_overlap=True
+                        "overlap_percentage": <float>    // only when include_overlap=True
+                    }
+                ],
+                "total_found": <int>,
+                "was_limited": <bool>,          // true if results truncated by limit
+                "search_scope": <string>        // human-readable filter summary
+            }
 
     Error conditions:
         - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
