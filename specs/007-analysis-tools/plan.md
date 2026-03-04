@@ -1,5 +1,7 @@
 # Implementation Plan: Data-Exposure Analysis Tools
 
+> **STATUS: COMPLETE** | Merged: 2026-03-03 | Branch: `007-analysis-tools`
+
 **Branch**: `007-analysis-tools` | **Date**: 2026-03-03 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/007-analysis-tools/spec.md`
 

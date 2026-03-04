@@ -11,6 +11,7 @@ Central registry of all features and their current status.
 | 004 | Azure AD Integrated Auth | `004-azure-ad-integrated-auth` | Complete | 2026-02-26 | Token-based Azure AD auth via azure-identity |
 | 005 | Denylist Query Validation | `005-denylist-query-validation` | Complete | 2026-02-26 | AST-based sqlglot validation, 22 safe stored procs |
 | 006 | Codebase Refactor | `006-codebase-refactor` | Complete | 2026-02-27 | 5 module splits, test consolidation, cognitive complexity reduction |
+| 007 | Data-Exposure Analysis Tools | `007-analysis-tools` | Complete | 2026-03-03 | Column stats, PK/FK candidate discovery |
 
 ## Status Definitions
 

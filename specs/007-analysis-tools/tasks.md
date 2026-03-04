@@ -1,5 +1,7 @@
 # Tasks: Data-Exposure Analysis Tools
 
+> **STATUS: COMPLETE** | Merged: 2026-03-03 | Branch: `007-analysis-tools`
+
 **Input**: Design documents from `/specs/007-analysis-tools/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/mcp-tools.md
 

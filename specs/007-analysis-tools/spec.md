@@ -1,8 +1,10 @@
 # Feature Specification: Data-Exposure Analysis Tools
 
+> **STATUS: COMPLETE** | Merged: 2026-03-03 | Branch: `007-analysis-tools`
+
 **Feature Branch**: `007-analysis-tools`
 **Created**: 2026-03-03
-**Status**: Draft
+**Status**: Complete
 
 ## Clarifications
 
