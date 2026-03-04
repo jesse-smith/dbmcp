@@ -40,20 +40,18 @@ async def get_sample_data(
         columns: Optional list of column names to include (default: all columns)
 
     Returns:
-        JSON string with sample rows and metadata::
+        TOON-encoded string with sample rows and metadata:
 
-            {
-                "status": <"success" | "error">,
-                "sample_id": <string>,
-                "table_id": <string>,
-                "sample_size": <int>,
-                "actual_rows_returned": <int>,
-                "sampling_method": <"top" | "tablesample" | "modulo">,
-                "rows": [<object>],
-                "truncated_columns": [<string>],
-                "sampled_at": <ISO 8601 string>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            sample_id: string
+            table_id: string
+            sample_size: int
+            actual_rows_returned: int
+            sampling_method: "top" | "tablesample" | "modulo"
+            rows: list of object
+            truncated_columns: list of string
+            sampled_at: ISO 8601 string
+            error_message: string              // on error only
     """
     try:
         # Validate sample_size
@@ -138,20 +136,18 @@ async def execute_query(
         row_limit: Maximum rows to return, 1-10000 (default: 1000)
 
     Returns:
-        JSON string with query results::
+        TOON-encoded string with query results:
 
-            {
-                "status": <"success" | "blocked" | "error">,
-                "query_id": <string>,
-                "query_type": <"select" | "insert" | "update" | "delete" | "other">,
-                "columns": [<string>],               // on success only
-                "rows": [<object>],                   // on success only
-                "rows_returned": <int>,
-                "rows_available": <int>,              // if limit was applied
-                "limited": <bool>,
-                "execution_time_ms": <float>,
-                "error_message": <string>             // on error/blocked only
-            }
+            status: "success" | "blocked" | "error"
+            query_id: string
+            query_type: "select" | "insert" | "update" | "delete" | "other"
+            columns: list of string            // on success only
+            rows: list of object               // on success only
+            rows_returned: int
+            rows_available: int                // if limit was applied
+            limited: bool
+            execution_time_ms: float
+            error_message: string              // on error/blocked only
     """
     try:
         # Validate row_limit

@@ -46,48 +46,41 @@ async def get_column_info(
         sample_size: Number of top frequent value samples for string columns (default: 10)
 
     Returns:
-        JSON string with status, table/schema metadata, and column statistics::
+        TOON-encoded string with status, table/schema metadata, and column statistics:
 
-            {
-                "status": <"success" | "error">,
-                "table_name": <string>,
-                "schema_name": <string>,
-                "total_columns_analyzed": <int>,
-                "columns": [
-                    {
-                        "column_name": <string>,
-                        "data_type": <string>,
-                        "total_rows": <int>,
-                        "distinct_count": <int>,
-                        "null_count": <int>,
-                        "null_percentage": <float>,
-                        "numeric_stats": {          // numeric columns only
-                            "min_value": <float | null>,
-                            "max_value": <float | null>,
-                            "mean_value": <float | null>,
-                            "std_dev": <float | null>
-                        },
-                        "datetime_stats": {         // datetime columns only
-                            "min_date": <ISO 8601 string | null>,
-                            "max_date": <ISO 8601 string | null>,
-                            "date_range_days": <int | null>,
-                            "has_time_component": <bool>
-                        },
-                        "string_stats": {           // string columns only
-                            "min_length": <int | null>,
-                            "max_length": <int | null>,
-                            "avg_length": <float | null>,
-                            "sample_values": [[<string>, <int>], ...]
-                        }
-                    }
-                ]
-            }
+            status: "success" | "error"
+            table_name: string
+            schema_name: string
+            total_columns_analyzed: int
+            columns: list
+                column_name: string
+                data_type: string
+                total_rows: int
+                distinct_count: int
+                null_count: int
+                null_percentage: float
+                numeric_stats: object          // numeric columns only
+                    min_value: float | null
+                    max_value: float | null
+                    mean_value: float | null
+                    std_dev: float | null
+                datetime_stats: object         // datetime columns only
+                    min_date: ISO 8601 string | null
+                    max_date: ISO 8601 string | null
+                    date_range_days: int | null
+                    has_time_component: bool
+                string_stats: object           // string columns only
+                    min_length: int | null
+                    max_length: int | null
+                    avg_length: float | null
+                    sample_values: list of [string, int] pairs
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - Column not found (explicit list): {"status": "error", "error_message": "Column(s) not found: ..."}
-        - No columns match pattern: {"status": "success", "columns": [], "total_columns_analyzed": 0}
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - Column not found (explicit list): returns status "error" with error_message
+        - No columns match pattern: returns status "success" with empty columns list
     """
     try:
         conn_manager = get_connection_manager()
@@ -176,29 +169,25 @@ async def find_pk_candidates(
             Set to empty list to disable type filtering.
 
     Returns:
-        JSON string with status, table/schema metadata, and candidates list::
+        TOON-encoded string with status, table/schema metadata, and candidates list:
 
-            {
-                "status": <"success" | "error">,
-                "table_name": <string>,
-                "schema_name": <string>,
-                "candidates": [
-                    {
-                        "column_name": <string>,
-                        "data_type": <string>,
-                        "is_constraint_backed": <bool>,
-                        "constraint_type": <"PRIMARY KEY" | "UNIQUE" | null>,
-                        "is_unique": <bool>,    // all values distinct
-                        "is_non_null": <bool>,  // no nulls
-                        "is_pk_type": <bool>    // data_type matches type_filter
-                    }
-                ]
-            }
+            status: "success" | "error"
+            table_name: string
+            schema_name: string
+            candidates: list
+                column_name: string
+                data_type: string
+                is_constraint_backed: bool
+                constraint_type: "PRIMARY KEY" | "UNIQUE" | null
+                is_unique: bool                // all values distinct
+                is_non_null: bool              // no nulls
+                is_pk_type: bool               // data_type matches type_filter
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - No candidates found: {"status": "success", "candidates": []} (not an error)
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - No candidates found: returns status "success" with empty candidates list
     """
     try:
         conn_manager = get_connection_manager()
@@ -289,44 +278,39 @@ async def find_fk_candidates(
         limit: Maximum candidates to return, 0 = no limit (default: 100)
 
     Returns:
-        JSON string with status, source metadata, candidates list, and search info::
+        TOON-encoded string with status, source metadata, candidates list, and search info:
 
-            {
-                "status": <"success" | "error">,
-                "source": {
-                    "column_name": <string>,
-                    "table_name": <string>,
-                    "schema_name": <string>,
-                    "data_type": <string>
-                },
-                "candidates": [
-                    {
-                        "source_column": <string>,
-                        "source_table": <string>,
-                        "source_schema": <string>,
-                        "source_data_type": <string>,
-                        "target_column": <string>,
-                        "target_table": <string>,
-                        "target_schema": <string>,
-                        "target_data_type": <string>,
-                        "target_is_primary_key": <bool>,
-                        "target_is_unique": <bool>,
-                        "target_is_nullable": <bool>,
-                        "target_has_index": <bool>,
-                        "overlap_count": <int>,         // only when include_overlap=True
-                        "overlap_percentage": <float>    // only when include_overlap=True
-                    }
-                ],
-                "total_found": <int>,
-                "was_limited": <bool>,          // true if results truncated by limit
-                "search_scope": <string>        // human-readable filter summary
-            }
+            status: "success" | "error"
+            source: object
+                column_name: string
+                table_name: string
+                schema_name: string
+                data_type: string
+            candidates: list
+                source_column: string
+                source_table: string
+                source_schema: string
+                source_data_type: string
+                target_column: string
+                target_table: string
+                target_schema: string
+                target_data_type: string
+                target_is_primary_key: bool
+                target_is_unique: bool
+                target_is_nullable: bool
+                target_has_index: bool
+                overlap_count: int             // only when include_overlap=True
+                overlap_percentage: float      // only when include_overlap=True
+            total_found: int
+            was_limited: bool                  // true if results truncated by limit
+            search_scope: string               // human-readable filter summary
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - Column not found: {"status": "error", "error_message": "Column '...' not found in table '...'"}
-        - No candidates: {"status": "success", "candidates": [], "total_found": 0} (not an error)
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - Column not found: returns status "error" with error_message
+        - No candidates: returns status "success" with empty candidates list
     """
     try:
         conn_manager = get_connection_manager()

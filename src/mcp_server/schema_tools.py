@@ -103,16 +103,14 @@ async def connect_database(
         tenant_id: Azure AD tenant ID for azure_ad_integrated auth (optional, default: None)
 
     Returns:
-        JSON string with connection details::
+        TOON-encoded string with connection details:
 
-            {
-                "connection_id": <string>,       // on success only
-                "status": <"success" | "error">,
-                "message": <string>,             // on success only
-                "schema_count": <int>,           // on success only
-                "has_cached_docs": <bool>,        // on success only
-                "error_message": <string>         // on error only
-            }
+            status: "success" | "error"
+            connection_id: string              // on success only
+            message: string                    // on success only
+            schema_count: int                  // on success only
+            has_cached_docs: bool              // on success only
+            error_message: string              // on error only
     """
     try:
         # Parse authentication method
@@ -193,23 +191,18 @@ async def list_schemas(connection_id: str) -> str:
         connection_id: Connection ID from connect_database
 
     Returns:
-        JSON string with schema list::
+        TOON-encoded string with schema list:
 
-            {
-                "status": <"success" | "error">,
-                "schemas": [
-                    {
-                        "schema_name": <string>,
-                        "table_count": <int>,
-                        "view_count": <int>
-                    }
-                ],
-                "total_schemas": <int>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            total_schemas: int
+            schemas: list
+                schema_name: string
+                table_count: int
+                view_count: int
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
+        - Invalid connection_id: returns status "error" with error_message
     """
     try:
         metadata_svc = _get_metadata_service(connection_id)
@@ -268,29 +261,24 @@ async def list_tables(
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
 
     Returns:
-        JSON string with table list and pagination metadata::
+        TOON-encoded string with table list and pagination metadata:
 
-            {
-                "status": <"success" | "error">,
-                "tables": [
-                    {
-                        "schema_name": <string>,
-                        "table_name": <string>,
-                        "table_type": <"table" | "view">,
-                        "row_count": <int>,
-                        "has_primary_key": <bool>,
-                        "last_modified": <ISO 8601 string | null>,
-                        "access_denied": <bool>,
-                        "columns": [...]             // detailed mode only
-                    }
-                ],
-                "returned_count": <int>,
-                "total_count": <int>,
-                "offset": <int>,
-                "limit": <int>,
-                "has_more": <bool>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            returned_count: int
+            total_count: int
+            offset: int
+            limit: int
+            has_more: bool
+            tables: list
+                schema_name: string
+                table_name: string
+                table_type: "table" | "view"
+                row_count: int
+                has_primary_key: bool
+                last_modified: ISO 8601 string | null
+                access_denied: bool
+                columns: list              // detailed mode only
+            error_message: string          // on error only
     """
     # Validate parameters with early return
     validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
@@ -370,49 +358,37 @@ async def get_table_schema(
         include_relationships: Include declared foreign keys (default: True)
 
     Returns:
-        JSON string with table schema details::
+        TOON-encoded string with table schema details:
 
-            {
-                "status": <"success" | "error">,
-                "table": {                           // on success only
-                    "table_name": <string>,
-                    "schema_name": <string>,
-                    "columns": [
-                        {
-                            "column_name": <string>,
-                            "ordinal_position": <int>,
-                            "data_type": <string>,
-                            "max_length": <int | null>,
-                            "is_nullable": <bool>,
-                            "default_value": <string | null>,
-                            "is_identity": <bool>,
-                            "is_computed": <bool>,
-                            "is_primary_key": <bool>,
-                            "is_foreign_key": <bool>
-                        }
-                    ],
-                    "indexes": [                     // if include_indexes=True
-                        {
-                            "index_name": <string>,
-                            "is_unique": <bool>,
-                            "is_primary_key": <bool>,
-                            "is_clustered": <bool>,
-                            "columns": [<string>],
-                            "included_columns": [<string>]
-                        }
-                    ],
-                    "foreign_keys": [                // if include_relationships=True
-                        {
-                            "constraint_name": <string | null>,
-                            "source_columns": [<string>],
-                            "target_schema": <string>,
-                            "target_table": <string>,
-                            "target_columns": [<string>]
-                        }
-                    ]
-                },
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            table: object                          // on success only
+                table_name: string
+                schema_name: string
+                columns: list
+                    column_name: string
+                    ordinal_position: int
+                    data_type: string
+                    max_length: int | null
+                    is_nullable: bool
+                    default_value: string | null
+                    is_identity: bool
+                    is_computed: bool
+                    is_primary_key: bool
+                    is_foreign_key: bool
+                indexes: list                      // if include_indexes=True
+                    index_name: string
+                    is_unique: bool
+                    is_primary_key: bool
+                    is_clustered: bool
+                    columns: list of string
+                    included_columns: list of string
+                foreign_keys: list                 // if include_relationships=True
+                    constraint_name: string | null
+                    source_columns: list of string
+                    target_schema: string
+                    target_table: string
+                    target_columns: list of string
+            error_message: string                  // on error only
     """
     try:
         metadata_svc = _get_metadata_service(connection_id)
