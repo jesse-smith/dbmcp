@@ -6,7 +6,7 @@ structural candidate analysis, and type filtering.
 
 from unittest.mock import MagicMock
 
-from src.analysis.pk_discovery import PKDiscovery
+from src.analysis.pk_discovery import DEFAULT_PK_TYPE_FILTER, PKDiscovery
 
 # ---------------------------------------------------------------------------
 # Helpers to build mock result rows
@@ -46,7 +46,7 @@ class TestConstraintBacked:
         ]
 
         discovery = PKDiscovery(conn, "dbo", "orders")
-        candidates = discovery.get_constraint_candidates()
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert len(candidates) == 1
         assert candidates[0].column_name == "order_id"
@@ -65,7 +65,7 @@ class TestConstraintBacked:
         ]
 
         discovery = PKDiscovery(conn, "dbo", "users")
-        candidates = discovery.get_constraint_candidates()
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert len(candidates) == 1
         assert candidates[0].column_name == "email"
@@ -83,7 +83,7 @@ class TestConstraintBacked:
         ]
 
         discovery = PKDiscovery(conn, "dbo", "products")
-        candidates = discovery.get_constraint_candidates()
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert len(candidates) == 2
         names = {c.column_name for c in candidates}
@@ -98,9 +98,45 @@ class TestConstraintBacked:
         ]
 
         discovery = PKDiscovery(conn, "dbo", "logs")
-        candidates = discovery.get_constraint_candidates()
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert candidates == []
+
+    def test_is_pk_type_respects_custom_type_filter(self):
+        """A PK column whose type is not in the filter gets is_pk_type=False."""
+        conn = MagicMock()
+        pk_rows = [("id", "bigint", "PRIMARY KEY")]
+        uq_rows = []
+        conn.execute.side_effect = [
+            _mock_result(pk_rows),
+            _mock_result(uq_rows),
+        ]
+
+        discovery = PKDiscovery(conn, "dbo", "orders")
+        candidates = discovery.get_constraint_candidates(
+            type_filter=["uniqueidentifier"],
+        )
+
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "id"
+        assert candidates[0].is_constraint_backed is True
+        assert candidates[0].is_pk_type is False
+
+    def test_is_pk_type_true_with_empty_type_filter(self):
+        """An empty type filter means all types qualify as pk_type."""
+        conn = MagicMock()
+        pk_rows = [("id", "varchar", "PRIMARY KEY")]
+        uq_rows = []
+        conn.execute.side_effect = [
+            _mock_result(pk_rows),
+            _mock_result(uq_rows),
+        ]
+
+        discovery = PKDiscovery(conn, "dbo", "orders")
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert len(candidates) == 1
+        assert candidates[0].is_pk_type is True
 
 
 # ---------------------------------------------------------------------------

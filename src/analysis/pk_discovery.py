@@ -38,12 +38,20 @@ class PKDiscovery:
         self.table_name = table_name
         self._qualified_table = f"[{schema_name}].[{table_name}]"
 
-    def get_constraint_candidates(self) -> list[PKCandidate]:
+    def get_constraint_candidates(
+        self,
+        type_filter: list[str],
+    ) -> list[PKCandidate]:
         """Find columns backed by PK or UNIQUE constraints.
+
+        Args:
+            type_filter: SQL types to evaluate is_pk_type against.
+                Empty list means all types qualify.
 
         Returns:
             List of PKCandidate instances for constraint-backed columns.
         """
+        type_filter_lower = {t.lower() for t in type_filter}
         candidates = []
 
         # Get PRIMARY KEY columns
@@ -79,7 +87,7 @@ class PKDiscovery:
                 constraint_type=row[2],
                 is_unique=True,
                 is_non_null=True,
-                is_pk_type=True,  # PK constraint columns are always valid PK types
+                is_pk_type=not type_filter_lower or row[1].lower() in type_filter_lower,
             ))
 
         # Get UNIQUE constraint columns (excluding those already found as PK)
@@ -113,7 +121,7 @@ class PKDiscovery:
                     constraint_type="UNIQUE",
                     is_unique=True,
                     is_non_null=False,  # UNIQUE doesn't imply non-null
-                    is_pk_type=True,
+                    is_pk_type=not type_filter_lower or row[1].lower() in type_filter_lower,
                 ))
 
         return candidates
@@ -219,7 +227,7 @@ class PKDiscovery:
             type_filter = DEFAULT_PK_TYPE_FILTER
 
         # Step 1: Find constraint-backed candidates
-        constraint_candidates = self.get_constraint_candidates()
+        constraint_candidates = self.get_constraint_candidates(type_filter=type_filter)
         constraint_column_names = {c.column_name for c in constraint_candidates}
 
         # Step 2: Find structural candidates (excluding constraint columns)
