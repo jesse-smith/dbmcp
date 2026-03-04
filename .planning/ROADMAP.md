@@ -28,11 +28,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Non-primitive types (datetime, Decimal, Enum) are explicitly pre-serialized before encoding (no silent null coercion)
   5. All existing tests pass (zero regressions)
   6. New code (wrapper module, test helper, pre-serialization logic) has 90%+ test coverage
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md -- TDD: Install toon-format, build serialization wrapper and test helper
+- [ ] 01-02-PLAN.md -- Atomic swap: migrate all tool modules and integration tests from JSON to TOON
+- [ ] 01-03-PLAN.md -- Update all 9 tool docstrings to document TOON format
 
 ### Phase 2: Staleness Guard
 **Goal**: An automated test prevents docstring-schema drift, catching mismatches between tool response fields and their documented descriptions
@@ -55,5 +56,5 @@ Phases execute in numeric order: 1 -> 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Atomic TOON Migration | 0/? | Not started | - |
+| 1. Atomic TOON Migration | 0/3 | Not started | - |
 | 2. Staleness Guard | 0/? | Not started | - |
