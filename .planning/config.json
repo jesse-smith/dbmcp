@@ -1,6 +1,6 @@
 {
-  "mode": "interactive",
-  "granularity": "coarse",
+  "mode": "autonomous",
+  "granularity": "standard",
   "parallelization": true,
   "commit_docs": true,
   "model_profile": "quality",
@@ -12,6 +12,6 @@
     "nyquist_validation": true
   },
   "git": {
-    "branching_strategy": "none"
+    "branching_strategy": "milestone"
   }
 }
