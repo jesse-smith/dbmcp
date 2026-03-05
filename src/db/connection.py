@@ -11,16 +11,13 @@ from datetime import datetime
 from urllib.parse import quote_plus
 
 import pyodbc
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
 from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
 from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod, Connection
-
-# ODBC constant for per-statement query timeout (seconds)
-SQL_ATTR_QUERY_TIMEOUT = 1005
 
 logger = get_logger(__name__)
 
@@ -213,19 +210,26 @@ class ConnectionManager:
                 packed = provider.pack_token_for_pyodbc(token)
                 return pyodbc.connect(
                     odbc_conn_str,
-                    attrs_before={
-                        SQL_COPT_SS_ACCESS_TOKEN: packed,
-                        SQL_ATTR_QUERY_TIMEOUT: query_timeout,
-                    },
+                    attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed},
                 )
 
-            return create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+            engine = create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+        else:
+            engine = create_engine(
+                f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+                **pool_kwargs,
+            )
 
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
-            connect_args={"attrs_before": {SQL_ATTR_QUERY_TIMEOUT: query_timeout}},
-            **pool_kwargs,
-        )
+        # Set query timeout on raw pyodbc connections via pool event.
+        # connection.timeout is the pyodbc-documented way to enforce
+        # per-statement timeouts (SQL Server raises OperationalError on expiry).
+        if query_timeout > 0:
+
+            @event.listens_for(engine, "connect")
+            def _set_query_timeout(dbapi_connection, connection_record):
+                dbapi_connection.timeout = query_timeout
+
+        return engine
 
     def _test_connection(
         self,

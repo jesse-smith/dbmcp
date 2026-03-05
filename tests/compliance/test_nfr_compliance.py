@@ -285,7 +285,10 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_SuccessPass!456"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -335,7 +338,10 @@ class TestNFR005CredentialSecurity:
         """NFR-005: Connection ID must not include password in hash."""
         manager = ConnectionManager()
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
