@@ -57,5 +57,5 @@ Phases execute in numeric order: 1 -> 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Atomic TOON Migration | 0/3 | Not started | - |
-| 2. Staleness Guard | 0/2 | Not started | - |
+| 1. Atomic TOON Migration | 3/3 | Complete | 2026-03-04 |
+| 2. Staleness Guard | 1/2 | In progress | - |
