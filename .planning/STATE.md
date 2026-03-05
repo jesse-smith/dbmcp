@@ -5,7 +5,7 @@ milestone_name: TOON Response Format Migration
 status: shipped
 stopped_at: Milestone v1.0 complete
 last_updated: "2026-03-05T18:57:00.000Z"
-last_activity: 2026-03-05 - Completed quick task 3: Reduce connect() complexity from 17 to under 15
+last_activity: 2026-03-05 - Completed quick task 4: Update README to reflect current project
 progress:
   total_phases: 2
   completed_phases: 2
@@ -63,9 +63,10 @@ None.
 | 1 | Add query timeouts and async DB execution to prevent event loop blocking | 2026-03-05 | 22a4270 | Verified | [1-add-query-timeouts-and-async-db-executio](./quick/1-add-query-timeouts-and-async-db-executio/) |
 | 2 | Fix ruff warnings and complete PoolConfig docstring | 2026-03-05 | 86ee5df | Verified | [2-verify-query-timeout-changes-meet-codeba](./quick/2-verify-query-timeout-changes-meet-codeba/) |
 | 3 | Reduce connect() complexity from 17 to under 15 | 2026-03-05 | d89d245 | Done | [3-reduce-connect-complexity-from-17-to-und](./quick/3-reduce-connect-complexity-from-17-to-und/) |
+| 4 | Update README to reflect current project | 2026-03-05 | 58ffbf3 | Done | [4-update-readme-to-reflect-current-project](./quick/4-update-readme-to-reflect-current-project/) |
 
 ## Session Continuity
 
 Last session: 2026-03-05
-Stopped at: Completed quick-2
+Stopped at: Completed quick-4
 Resume file: N/A
