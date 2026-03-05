@@ -110,27 +110,13 @@ class ConnectionManager:
             ConnectionError: If connection fails
             ValueError: If required credentials are missing
         """
-        # Validate inputs
-        if not server or not database:
-            raise ValueError("Server and database are required")
-
-        if authentication_method in (AuthenticationMethod.SQL, AuthenticationMethod.AZURE_AD):
-            if not username or not password:
-                raise ValueError(f"Username and password required for {authentication_method.value} authentication")
-
-        if connection_timeout < 5 or connection_timeout > 300:
-            raise ValueError("Connection timeout must be between 5 and 300 seconds")
-
-        if query_timeout != 0 and (query_timeout < 5 or query_timeout > 300):
-            raise ValueError("Query timeout must be 0 (no timeout) or between 5 and 300 seconds")
-
-        # Generate connection ID (excludes password for security)
-        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
-            user_component = "azure_ad"
-        else:
-            user_component = username or "windows"
-        conn_str_hash = f"{server}:{port}/{database}/{user_component}"
-        connection_id = hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
+        self._validate_connect_params(
+            server, database, username, password,
+            authentication_method, connection_timeout, query_timeout,
+        )
+        connection_id = self._generate_connection_id(
+            server, port, database, username, authentication_method,
+        )
 
         # Reuse existing connection if available
         if connection_id in self._engines:
@@ -174,6 +160,73 @@ class ConnectionManager:
         self._connections[connection_id] = connection
 
         return connection
+
+    def _validate_connect_params(
+        self,
+        server: str,
+        database: str,
+        username: str | None,
+        password: str | None,
+        authentication_method: AuthenticationMethod,
+        connection_timeout: int,
+        query_timeout: int,
+    ) -> None:
+        """Validate parameters for connect().
+
+        Args:
+            server: SQL Server host
+            database: Database name
+            username: Username (may be None for Windows/Azure AD Integrated)
+            password: Password (may be None for Windows/Azure AD Integrated)
+            authentication_method: Authentication method
+            connection_timeout: Connection timeout in seconds
+            query_timeout: Per-statement query timeout in seconds
+
+        Raises:
+            ValueError: If any parameter is invalid
+        """
+        if not server or not database:
+            raise ValueError("Server and database are required")
+
+        if authentication_method in (AuthenticationMethod.SQL, AuthenticationMethod.AZURE_AD):
+            if not username or not password:
+                raise ValueError(f"Username and password required for {authentication_method.value} authentication")
+
+        if connection_timeout < 5 or connection_timeout > 300:
+            raise ValueError("Connection timeout must be between 5 and 300 seconds")
+
+        if query_timeout != 0 and (query_timeout < 5 or query_timeout > 300):
+            raise ValueError("Query timeout must be 0 (no timeout) or between 5 and 300 seconds")
+
+    def _generate_connection_id(
+        self,
+        server: str,
+        port: int,
+        database: str,
+        username: str | None,
+        authentication_method: AuthenticationMethod,
+    ) -> str:
+        """Generate a deterministic connection ID from connection parameters.
+
+        The ID is a truncated SHA-256 hash of the connection key components.
+        Password is excluded for security.
+
+        Args:
+            server: SQL Server host
+            port: Port number
+            database: Database name
+            username: Username (may be None)
+            authentication_method: Authentication method
+
+        Returns:
+            12-character hex connection ID
+        """
+        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            user_component = "azure_ad"
+        else:
+            user_component = username or "windows"
+        conn_str_hash = f"{server}:{port}/{database}/{user_component}"
+        return hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
 
     def _create_engine(
         self,
