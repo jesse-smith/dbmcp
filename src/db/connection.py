@@ -11,7 +11,7 @@ from datetime import datetime
 from urllib.parse import quote_plus
 
 import pyodbc
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
@@ -32,6 +32,7 @@ class PoolConfig:
         pool_timeout: Seconds to wait for connection before timeout (default: 30)
         pool_recycle: Seconds before recycling idle connections (default: 3600)
         pool_pre_ping: Validate connections before use (default: True)
+        query_timeout: Per-statement query timeout in seconds. 0 disables timeout. (default: 30)
     """
 
     pool_size: int = 5
@@ -39,6 +40,7 @@ class PoolConfig:
     pool_timeout: int = 30
     pool_recycle: int = 3600
     pool_pre_ping: bool = True
+    query_timeout: int = 30
 
 
 class ConnectionError(Exception):
@@ -84,6 +86,7 @@ class ConnectionManager:
         trust_server_cert: bool = False,
         connection_timeout: int = 30,
         tenant_id: str | None = None,
+        query_timeout: int = 30,
     ) -> Connection:
         """Create a database connection and return Connection object.
 
@@ -97,6 +100,8 @@ class ConnectionManager:
             trust_server_cert: Trust server certificate without validation
             connection_timeout: Connection timeout in seconds (5-300)
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+            query_timeout: Per-statement query timeout in seconds. 0 = no timeout,
+                5-300 = timeout in seconds. (default: 30)
 
         Returns:
             Connection object with connection metadata
@@ -105,24 +110,13 @@ class ConnectionManager:
             ConnectionError: If connection fails
             ValueError: If required credentials are missing
         """
-        # Validate inputs
-        if not server or not database:
-            raise ValueError("Server and database are required")
-
-        if authentication_method in (AuthenticationMethod.SQL, AuthenticationMethod.AZURE_AD):
-            if not username or not password:
-                raise ValueError(f"Username and password required for {authentication_method.value} authentication")
-
-        if connection_timeout < 5 or connection_timeout > 300:
-            raise ValueError("Connection timeout must be between 5 and 300 seconds")
-
-        # Generate connection ID (excludes password for security)
-        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
-            user_component = "azure_ad"
-        else:
-            user_component = username or "windows"
-        conn_str_hash = f"{server}:{port}/{database}/{user_component}"
-        connection_id = hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
+        self._validate_connect_params(
+            server, database, username, password,
+            authentication_method, connection_timeout, query_timeout,
+        )
+        connection_id = self._generate_connection_id(
+            server, port, database, username, authentication_method,
+        )
 
         # Reuse existing connection if available
         if connection_id in self._engines:
@@ -144,7 +138,7 @@ class ConnectionManager:
         # Create engine, test connection, and store metadata
         start_time = time.time()
         try:
-            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id)
+            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id, query_timeout)
             self._test_connection(engine, start_time, server, database, port)
         except ConnectionError:
             raise
@@ -167,11 +161,79 @@ class ConnectionManager:
 
         return connection
 
+    def _validate_connect_params(
+        self,
+        server: str,
+        database: str,
+        username: str | None,
+        password: str | None,
+        authentication_method: AuthenticationMethod,
+        connection_timeout: int,
+        query_timeout: int,
+    ) -> None:
+        """Validate parameters for connect().
+
+        Args:
+            server: SQL Server host
+            database: Database name
+            username: Username (may be None for Windows/Azure AD Integrated)
+            password: Password (may be None for Windows/Azure AD Integrated)
+            authentication_method: Authentication method
+            connection_timeout: Connection timeout in seconds
+            query_timeout: Per-statement query timeout in seconds
+
+        Raises:
+            ValueError: If any parameter is invalid
+        """
+        if not server or not database:
+            raise ValueError("Server and database are required")
+
+        if authentication_method in (AuthenticationMethod.SQL, AuthenticationMethod.AZURE_AD):
+            if not username or not password:
+                raise ValueError(f"Username and password required for {authentication_method.value} authentication")
+
+        if connection_timeout < 5 or connection_timeout > 300:
+            raise ValueError("Connection timeout must be between 5 and 300 seconds")
+
+        if query_timeout != 0 and (query_timeout < 5 or query_timeout > 300):
+            raise ValueError("Query timeout must be 0 (no timeout) or between 5 and 300 seconds")
+
+    def _generate_connection_id(
+        self,
+        server: str,
+        port: int,
+        database: str,
+        username: str | None,
+        authentication_method: AuthenticationMethod,
+    ) -> str:
+        """Generate a deterministic connection ID from connection parameters.
+
+        The ID is a truncated SHA-256 hash of the connection key components.
+        Password is excluded for security.
+
+        Args:
+            server: SQL Server host
+            port: Port number
+            database: Database name
+            username: Username (may be None)
+            authentication_method: Authentication method
+
+        Returns:
+            12-character hex connection ID
+        """
+        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            user_component = "azure_ad"
+        else:
+            user_component = username or "windows"
+        conn_str_hash = f"{server}:{port}/{database}/{user_component}"
+        return hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
+
     def _create_engine(
         self,
         odbc_conn_str: str,
         authentication_method: AuthenticationMethod,
         tenant_id: str | None,
+        query_timeout: int = 30,
     ) -> Engine:
         """Create a SQLAlchemy engine with connection pooling.
 
@@ -179,6 +241,7 @@ class ConnectionManager:
             odbc_conn_str: ODBC connection string
             authentication_method: Authentication method
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+            query_timeout: Per-statement query timeout in seconds (0 = no timeout)
 
         Returns:
             Configured SQLAlchemy Engine
@@ -199,14 +262,28 @@ class ConnectionManager:
             def creator():
                 token = provider.get_token()
                 packed = provider.pack_token_for_pyodbc(token)
-                return pyodbc.connect(odbc_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed})
+                return pyodbc.connect(
+                    odbc_conn_str,
+                    attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed},
+                )
 
-            return create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+            engine = create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+        else:
+            engine = create_engine(
+                f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+                **pool_kwargs,
+            )
 
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
-            **pool_kwargs,
-        )
+        # Set query timeout on raw pyodbc connections via pool event.
+        # connection.timeout is the pyodbc-documented way to enforce
+        # per-statement timeouts (SQL Server raises OperationalError on expiry).
+        if query_timeout > 0:
+
+            @event.listens_for(engine, "connect")
+            def _set_query_timeout(dbapi_connection, connection_record):
+                dbapi_connection.timeout = query_timeout
+
+        return engine
 
     def _test_connection(
         self,

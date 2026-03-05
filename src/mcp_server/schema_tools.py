@@ -3,13 +3,14 @@
 Tools: connect_database, list_schemas, list_tables, get_table_schema
 """
 
-import json
+import asyncio
 from pathlib import Path
 
 from src.db.connection import ConnectionError
 from src.db.metadata import MetadataService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import AuthenticationMethod
+from src.serialization import encode_response
 
 
 def _validate_list_tables_params(
@@ -103,28 +104,25 @@ async def connect_database(
         tenant_id: Azure AD tenant ID for azure_ad_integrated auth (optional, default: None)
 
     Returns:
-        JSON string with connection details::
+        TOON-encoded string with connection details:
 
-            {
-                "connection_id": <string>,       // on success only
-                "status": <"success" | "error">,
-                "message": <string>,             // on success only
-                "schema_count": <int>,           // on success only
-                "has_cached_docs": <bool>,        // on success only
-                "error_message": <string>         // on error only
-            }
+            status: "success" | "error"
+            connection_id: string              // on success only
+            message: string                    // on success only
+            schema_count: int                  // on success only
+            has_cached_docs: bool              // on success only
+            error_message: string              // on error only
     """
+    # Parse authentication method (fast, no I/O)
     try:
-        # Parse authentication method
-        try:
-            auth_method = AuthenticationMethod(authentication_method.lower())
-        except ValueError:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
-            })
+        auth_method = AuthenticationMethod(authentication_method.lower())
+    except ValueError:
+        return encode_response({
+            "status": "error",
+            "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
+        })
 
-        # Attempt connection
+    def _sync_connect():
         conn_manager = get_connection_manager()
         connection = conn_manager.connect(
             server=server,
@@ -138,40 +136,42 @@ async def connect_database(
             tenant_id=tenant_id,
         )
 
-        # Get schema count for response
         engine = conn_manager.get_engine(connection.connection_id)
         metadata_svc = MetadataService(engine)
         schemas = metadata_svc.list_schemas(connection_id=connection.connection_id)
 
-        # Check for cached documentation
         cache_dir = Path("docs") / connection.connection_id
         has_cached_docs = cache_dir.exists() and any(cache_dir.iterdir())
 
         logger.info(f"Connected to {database} on {server}:{port}")
 
-        return json.dumps({
+        return {
             "connection_id": connection.connection_id,
             "status": "success",
             "message": f"Successfully connected to {database}",
             "schema_count": len(schemas),
             "has_cached_docs": has_cached_docs,
-        })
+        }
+
+    try:
+        result = await asyncio.to_thread(_sync_connect)
+        return encode_response(result)
 
     except ConnectionError as e:
         logger.error(f"Connection failed: {type(e).__name__}")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except ValueError as e:
         logger.error(f"Validation error: {e}")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
         logger.exception("Unexpected error in connect_database")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {type(e).__name__}: {str(e)}",
         })
@@ -193,29 +193,23 @@ async def list_schemas(connection_id: str) -> str:
         connection_id: Connection ID from connect_database
 
     Returns:
-        JSON string with schema list::
+        TOON-encoded string with schema list:
 
-            {
-                "status": <"success" | "error">,
-                "schemas": [
-                    {
-                        "schema_name": <string>,
-                        "table_count": <int>,
-                        "view_count": <int>
-                    }
-                ],
-                "total_schemas": <int>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            total_schemas: int                 // on success only
+            schemas: list                      // on success only
+                schema_name: string
+                table_count: int
+                view_count: int
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
+        - Invalid connection_id: returns status "error" with error_message
     """
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
         schemas = metadata_svc.list_schemas(connection_id=connection_id)
-
-        return json.dumps({
+        return {
             "status": "success",
             "schemas": [
                 {
@@ -226,13 +220,16 @@ async def list_schemas(connection_id: str) -> str:
                 for s in schemas
             ],
             "total_schemas": len(schemas),
-        })
+        }
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_schemas")
-        return json.dumps({"status": "error", "error_message": f"Failed to list schemas: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to list schemas: {str(e)}"})
 
 
 @mcp.tool()
@@ -268,42 +265,36 @@ async def list_tables(
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
 
     Returns:
-        JSON string with table list and pagination metadata::
+        TOON-encoded string with table list and pagination metadata:
 
-            {
-                "status": <"success" | "error">,
-                "tables": [
-                    {
-                        "schema_name": <string>,
-                        "table_name": <string>,
-                        "table_type": <"table" | "view">,
-                        "row_count": <int>,
-                        "has_primary_key": <bool>,
-                        "last_modified": <ISO 8601 string | null>,
-                        "access_denied": <bool>,
-                        "columns": [...]             // detailed mode only
-                    }
-                ],
-                "returned_count": <int>,
-                "total_count": <int>,
-                "offset": <int>,
-                "limit": <int>,
-                "has_more": <bool>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            returned_count: int                // on success only
+            total_count: int                   // on success only
+            offset: int                        // on success only
+            limit: int                         // on success only
+            has_more: bool                     // on success only
+            tables: list                       // on success only
+                schema_name: string
+                table_name: string
+                table_type: "table" | "view"
+                row_count: int
+                has_primary_key: bool
+                last_modified: ISO 8601 string | null
+                access_denied: bool
+                columns: list              // detailed mode only
+            error_message: string          // on error only
     """
-    # Validate parameters with early return
+    # Validate parameters with early return (fast, no I/O)
     validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
     if validation_error is not None:
-        return json.dumps({"status": "error", "error_message": validation_error})
+        return encode_response({"status": "error", "error_message": validation_error})
 
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
 
         all_tables = []
         total_count = 0
 
-        # Query each specified schema, or all schemas if no filter
         schemas_to_query = schema_filter or [None]
         for schema_name in schemas_to_query:
             tables, pagination = metadata_svc.list_tables(
@@ -320,14 +311,13 @@ async def list_tables(
             all_tables.extend(tables)
             total_count += pagination.get("total_count", len(tables))
 
-        # Apply limit after combining schemas (for schema_filter case)
         all_tables = all_tables[:limit]
 
         table_list = [
             _build_table_entry(t, output_mode, metadata_svc) for t in all_tables
         ]
 
-        return json.dumps({
+        return {
             "status": "success",
             "tables": table_list,
             "returned_count": len(all_tables),
@@ -335,13 +325,16 @@ async def list_tables(
             "offset": offset,
             "limit": limit,
             "has_more": (offset + len(all_tables)) < total_count,
-        })
+        }
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_tables")
-        return json.dumps({"status": "error", "error_message": f"Failed to list tables: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to list tables: {str(e)}"})
 
 
 # =============================================================================
@@ -370,58 +363,46 @@ async def get_table_schema(
         include_relationships: Include declared foreign keys (default: True)
 
     Returns:
-        JSON string with table schema details::
+        TOON-encoded string with table schema details:
 
-            {
-                "status": <"success" | "error">,
-                "table": {                           // on success only
-                    "table_name": <string>,
-                    "schema_name": <string>,
-                    "columns": [
-                        {
-                            "column_name": <string>,
-                            "ordinal_position": <int>,
-                            "data_type": <string>,
-                            "max_length": <int | null>,
-                            "is_nullable": <bool>,
-                            "default_value": <string | null>,
-                            "is_identity": <bool>,
-                            "is_computed": <bool>,
-                            "is_primary_key": <bool>,
-                            "is_foreign_key": <bool>
-                        }
-                    ],
-                    "indexes": [                     // if include_indexes=True
-                        {
-                            "index_name": <string>,
-                            "is_unique": <bool>,
-                            "is_primary_key": <bool>,
-                            "is_clustered": <bool>,
-                            "columns": [<string>],
-                            "included_columns": [<string>]
-                        }
-                    ],
-                    "foreign_keys": [                // if include_relationships=True
-                        {
-                            "constraint_name": <string | null>,
-                            "source_columns": [<string>],
-                            "target_schema": <string>,
-                            "target_table": <string>,
-                            "target_columns": [<string>]
-                        }
-                    ]
-                },
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            table: object                          // on success only
+                table_name: string
+                schema_name: string
+                columns: list
+                    column_name: string
+                    ordinal_position: int
+                    data_type: string
+                    max_length: int | null
+                    is_nullable: bool
+                    default_value: string | null
+                    is_identity: bool
+                    is_computed: bool
+                    is_primary_key: bool
+                    is_foreign_key: bool
+                indexes: list                      // if include_indexes=True
+                    index_name: string
+                    is_unique: bool
+                    is_primary_key: bool
+                    is_clustered: bool
+                    columns: list of string
+                    included_columns: list of string
+                foreign_keys: list                 // if include_relationships=True
+                    constraint_name: string | null
+                    source_columns: list of string
+                    target_schema: string
+                    target_table: string
+                    target_columns: list of string
+            error_message: string                  // on error only
     """
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
 
         if not metadata_svc.table_exists(table_name, schema_name):
-            return json.dumps({
+            return {
                 "status": "error",
                 "error_message": f"Table '{schema_name}.{table_name}' not found",
-            })
+            }
 
         schema = metadata_svc.get_table_schema(
             table_name=table_name,
@@ -430,10 +411,13 @@ async def get_table_schema(
             include_relationships=include_relationships,
         )
 
-        return json.dumps({"status": "success", "table": schema})
+        return {"status": "success", "table": schema}
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_table_schema")
-        return json.dumps({"status": "error", "error_message": f"Failed to get table schema: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to get table schema: {str(e)}"})

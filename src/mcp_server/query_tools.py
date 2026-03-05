@@ -3,11 +3,12 @@
 Tools: get_sample_data, execute_query
 """
 
-import json
+import asyncio
 
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import SamplingMethod
+from src.serialization import encode_response
 
 # =============================================================================
 # Sample Data Tools (User Story 4)
@@ -41,51 +42,46 @@ async def get_sample_data(
         columns: Optional list of column names to include (default: all columns)
 
     Returns:
-        JSON string with sample rows and metadata::
+        TOON-encoded string with sample rows and metadata:
 
-            {
-                "status": <"success" | "error">,
-                "sample_id": <string>,
-                "table_id": <string>,
-                "sample_size": <int>,
-                "actual_rows_returned": <int>,
-                "sampling_method": <"top" | "tablesample" | "modulo">,
-                "rows": [<object>],
-                "truncated_columns": [<string>],
-                "sampled_at": <ISO 8601 string>,
-                "error_message": <string>            // on error only
-            }
+            status: "success" | "error"
+            sample_id: string                  // on success only
+            table_id: string                   // on success only
+            sample_size: int                   // on success only
+            actual_rows_returned: int          // on success only
+            sampling_method: "top" | "tablesample" | "modulo"  // on success only
+            rows: list of object               // on success only
+            truncated_columns: list of string  // on success only
+            sampled_at: ISO 8601 string        // on success only
+            error_message: string              // on error only
     """
+    # Validate parameters (fast, no I/O)
+    if sample_size < 1 or sample_size > 1000:
+        return encode_response({
+            "status": "error",
+            "error_message": "sample_size must be between 1 and 1000",
+        })
+
+    valid_methods = ["top", "tablesample", "modulo"]
+    if sampling_method not in valid_methods:
+        return encode_response({
+            "status": "error",
+            "error_message": f"sampling_method must be one of: {valid_methods}",
+        })
+
     try:
-        # Validate sample_size
-        if sample_size < 1 or sample_size > 1000:
-            return json.dumps({
-                "status": "error",
-                "error_message": "sample_size must be between 1 and 1000",
-            })
+        method_enum = SamplingMethod(sampling_method.lower())
+    except ValueError:
+        return encode_response({
+            "status": "error",
+            "error_message": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
+        })
 
-        # Validate sampling_method
-        valid_methods = ["top", "tablesample", "modulo"]
-        if sampling_method not in valid_methods:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"sampling_method must be one of: {valid_methods}",
-            })
-
-        # Parse sampling method enum
-        try:
-            method_enum = SamplingMethod(sampling_method.lower())
-        except ValueError:
-            return json.dumps({
-                "status": "error",
-                "error_message": f"Invalid sampling_method '{sampling_method}'. Use 'top', 'tablesample', or 'modulo'.",
-            })
-
+    def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         query_svc = QueryService(engine)
 
-        # Get sample data
         sample = query_svc.get_sample_data(
             table_name=table_name,
             schema_name=schema_name,
@@ -94,7 +90,7 @@ async def get_sample_data(
             columns=columns,
         )
 
-        return json.dumps({
+        return {
             "status": "success",
             "sample_id": sample.sample_id,
             "table_id": sample.table_id,
@@ -104,13 +100,16 @@ async def get_sample_data(
             "rows": sample.rows,
             "truncated_columns": sample.truncated_columns,
             "sampled_at": sample.sampled_at.isoformat(),
-        })
+        }
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({"status": "error", "error_message": str(e)})
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_sample_data")
-        return json.dumps({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
+        return encode_response({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
 
 
 # =============================================================================
@@ -139,66 +138,62 @@ async def execute_query(
         row_limit: Maximum rows to return, 1-10000 (default: 1000)
 
     Returns:
-        JSON string with query results::
+        TOON-encoded string with query results:
 
-            {
-                "status": <"success" | "blocked" | "error">,
-                "query_id": <string>,
-                "query_type": <"select" | "insert" | "update" | "delete" | "other">,
-                "columns": [<string>],               // on success only
-                "rows": [<object>],                   // on success only
-                "rows_returned": <int>,
-                "rows_available": <int>,              // if limit was applied
-                "limited": <bool>,
-                "execution_time_ms": <float>,
-                "error_message": <string>             // on error/blocked only
-            }
+            status: "success" | "blocked" | "error"
+            query_id: string                   // on success only
+            query_type: string                 // on success only
+            columns: list of string            // on success only
+            rows: list of object               // on success only
+            rows_returned: int                 // on success only
+            rows_available: int                // on success only
+            limited: bool                      // on success only
+            execution_time_ms: float           // on success only
+            error_message: string              // on error/blocked only
     """
-    try:
-        # Validate row_limit
-        if row_limit < 1:
-            return json.dumps({
-                "status": "error",
-                "error_message": "row_limit must be at least 1",
-            })
-        if row_limit > 10000:
-            return json.dumps({
-                "status": "error",
-                "error_message": "row_limit cannot exceed 10000",
-            })
+    # Validate parameters (fast, no I/O)
+    if row_limit < 1:
+        return encode_response({
+            "status": "error",
+            "error_message": "row_limit must be at least 1",
+        })
+    if row_limit > 10000:
+        return encode_response({
+            "status": "error",
+            "error_message": "row_limit cannot exceed 10000",
+        })
 
-        # Validate query_text
-        if not query_text or not query_text.strip():
-            return json.dumps({
-                "status": "error",
-                "error_message": "query_text is required and cannot be empty",
-            })
+    if not query_text or not query_text.strip():
+        return encode_response({
+            "status": "error",
+            "error_message": "query_text is required and cannot be empty",
+        })
 
+    def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         query_svc = QueryService(engine)
 
-        # Execute query
         query = query_svc.execute_query(
             connection_id=connection_id,
             query_text=query_text,
             row_limit=row_limit,
-            allow_write=False,  # Always block write operations
+            allow_write=False,
         )
 
-        # Get formatted results
-        result = query_svc.get_query_results(query)
+        return query_svc.get_query_results(query)
 
-        return json.dumps(result)
-
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
         logger.exception("Error in execute_query")
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Query execution failed: {type(e).__name__}: {str(e)}",
         })

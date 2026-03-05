@@ -8,7 +8,7 @@ Provides three analysis tools:
 All tools expose raw statistics and structural metadata only — no interpretation.
 """
 
-import json
+import asyncio
 
 from sqlalchemy import text
 
@@ -16,6 +16,7 @@ from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.mcp_server.server import get_connection_manager, mcp
+from src.serialization import encode_response
 
 
 @mcp.tool()
@@ -47,55 +48,47 @@ async def get_column_info(
         sample_size: Number of top frequent value samples for string columns (default: 10)
 
     Returns:
-        JSON string with status, table/schema metadata, and column statistics::
+        TOON-encoded string with status, table/schema metadata, and column statistics:
 
-            {
-                "status": <"success" | "error">,
-                "table_name": <string>,
-                "schema_name": <string>,
-                "total_columns_analyzed": <int>,
-                "columns": [
-                    {
-                        "column_name": <string>,
-                        "data_type": <string>,
-                        "total_rows": <int>,
-                        "distinct_count": <int>,
-                        "null_count": <int>,
-                        "null_percentage": <float>,
-                        "numeric_stats": {          // numeric columns only
-                            "min_value": <float | null>,
-                            "max_value": <float | null>,
-                            "mean_value": <float | null>,
-                            "std_dev": <float | null>
-                        },
-                        "datetime_stats": {         // datetime columns only
-                            "min_date": <ISO 8601 string | null>,
-                            "max_date": <ISO 8601 string | null>,
-                            "date_range_days": <int | null>,
-                            "has_time_component": <bool>
-                        },
-                        "string_stats": {           // string columns only
-                            "min_length": <int | null>,
-                            "max_length": <int | null>,
-                            "avg_length": <float | null>,
-                            "sample_values": [[<string>, <int>], ...]
-                        }
-                    }
-                ]
-            }
+            status: "success" | "error"
+            table_name: string                 // on success only
+            schema_name: string                // on success only
+            total_columns_analyzed: int        // on success only
+            columns: list                      // on success only
+                column_name: string
+                data_type: string
+                total_rows: int
+                distinct_count: int
+                null_count: int
+                null_percentage: float
+                numeric_stats: object          // numeric columns only
+                    min_value: float | null
+                    max_value: float | null
+                    mean_value: float | null
+                    std_dev: float | null
+                datetime_stats: object         // datetime columns only
+                    min_date: ISO 8601 string | null
+                    max_date: ISO 8601 string | null
+                    date_range_days: int | null
+                    has_time_component: bool
+                string_stats: object           // string columns only
+                    min_length: int | null
+                    max_length: int | null
+                    avg_length: float | null
+                    sample_values: list of [string, int] pairs
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - Column not found (explicit list): {"status": "error", "error_message": "Column(s) not found: ..."}
-        - No columns match pattern: {"status": "success", "columns": [], "total_columns_analyzed": 0}
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - Column not found (explicit list): returns status "error" with error_message
+        - No columns match pattern: returns status "success" with empty columns list
     """
-    try:
+    def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
 
         with engine.connect() as connection:
-            # Verify table exists
             table_exists_query = text("""
                 SELECT COUNT(*)
                 FROM INFORMATION_SCHEMA.TABLES
@@ -107,12 +100,11 @@ async def get_column_info(
                 {"schema_name": schema_name, "table_name": table_name}
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return {
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                })
+                }
 
-            # Create collector and gather statistics
             collector = ColumnStatsCollector(
                 connection=connection,
                 schema_name=schema_name,
@@ -125,8 +117,7 @@ async def get_column_info(
                 sample_size=sample_size,
             )
 
-            # Build response
-            response = {
+            return {
                 "status": "success",
                 "table_name": table_name,
                 "schema_name": schema_name,
@@ -134,15 +125,16 @@ async def get_column_info(
                 "columns": [stat.to_dict() for stat in column_stats],
             }
 
-            return json.dumps(response, default=str)
-
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })
@@ -177,36 +169,31 @@ async def find_pk_candidates(
             Set to empty list to disable type filtering.
 
     Returns:
-        JSON string with status, table/schema metadata, and candidates list::
+        TOON-encoded string with status, table/schema metadata, and candidates list:
 
-            {
-                "status": <"success" | "error">,
-                "table_name": <string>,
-                "schema_name": <string>,
-                "candidates": [
-                    {
-                        "column_name": <string>,
-                        "data_type": <string>,
-                        "is_constraint_backed": <bool>,
-                        "constraint_type": <"PRIMARY KEY" | "UNIQUE" | null>,
-                        "is_unique": <bool>,    // all values distinct
-                        "is_non_null": <bool>,  // no nulls
-                        "is_pk_type": <bool>    // data_type matches type_filter
-                    }
-                ]
-            }
+            status: "success" | "error"
+            table_name: string                 // on success only
+            schema_name: string                // on success only
+            candidates: list                   // on success only
+                column_name: string
+                data_type: string
+                is_constraint_backed: bool
+                constraint_type: "PRIMARY KEY" | "UNIQUE" | null
+                is_unique: bool                // all values distinct
+                is_non_null: bool              // no nulls
+                is_pk_type: bool               // data_type matches type_filter
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - No candidates found: {"status": "success", "candidates": []} (not an error)
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - No candidates found: returns status "success" with empty candidates list
     """
-    try:
+    def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
 
         with engine.connect() as connection:
-            # Verify table exists
             table_exists_query = text("""
                 SELECT COUNT(*)
                 FROM INFORMATION_SCHEMA.TABLES
@@ -218,10 +205,10 @@ async def find_pk_candidates(
                 {"schema_name": schema_name, "table_name": table_name},
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return {
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                })
+                }
 
             discovery = PKDiscovery(
                 connection=connection,
@@ -231,22 +218,23 @@ async def find_pk_candidates(
 
             candidates = discovery.find_candidates(type_filter=type_filter)
 
-            response = {
+            return {
                 "status": "success",
                 "table_name": table_name,
                 "schema_name": schema_name,
                 "candidates": [c.to_dict() for c in candidates],
             }
 
-            return json.dumps(response)
-
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })
@@ -290,51 +278,45 @@ async def find_fk_candidates(
         limit: Maximum candidates to return, 0 = no limit (default: 100)
 
     Returns:
-        JSON string with status, source metadata, candidates list, and search info::
+        TOON-encoded string with status, source metadata, candidates list, and search info:
 
-            {
-                "status": <"success" | "error">,
-                "source": {
-                    "column_name": <string>,
-                    "table_name": <string>,
-                    "schema_name": <string>,
-                    "data_type": <string>
-                },
-                "candidates": [
-                    {
-                        "source_column": <string>,
-                        "source_table": <string>,
-                        "source_schema": <string>,
-                        "source_data_type": <string>,
-                        "target_column": <string>,
-                        "target_table": <string>,
-                        "target_schema": <string>,
-                        "target_data_type": <string>,
-                        "target_is_primary_key": <bool>,
-                        "target_is_unique": <bool>,
-                        "target_is_nullable": <bool>,
-                        "target_has_index": <bool>,
-                        "overlap_count": <int>,         // only when include_overlap=True
-                        "overlap_percentage": <float>    // only when include_overlap=True
-                    }
-                ],
-                "total_found": <int>,
-                "was_limited": <bool>,          // true if results truncated by limit
-                "search_scope": <string>        // human-readable filter summary
-            }
+            status: "success" | "error"
+            source: object                     // on success only
+                column_name: string
+                table_name: string
+                schema_name: string
+                data_type: string
+            candidates: list                   // on success only
+                source_column: string
+                source_table: string
+                source_schema: string
+                source_data_type: string
+                target_column: string
+                target_table: string
+                target_schema: string
+                target_data_type: string
+                target_is_primary_key: bool
+                target_is_unique: bool
+                target_is_nullable: bool
+                target_has_index: bool
+                overlap_count: int             // only when include_overlap=True
+                overlap_percentage: float      // only when include_overlap=True
+            total_found: int                   // on success only
+            was_limited: bool                  // on success only
+            search_scope: string               // on success only
+            error_message: string              // on error only
 
     Error conditions:
-        - Invalid connection_id: {"status": "error", "error_message": "Connection '...' not found"}
-        - Table not found: {"status": "error", "error_message": "Table '...' not found in schema '...'"}
-        - Column not found: {"status": "error", "error_message": "Column '...' not found in table '...'"}
-        - No candidates: {"status": "success", "candidates": [], "total_found": 0} (not an error)
+        - Invalid connection_id: returns status "error" with error_message
+        - Table not found: returns status "error" with error_message
+        - Column not found: returns status "error" with error_message
+        - No candidates: returns status "success" with empty candidates list
     """
-    try:
+    def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
 
         with engine.connect() as connection:
-            # Verify table exists
             table_exists_query = text("""
                 SELECT COUNT(*)
                 FROM INFORMATION_SCHEMA.TABLES
@@ -346,12 +328,11 @@ async def find_fk_candidates(
                 {"schema_name": schema_name, "table_name": table_name},
             )
             if result.scalar() == 0:
-                return json.dumps({
+                return {
                     "status": "error",
                     "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                })
+                }
 
-            # Verify column exists and get data type
             col_query = text("""
                 SELECT DATA_TYPE
                 FROM INFORMATION_SCHEMA.COLUMNS
@@ -369,10 +350,10 @@ async def find_fk_candidates(
             )
             col_row = col_result.fetchone()
             if col_row is None:
-                return json.dumps({
+                return {
                     "status": "error",
                     "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
-                })
+                }
 
             source_data_type = col_row[0]
 
@@ -393,7 +374,7 @@ async def find_fk_candidates(
                 limit=limit,
             )
 
-            response = {
+            return {
                 "status": "success",
                 "source": {
                     "column_name": column_name,
@@ -407,15 +388,16 @@ async def find_fk_candidates(
                 "search_scope": fk_result.search_scope,
             }
 
-            return json.dumps(response)
-
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": str(e),
         })
     except Exception as e:
-        return json.dumps({
+        return encode_response({
             "status": "error",
             "error_message": f"Unexpected error: {str(e)}",
         })

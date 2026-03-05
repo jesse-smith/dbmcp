@@ -132,7 +132,10 @@ class TestNFR005CredentialSafety:
         manager = ConnectionManager()
         secret_password = "AnotherSecret!456"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             # Setup mock for successful connection
             mock_connection = MagicMock()
             mock_result = MagicMock()
@@ -216,7 +219,10 @@ class TestConnectionIdGeneration:
         """Connection ID hash should not include password."""
         manager = ConnectionManager()
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -256,7 +262,10 @@ class TestConnectionIdGeneration:
         """Connection ID should differ for different servers."""
         manager = ConnectionManager()
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -380,7 +389,10 @@ class TestAzureAdIntegratedValidation:
         manager = ConnectionManager()
 
         # Should NOT raise ValueError about missing credentials
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -409,7 +421,10 @@ class TestAzureAdIntegratedValidation:
         """Providing username/password with azure_ad_integrated is silently ignored (no error)."""
         manager = ConnectionManager()
 
-        with patch("src.db.connection.create_engine") as mock_engine:
+        with (
+            patch("src.db.connection.create_engine") as mock_engine,
+            patch("src.db.connection.event"),
+        ):
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -441,9 +456,10 @@ class TestAzureAdIntegratedValidation:
 class TestAzureAdIntegratedCreatorPattern:
     """T010: Tests for creator function pattern with azure_ad_integrated."""
 
+    @patch("src.db.connection.event")
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
-    def test_uses_creator_instead_of_url(self, mock_create_engine, mock_provider_cls):
+    def test_uses_creator_instead_of_url(self, mock_create_engine, mock_provider_cls, mock_event):
         """azure_ad_integrated uses create_engine(creator=...) instead of URL-based connection."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"
@@ -479,9 +495,10 @@ class TestAzureAdIntegratedCreatorPattern:
 class TestAzureAdIntegratedConnectionIdHash:
     """T011: Tests for connection ID hash with azure_ad_integrated."""
 
+    @patch("src.db.connection.event")
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
-    def test_connection_id_uses_azure_ad_marker(self, mock_create_engine, mock_provider_cls):
+    def test_connection_id_uses_azure_ad_marker(self, mock_create_engine, mock_provider_cls, mock_event):
         """Connection ID hash uses 'azure_ad' (not username) for azure_ad_integrated."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"
@@ -514,9 +531,10 @@ class TestAzureAdIntegratedConnectionIdHash:
         expected_id = hashlib.sha256(expected_hash_input.encode()).hexdigest()[:12]
         assert conn.connection_id == expected_id
 
+    @patch("src.db.connection.event")
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
-    def test_azure_ad_integrated_id_differs_from_windows(self, mock_create_engine, mock_provider_cls):
+    def test_azure_ad_integrated_id_differs_from_windows(self, mock_create_engine, mock_provider_cls, mock_event):
         """azure_ad_integrated connection ID differs from windows auth (same server/db, no username)."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"
@@ -561,9 +579,10 @@ class TestAzureAdIntegratedConnectionIdHash:
 class TestAzureAdIntegratedTokenRefresh:
     """T019-T020: Tests for token refresh behavior with azure_ad_integrated."""
 
+    @patch("src.db.connection.event")
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
-    def test_creator_calls_get_token_on_every_invocation(self, mock_create_engine, mock_provider_cls):
+    def test_creator_calls_get_token_on_every_invocation(self, mock_create_engine, mock_provider_cls, mock_event):
         """T019: The creator callable calls get_token() on every invocation (not cached)."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"
@@ -604,9 +623,10 @@ class TestAzureAdIntegratedTokenRefresh:
         # get_token should be called once per creator invocation
         assert mock_provider.get_token.call_count == 3
 
+    @patch("src.db.connection.event")
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
-    def test_pool_pre_ping_and_recycle_set_for_azure_ad_integrated(self, mock_create_engine, mock_provider_cls):
+    def test_pool_pre_ping_and_recycle_set_for_azure_ad_integrated(self, mock_create_engine, mock_provider_cls, mock_event):
         """T020: pool_pre_ping=True and pool_recycle=3600 set on azure_ad_integrated engine."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"

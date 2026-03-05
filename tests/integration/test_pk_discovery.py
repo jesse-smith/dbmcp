@@ -5,10 +5,11 @@ Requires TEST_DB_SERVER, TEST_DB_DATABASE, TEST_DB_USERNAME, TEST_DB_PASSWORD
 environment variables.
 """
 
-import json
 import os
 
 import pytest
+
+from tests.helpers import parse_tool_response
 
 # Skip all integration tests if env vars not set
 pytestmark = pytest.mark.skipif(
@@ -38,7 +39,7 @@ def connection_id():
             trust_server_cert=True,
         )
     )
-    data = json.loads(result)
+    data = parse_tool_response(result)
     assert data["status"] == "success", f"Connection failed: {data}"
     return data["connection_id"]
 
@@ -55,7 +56,7 @@ class TestFindPKCandidatesBasic:
         """Table with declared PK returns it as constraint-backed candidate."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             schema_name="SalesLT",
@@ -78,7 +79,7 @@ class TestFindPKCandidatesBasic:
         """Each candidate has all required fields from PKCandidate model."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             schema_name="SalesLT",
@@ -107,7 +108,7 @@ class TestTypeFilter:
         """Default type filter includes standard integer types."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             schema_name="SalesLT",
@@ -124,7 +125,7 @@ class TestTypeFilter:
         """Empty type_filter includes all column types."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             schema_name="SalesLT",
@@ -150,7 +151,7 @@ class TestErrorHandling:
         """Invalid connection_id returns error."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id="nonexistent",
             table_name="Customers",
         ))
@@ -163,7 +164,7 @@ class TestErrorHandling:
         """Nonexistent table returns error."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="NonexistentTable12345",
         ))
@@ -178,7 +179,7 @@ class TestErrorHandling:
 
         # Use a table that may not have PK candidates
         # (this is table-dependent; adjust if needed)
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             schema_name="SalesLT",
@@ -200,7 +201,7 @@ class TestDefaultSchema:
         """When no schema specified, defaults to 'dbo'."""
         from src.mcp_server.analysis_tools import find_pk_candidates
 
-        result = json.loads(await find_pk_candidates(
+        result = parse_tool_response(await find_pk_candidates(
             connection_id=connection_id,
             table_name="Customers",
             # No schema_name — should default to "dbo"

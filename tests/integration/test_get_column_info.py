@@ -13,10 +13,11 @@ Requires TEST_DB_SERVER, TEST_DB_DATABASE, TEST_DB_USERNAME, TEST_DB_PASSWORD
 environment variables.
 """
 
-import json
 import os
 
 import pytest
+
+from tests.helpers import parse_tool_response
 
 # Skip all integration tests if env vars not set
 pytestmark = pytest.mark.skipif(
@@ -46,7 +47,7 @@ def connection_id():
             trust_server_cert=True,
         )
     )
-    data = json.loads(result)
+    data = parse_tool_response(result)
     assert data["status"] == "success", f"Connection failed: {data}"
     return data["connection_id"]
 
@@ -119,7 +120,7 @@ class TestGetColumnInfoBasic:
             schema_name="dbo",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["table_name"] == "test_all_columns"
@@ -185,7 +186,7 @@ class TestGetColumnInfoFiltering:
             columns=["id", "name", "email"],
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 3
@@ -223,7 +224,7 @@ class TestGetColumnInfoFiltering:
             column_pattern="%_id",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 3
@@ -260,7 +261,7 @@ class TestGetColumnInfoFiltering:
             column_pattern="%_id",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 2
@@ -291,7 +292,7 @@ class TestGetColumnInfoFiltering:
             column_pattern="%_xyz",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 0
@@ -323,7 +324,7 @@ class TestGetColumnInfoDefaultSchema:
             table_name="test_default_schema",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["schema_name"] == "dbo"
@@ -364,7 +365,7 @@ class TestGetColumnInfoSampleSize:
             sample_size=3,
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         category_col = result["columns"][0]
@@ -388,7 +389,7 @@ class TestGetColumnInfoErrorHandling:
             schema_name="dbo",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "error"
         assert "nonexistent_connection" in result["error_message"]
@@ -404,7 +405,7 @@ class TestGetColumnInfoErrorHandling:
             schema_name="dbo",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "error"
         assert "not found" in result["error_message"].lower()
@@ -434,7 +435,7 @@ class TestGetColumnInfoErrorHandling:
             columns=["id", "nonexistent_column"],
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "error"
         assert "not found" in result["error_message"].lower()
@@ -473,7 +474,7 @@ class TestGetColumnInfoEdgeCases:
             columns=["nullable_col"],
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         col = result["columns"][0]
@@ -504,7 +505,7 @@ class TestGetColumnInfoEdgeCases:
             schema_name="dbo",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 2
@@ -549,7 +550,7 @@ class TestGetColumnInfoEdgeCases:
             schema_name="dbo",
         )
 
-        result = json.loads(result_json)
+        result = parse_tool_response(result_json)
 
         assert result["status"] == "success"
         assert result["total_columns_analyzed"] == 10

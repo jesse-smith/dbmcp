@@ -112,30 +112,30 @@ SAMPLE_TABLE_ROWS = [
 ]
 
 
-def assert_json_contains(json_str: str, expected: dict[str, Any]) -> None:
-    """Assert that a JSON string contains expected key-value pairs.
+def assert_json_contains(response_str: str, expected: dict[str, Any]) -> None:
+    """Assert that a tool response string contains expected key-value pairs.
 
     Args:
-        json_str: JSON string to check
+        response_str: TOON-encoded tool response string
         expected: Dictionary of expected key-value pairs
     """
-    import json as json_module
+    from tests.helpers import parse_tool_response
 
-    data = json_module.loads(json_str)
+    data = parse_tool_response(response_str)
     for key, value in expected.items():
-        assert key in data, f"Key '{key}' not found in JSON"
+        assert key in data, f"Key '{key}' not found in response"
         assert data[key] == value, f"Key '{key}': expected {value}, got {data[key]}"
 
 
-def assert_json_has_keys(json_str: str, keys: list[str]) -> None:
-    """Assert that a JSON string contains expected keys.
+def assert_json_has_keys(response_str: str, keys: list[str]) -> None:
+    """Assert that a tool response string contains expected keys.
 
     Args:
-        json_str: JSON string to check
+        response_str: TOON-encoded tool response string
         keys: List of keys that should be present
     """
-    import json as json_module
+    from tests.helpers import parse_tool_response
 
-    data = json_module.loads(json_str)
+    data = parse_tool_response(response_str)
     for key in keys:
-        assert key in data, f"Key '{key}' not found in JSON"
+        assert key in data, f"Key '{key}' not found in response"

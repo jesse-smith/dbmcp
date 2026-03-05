@@ -8,10 +8,11 @@ Tests cover:
 - Error handling
 """
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.helpers import parse_tool_response
 
 
 class TestExecuteQueryMCPTool:
@@ -45,7 +46,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=10,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
             assert "columns" in data
             assert "rows" in data
@@ -76,7 +77,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
             assert len(data["rows"]) == 1
 
@@ -104,7 +105,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=2,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
             # Verify LIMIT was added to the query (first call is the main query)
             first_call = mock_conn.execute.call_args_list[0]
@@ -127,7 +128,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "blocked"
             assert data["is_allowed"] is False
             assert data["query_type"] == "delete"
@@ -149,7 +150,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "blocked"
             assert data["is_allowed"] is False
             assert data["query_type"] == "update"
@@ -170,7 +171,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "blocked"
             assert data["is_allowed"] is False
             assert data["query_type"] == "insert"
@@ -190,7 +191,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=0,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "error"
             assert "row_limit" in data["error_message"].lower()
 
@@ -209,7 +210,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=10001,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "error"
             assert "row_limit" in data["error_message"].lower()
 
@@ -228,7 +229,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "error"
             assert "query_text" in data["error_message"].lower() or "empty" in data["error_message"].lower()
 
@@ -243,7 +244,7 @@ class TestExecuteQueryMCPTool:
             row_limit=100,
         )
 
-        data = json.loads(result)
+        data = parse_tool_response(result)
         assert data["status"] == "error"
         assert "error_message" in data
 
@@ -273,7 +274,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=5,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
 
             # Check required fields
@@ -318,7 +319,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=100,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
             assert len(data["rows"]) == 1
             assert "total" in data["columns"]
@@ -356,7 +357,7 @@ class TestExecuteQueryMCPTool:
                 row_limit=10,
             )
 
-            data = json.loads(result)
+            data = parse_tool_response(result)
             assert data["status"] == "success"
             assert "first_name" in data["columns"]
             assert "order_id" in data["columns"]
