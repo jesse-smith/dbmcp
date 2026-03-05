@@ -19,6 +19,9 @@ from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
 from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod, Connection
 
+# ODBC constant for per-statement query timeout (seconds)
+SQL_ATTR_QUERY_TIMEOUT = 1005
+
 logger = get_logger(__name__)
 
 
@@ -39,6 +42,7 @@ class PoolConfig:
     pool_timeout: int = 30
     pool_recycle: int = 3600
     pool_pre_ping: bool = True
+    query_timeout: int = 30
 
 
 class ConnectionError(Exception):
@@ -84,6 +88,7 @@ class ConnectionManager:
         trust_server_cert: bool = False,
         connection_timeout: int = 30,
         tenant_id: str | None = None,
+        query_timeout: int = 30,
     ) -> Connection:
         """Create a database connection and return Connection object.
 
@@ -97,6 +102,8 @@ class ConnectionManager:
             trust_server_cert: Trust server certificate without validation
             connection_timeout: Connection timeout in seconds (5-300)
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+            query_timeout: Per-statement query timeout in seconds. 0 = no timeout,
+                5-300 = timeout in seconds. (default: 30)
 
         Returns:
             Connection object with connection metadata
@@ -115,6 +122,9 @@ class ConnectionManager:
 
         if connection_timeout < 5 or connection_timeout > 300:
             raise ValueError("Connection timeout must be between 5 and 300 seconds")
+
+        if query_timeout != 0 and (query_timeout < 5 or query_timeout > 300):
+            raise ValueError("Query timeout must be 0 (no timeout) or between 5 and 300 seconds")
 
         # Generate connection ID (excludes password for security)
         if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
@@ -144,7 +154,7 @@ class ConnectionManager:
         # Create engine, test connection, and store metadata
         start_time = time.time()
         try:
-            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id)
+            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id, query_timeout)
             self._test_connection(engine, start_time, server, database, port)
         except ConnectionError:
             raise
@@ -172,6 +182,7 @@ class ConnectionManager:
         odbc_conn_str: str,
         authentication_method: AuthenticationMethod,
         tenant_id: str | None,
+        query_timeout: int = 30,
     ) -> Engine:
         """Create a SQLAlchemy engine with connection pooling.
 
@@ -179,6 +190,7 @@ class ConnectionManager:
             odbc_conn_str: ODBC connection string
             authentication_method: Authentication method
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+            query_timeout: Per-statement query timeout in seconds (0 = no timeout)
 
         Returns:
             Configured SQLAlchemy Engine
@@ -199,12 +211,19 @@ class ConnectionManager:
             def creator():
                 token = provider.get_token()
                 packed = provider.pack_token_for_pyodbc(token)
-                return pyodbc.connect(odbc_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed})
+                return pyodbc.connect(
+                    odbc_conn_str,
+                    attrs_before={
+                        SQL_COPT_SS_ACCESS_TOKEN: packed,
+                        SQL_ATTR_QUERY_TIMEOUT: query_timeout,
+                    },
+                )
 
             return create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
 
         return create_engine(
             f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+            connect_args={"attrs_before": {SQL_ATTR_QUERY_TIMEOUT: query_timeout}},
             **pool_kwargs,
         )
 
