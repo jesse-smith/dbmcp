@@ -32,6 +32,7 @@ class PoolConfig:
         pool_timeout: Seconds to wait for connection before timeout (default: 30)
         pool_recycle: Seconds before recycling idle connections (default: 3600)
         pool_pre_ping: Validate connections before use (default: True)
+        query_timeout: Per-statement query timeout in seconds. 0 disables timeout. (default: 30)
     """
 
     pool_size: int = 5

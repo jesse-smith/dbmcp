@@ -6,9 +6,7 @@ preventing the async event loop from blocking.
 Imports go through src.mcp_server.server to resolve circular imports.
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 # Import through server to resolve circular imports
 from src.mcp_server.server import (
@@ -22,7 +20,6 @@ from src.mcp_server.server import (
     list_schemas,
     list_tables,
 )
-
 
 # ---------------------------------------------------------------------------
 # Schema Tools: asyncio.to_thread tests

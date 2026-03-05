@@ -264,11 +264,6 @@ class TestTimeoutEventCallbackBehavior:
 
         # Directly test _create_engine and capture the event listener
         captured_listeners = []
-        original_event_listens_for = None
-
-        import sqlalchemy
-
-        original_event_listens_for = sqlalchemy.event.listens_for
 
         def capture_listens_for(target, identifier):
             def decorator(fn):
