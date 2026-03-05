@@ -1,49 +1,46 @@
-# DBMCP: Database Schema Explorer MCP Server
+# DBMCP: Database MCP Server for SQL Server
 
 [![CI](https://github.com/jesse-smith/dbmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jesse-smith/dbmcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jesse-smith/dbmcp/graph/badge.svg?token=mmy1Rukgi3)](https://codecov.io/gh/jesse-smith/dbmcp)
 
-A Model Context Protocol (MCP) server that enables AI assistants like Claude to explore and understand SQL Server database schemas. Designed for legacy databases with undeclared foreign keys and cryptic column names.
+MCP server that gives AI assistants full read-only access to SQL Server databases -- schema exploration, query execution, and structural analysis. Designed for legacy databases with undeclared foreign keys. All responses use TOON format for minimal token consumption.
 
 ## Features
 
-- **Database Discovery**: List schemas, tables, and views with row counts and metadata
-- **Table Inspection**: Get detailed schema info including columns, indexes, and constraints
-- **Relationship Inference**: Automatically detect likely foreign key relationships using name similarity, type compatibility, and structural hints
-- **Sample Data**: Retrieve representative data samples using multiple sampling strategies
-- **Column Analysis**: Infer column purposes (ID, enum, status, flag, amount, timestamp) from data patterns
-- **Documentation Cache**: Export and cache database documentation as markdown files
-- **Schema Drift Detection**: Detect changes between cached docs and current database state
-- **Query Execution**: Execute read-only SQL queries with automatic row limiting
+- Schema exploration (schemas, tables, columns, indexes, constraints)
+- Read-only query execution with CTE support and automatic row limiting
+- Query validation via configurable denylist (sqlglot-based)
+- Primary key candidate discovery
+- Foreign key candidate inference
+- Column statistics and analysis
+- Azure AD integrated authentication
+- TOON-formatted responses (token-efficient for LLM consumers)
+- Async database execution with configurable query timeouts
 
 ## Requirements
 
 - Python 3.11+
-- SQL Server database access (via ODBC Driver 18)
-- Claude for Desktop (or other MCP-compatible client)
+- SQL Server (via ODBC Driver 18)
+- uv (Python package manager)
+- MCP-compatible client (Claude Desktop, Claude Code, etc.)
 
 ## Installation
 
-1. Clone the repository:
+### 1. Global install (recommended for MCP clients)
+
 ```bash
-git clone https://github.com/your-org/dbmcp.git
+uv tool install "dbmcp @ git+https://github.com/jesse-smith/dbmcp.git"
+```
+
+### 2. Local development
+
+```bash
+git clone https://github.com/jesse-smith/dbmcp.git
 cd dbmcp
+uv sync
 ```
 
-2. Create and activate a virtual environment:
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -e .
-# Or install directly:
-pip install "mcp[cli]" sqlalchemy pyodbc
-```
-
-4. Install ODBC Driver 18 for SQL Server:
+### ODBC Driver 18
 
 **macOS:**
 ```bash
@@ -62,147 +59,78 @@ sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
 **Windows:**
 Download from: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
 
-## Configuration
+## MCP Client Configuration
 
-### Claude for Desktop
+### Claude Desktop
 
-Add the server to your Claude Desktop configuration (`~/.claude/claude_desktop_config.json`):
+Add to `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "dbmcp": {
-      "command": "python",
-      "args": ["-m", "src.mcp_server.server"],
-      "cwd": "/path/to/dbmcp",
-      "env": {
-        "PYTHONPATH": "/path/to/dbmcp"
-      }
+      "command": "dbmcp"
     }
   }
 }
 ```
 
-See `docs/claude_config.json` for a template.
+### Claude Code
 
-## Usage
+Add to `.mcp.json` or configure via CLI:
 
-Once configured, interact with your database through Claude:
-
-### Connect to a Database
-```
-Connect to SQL Server at localhost, database AdventureWorks,
-username sa, password MyPassword123.
-```
-
-### Explore Schema
-```
-List all schemas in the database.
-Show me the top 20 tables by row count.
-Get the schema for the Orders table.
+```json
+{
+  "mcpServers": {
+    "dbmcp": {
+      "command": "dbmcp",
+      "type": "stdio"
+    }
+  }
+}
 ```
 
-### Infer Relationships
-```
-What foreign key relationships can you infer for the OrderDetails table?
-```
-
-### Sample Data
-```
-Show me 5 sample rows from the Customers table.
-```
-
-### Analyze Columns
-```
-Analyze the STATUS_CD column in the Orders table.
-```
-
-### Execute Queries
-```
-Execute: SELECT TOP 10 * FROM Orders WHERE Status = 'Pending'
-```
+> If installed locally (not via `uv tool`), use `uv run dbmcp` as the command and set `cwd` to the repo directory.
 
 ## MCP Tools Reference
 
 | Tool | Description |
 |------|-------------|
-| `connect_database` | Connect to a SQL Server database |
+| `connect_database` | Connect to a SQL Server instance (Windows auth, SQL auth, or Azure AD) |
 | `list_schemas` | List all schemas with table/view counts |
-| `list_tables` | List tables with filtering, sorting, pagination |
-| `get_table_schema` | Get detailed table schema (columns, indexes, FKs) |
-| `infer_relationships` | Infer potential foreign key relationships |
+| `list_tables` | List tables with filtering, sorting, and pagination |
+| `get_table_schema` | Get detailed table schema (columns, indexes, foreign keys) |
 | `get_sample_data` | Retrieve sample rows from a table |
-| `analyze_column` | Analyze column to infer purpose |
-| `export_documentation` | Export database docs to markdown files |
-| `load_cached_docs` | Load previously cached documentation |
-| `check_drift` | Detect schema changes since last cache |
-| `execute_query` | Execute read-only SQL queries |
-
-## Non-Functional Requirements
-
-The server is designed to meet the following performance targets:
-
-| NFR | Requirement | Threshold |
-|-----|-------------|-----------|
-| NFR-001 | Metadata retrieval | <30s for 1000 tables |
-| NFR-002 | Sample data retrieval | <10s per request |
-| NFR-003 | Documentation size | <1MB for 500 tables |
-| NFR-004 | Read-only enforcement | Block all writes by default |
-| NFR-005 | Credential security | Never log passwords |
+| `execute_query` | Execute read-only SQL queries (supports CTEs) |
+| `get_column_info` | Get column-level statistics and value distributions |
+| `find_pk_candidates` | Discover likely primary key columns via uniqueness analysis |
+| `find_fk_candidates` | Infer potential foreign key relationships between tables |
 
 ## Development
 
-### Running Tests
 ```bash
-# All tests
-pytest
-
-# Unit tests only
-pytest tests/unit/
-
-# Integration tests
-pytest tests/integration/
-
-# Performance tests (slow)
-pytest tests/performance/ -m slow
-
-# NFR compliance suite
-pytest tests/compliance/
+uv sync --group dev
+uv run pytest tests/
+uv run ruff check src/
 ```
 
-### Code Quality
-```bash
-# Linting
-ruff check .
+## Project Structure
 
-# Type checking
-mypy src/
-```
-
-### Project Structure
 ```
 dbmcp/
-├── src/
-│   ├── mcp_server/     # FastMCP server and tools
-│   ├── db/             # Database connection, metadata, queries
-│   ├── inference/      # FK and column inference algorithms
-│   ├── cache/          # Documentation caching and drift detection
-│   └── models/         # Data models (Schema, Table, Column, etc.)
-├── tests/
-│   ├── unit/           # Unit tests
-│   ├── integration/    # Integration tests
-│   ├── performance/    # Performance and NFR validation
-│   ├── compliance/     # NFR compliance suite
-│   └── fixtures/       # Test fixtures and utilities
-├── docs/               # Documentation and examples
-├── examples/           # Example notebooks
-└── specs/              # Feature specifications
+  src/
+    mcp_server/    # FastMCP server, tool definitions
+    db/            # Connection, metadata, query execution, validation
+    analysis/      # PK discovery, FK inference, column stats
+    models/        # Data models (schema, relationship, analysis)
+  tests/
+    unit/
+    integration/
+    compliance/
+    performance/
+  specs/           # Feature specifications
 ```
 
 ## License
 
-[Your License Here]
-
-## Contributing
-
-[Your Contributing Guidelines Here]
+MIT
