@@ -194,8 +194,8 @@ async def list_schemas(connection_id: str) -> str:
         TOON-encoded string with schema list:
 
             status: "success" | "error"
-            total_schemas: int
-            schemas: list
+            total_schemas: int                 // on success only
+            schemas: list                      // on success only
                 schema_name: string
                 table_count: int
                 view_count: int
@@ -264,12 +264,12 @@ async def list_tables(
         TOON-encoded string with table list and pagination metadata:
 
             status: "success" | "error"
-            returned_count: int
-            total_count: int
-            offset: int
-            limit: int
-            has_more: bool
-            tables: list
+            returned_count: int                // on success only
+            total_count: int                   // on success only
+            offset: int                        // on success only
+            limit: int                         // on success only
+            has_more: bool                     // on success only
+            tables: list                       // on success only
                 schema_name: string
                 table_name: string
                 table_type: "table" | "view"

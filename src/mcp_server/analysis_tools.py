@@ -49,10 +49,10 @@ async def get_column_info(
         TOON-encoded string with status, table/schema metadata, and column statistics:
 
             status: "success" | "error"
-            table_name: string
-            schema_name: string
-            total_columns_analyzed: int
-            columns: list
+            table_name: string                 // on success only
+            schema_name: string                // on success only
+            total_columns_analyzed: int        // on success only
+            columns: list                      // on success only
                 column_name: string
                 data_type: string
                 total_rows: int
@@ -172,9 +172,9 @@ async def find_pk_candidates(
         TOON-encoded string with status, table/schema metadata, and candidates list:
 
             status: "success" | "error"
-            table_name: string
-            schema_name: string
-            candidates: list
+            table_name: string                 // on success only
+            schema_name: string                // on success only
+            candidates: list                   // on success only
                 column_name: string
                 data_type: string
                 is_constraint_backed: bool
@@ -281,12 +281,12 @@ async def find_fk_candidates(
         TOON-encoded string with status, source metadata, candidates list, and search info:
 
             status: "success" | "error"
-            source: object
+            source: object                     // on success only
                 column_name: string
                 table_name: string
                 schema_name: string
                 data_type: string
-            candidates: list
+            candidates: list                   // on success only
                 source_column: string
                 source_table: string
                 source_schema: string
@@ -301,9 +301,9 @@ async def find_fk_candidates(
                 target_has_index: bool
                 overlap_count: int             // only when include_overlap=True
                 overlap_percentage: float      // only when include_overlap=True
-            total_found: int
-            was_limited: bool                  // true if results truncated by limit
-            search_scope: string               // human-readable filter summary
+            total_found: int                   // on success only
+            was_limited: bool                  // on success only
+            search_scope: string               // on success only
             error_message: string              // on error only
 
     Error conditions:
