@@ -3,6 +3,7 @@
 Tools: connect_database, list_schemas, list_tables, get_table_schema
 """
 
+import asyncio
 from pathlib import Path
 
 from src.db.connection import ConnectionError
@@ -112,17 +113,16 @@ async def connect_database(
             has_cached_docs: bool              // on success only
             error_message: string              // on error only
     """
+    # Parse authentication method (fast, no I/O)
     try:
-        # Parse authentication method
-        try:
-            auth_method = AuthenticationMethod(authentication_method.lower())
-        except ValueError:
-            return encode_response({
-                "status": "error",
-                "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
-            })
+        auth_method = AuthenticationMethod(authentication_method.lower())
+    except ValueError:
+        return encode_response({
+            "status": "error",
+            "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
+        })
 
-        # Attempt connection
+    def _sync_connect():
         conn_manager = get_connection_manager()
         connection = conn_manager.connect(
             server=server,
@@ -136,24 +136,26 @@ async def connect_database(
             tenant_id=tenant_id,
         )
 
-        # Get schema count for response
         engine = conn_manager.get_engine(connection.connection_id)
         metadata_svc = MetadataService(engine)
         schemas = metadata_svc.list_schemas(connection_id=connection.connection_id)
 
-        # Check for cached documentation
         cache_dir = Path("docs") / connection.connection_id
         has_cached_docs = cache_dir.exists() and any(cache_dir.iterdir())
 
         logger.info(f"Connected to {database} on {server}:{port}")
 
-        return encode_response({
+        return {
             "connection_id": connection.connection_id,
             "status": "success",
             "message": f"Successfully connected to {database}",
             "schema_count": len(schemas),
             "has_cached_docs": has_cached_docs,
-        })
+        }
+
+    try:
+        result = await asyncio.to_thread(_sync_connect)
+        return encode_response(result)
 
     except ConnectionError as e:
         logger.error(f"Connection failed: {type(e).__name__}")
@@ -204,11 +206,10 @@ async def list_schemas(connection_id: str) -> str:
     Error conditions:
         - Invalid connection_id: returns status "error" with error_message
     """
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
         schemas = metadata_svc.list_schemas(connection_id=connection_id)
-
-        return encode_response({
+        return {
             "status": "success",
             "schemas": [
                 {
@@ -219,8 +220,11 @@ async def list_schemas(connection_id: str) -> str:
                 for s in schemas
             ],
             "total_schemas": len(schemas),
-        })
+        }
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
@@ -280,18 +284,17 @@ async def list_tables(
                 columns: list              // detailed mode only
             error_message: string          // on error only
     """
-    # Validate parameters with early return
+    # Validate parameters with early return (fast, no I/O)
     validation_error = _validate_list_tables_params(limit, offset, object_type, sort_by)
     if validation_error is not None:
         return encode_response({"status": "error", "error_message": validation_error})
 
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
 
         all_tables = []
         total_count = 0
 
-        # Query each specified schema, or all schemas if no filter
         schemas_to_query = schema_filter or [None]
         for schema_name in schemas_to_query:
             tables, pagination = metadata_svc.list_tables(
@@ -308,14 +311,13 @@ async def list_tables(
             all_tables.extend(tables)
             total_count += pagination.get("total_count", len(tables))
 
-        # Apply limit after combining schemas (for schema_filter case)
         all_tables = all_tables[:limit]
 
         table_list = [
             _build_table_entry(t, output_mode, metadata_svc) for t in all_tables
         ]
 
-        return encode_response({
+        return {
             "status": "success",
             "tables": table_list,
             "returned_count": len(all_tables),
@@ -323,8 +325,11 @@ async def list_tables(
             "offset": offset,
             "limit": limit,
             "has_more": (offset + len(all_tables)) < total_count,
-        })
+        }
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
@@ -390,14 +395,14 @@ async def get_table_schema(
                     target_columns: list of string
             error_message: string                  // on error only
     """
-    try:
+    def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
 
         if not metadata_svc.table_exists(table_name, schema_name):
-            return encode_response({
+            return {
                 "status": "error",
                 "error_message": f"Table '{schema_name}.{table_name}' not found",
-            })
+            }
 
         schema = metadata_svc.get_table_schema(
             table_name=table_name,
@@ -406,8 +411,11 @@ async def get_table_schema(
             include_relationships=include_relationships,
         )
 
-        return encode_response({"status": "success", "table": schema})
+        return {"status": "success", "table": schema}
 
+    try:
+        result = await asyncio.to_thread(_sync_work)
+        return encode_response(result)
     except ValueError as e:
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
