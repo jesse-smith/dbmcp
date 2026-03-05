@@ -13,7 +13,7 @@ Migrate all 9 dbmcp MCP tool responses from JSON to TOON format in an atomic swa
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Atomic TOON Migration** - Replace JSON serialization with TOON across all 9 tools, tests, and docstrings in a single coordinated swap
-- [ ] **Phase 2: Staleness Guard** - Automated test that catches docstring-schema drift on every commit
+- [x] **Phase 2: Staleness Guard** - Automated test that catches docstring-schema drift on every commit (completed 2026-03-05)
 
 ## Phase Details
 
@@ -44,7 +44,7 @@ Plans:
   2. The staleness test passes in the current codebase (baseline correctness after Phase 1 migration)
   3. CI runs the staleness test on every commit (no special invocation required -- it lives in the standard test suite)
   4. Staleness test module has 90%+ test coverage
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md -- TDD: Docstring parser and field comparison utilities with meta-tests
@@ -58,4 +58,4 @@ Phases execute in numeric order: 1 -> 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Atomic TOON Migration | 3/3 | Complete | 2026-03-04 |
-| 2. Staleness Guard | 1/2 | In progress | - |
+| 2. Staleness Guard | 2/2 | Complete   | 2026-03-05 |
