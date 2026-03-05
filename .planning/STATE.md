@@ -5,7 +5,7 @@ milestone_name: TOON Response Format Migration
 status: shipped
 stopped_at: Milestone v1.0 complete
 last_updated: "2026-03-05T16:45:00.000Z"
-last_activity: 2026-03-05 -- Milestone v1.0 shipped
+last_activity: 2026-03-05 - Completed quick task 1: Add query timeouts and async DB execution to prevent event loop blocking
 progress:
   total_phases: 2
   completed_phases: 2
@@ -55,6 +55,12 @@ None.
 ### Blockers/Concerns
 
 None.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 1 | Add query timeouts and async DB execution to prevent event loop blocking | 2026-03-05 | 22a4270 | Verified | [1-add-query-timeouts-and-async-db-executio](./quick/1-add-query-timeouts-and-async-db-executio/) |
 
 ## Session Continuity
 
