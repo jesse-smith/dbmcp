@@ -50,7 +50,7 @@ See PROJECT.md Key Decisions table for full log.
 
 ### Pending Todos
 
-None.
+1. Close database connections when MCP session ends (database)
 
 ### Blockers/Concerns
 
