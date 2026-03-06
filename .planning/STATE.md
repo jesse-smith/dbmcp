@@ -1,46 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: TOON Response Format Migration
-status: shipped
-stopped_at: Milestone v1.0 complete
-last_updated: "2026-03-05T18:57:00.000Z"
-last_activity: 2026-03-05 - Completed quick task 4: Update README to reflect current project state with uv install instructions
+milestone: v1.1
+milestone_name: Concern Handling
+status: defining_requirements
+stopped_at: Defining requirements for v1.1
+last_updated: "2026-03-06T19:00:00.000Z"
+last_activity: 2026-03-06 - Milestone v1.1 started
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-05)
+See: .planning/PROJECT.md (updated 2026-03-06)
 
-**Core value:** Every MCP tool response uses TOON format, reducing token consumption for LLM consumers without losing any information.
-**Current focus:** Milestone v1.0 shipped. Planning next milestone.
+**Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
+**Current focus:** Milestone v1.1 Concern Handling — defining requirements
 
 ## Current Position
 
-Milestone: v1.0 TOON Response Format Migration — SHIPPED 2026-03-05
-Progress: [██████████] 100%
-
-## Performance Metrics
-
-**Velocity:**
-- Total plans completed: 5
-- Average duration: 3.8min
-- Total execution time: 0.32 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 01 | 3/3 | 10min | 3.3min |
-| 02 | 2/2 | 9min | 4.5min |
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-06 — Milestone v1.1 started
 
 ## Accumulated Context
 
@@ -50,7 +38,16 @@ See PROJECT.md Key Decisions table for full log.
 
 ### Pending Todos
 
-1. Close database connections when MCP session ends (database)
+1. Remove metrics module (tech debt)
+2. Replace broad exception handling with specific types (code quality)
+3. Remove type ignore suppressions in query module (code quality)
+4. Increase test coverage to minimum 70% (testing)
+5. Handle Azure AD token refresh in connection pool (database)
+6. Close database connections when MCP session ends (database)
+7. Fix identifier sanitization to use parameterized queries (security)
+8. Pin sqlglot version and add edge case test fixtures (security)
+9. Add type handler registry for query result JSON serialization (database)
+10. Add config file for connections, defaults, and SP allowlist (general)
 
 ### Blockers/Concerns
 
@@ -67,6 +64,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-05
-Stopped at: Completed quick-4
+Last session: 2026-03-06
+Stopped at: Milestone v1.1 started — defining requirements
 Resume file: N/A
