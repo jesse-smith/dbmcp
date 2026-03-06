@@ -1,142 +1,119 @@
-# Feature Research
+# Feature Landscape
 
-**Domain:** TOON format migration for MCP server responses
-**Researched:** 2026-03-04
-**Confidence:** HIGH
+**Domain:** Concern handling for Python MCP database server (SQLAlchemy + pyodbc + SQL Server)
+**Researched:** 2026-03-06
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes (Users Expect These)
+Features users expect. Missing = product feels incomplete or fragile.
 
-Features that must work correctly or the migration is broken/regressive.
+| Feature | Why Expected | Complexity | Dependencies | Notes |
+|---------|--------------|------------|--------------|-------|
+| Specific exception handling | Bare `except Exception` hides bugs, makes debugging impossible; 25 instances across codebase | Medium | None (existing exception types from sqlalchemy, pyodbc, azure.identity) | SQLAlchemy raises `OperationalError`, `ProgrammingError`, `InterfaceError`; pyodbc raises `pyodbc.Error` subtypes; azure-identity raises `CredentialUnavailableError`, `ClientAuthenticationError`. The MCP tool layer should catch known types and only use bare Exception as a true last-resort sentinel. |
+| Dead code removal (metrics.py) | Unused module creates confusion about codebase intent; no imports reference it | Low | None | `src/metrics.py` is imported by nothing. Zero references outside its own docstring. Safe to delete. |
+| Type ignore cleanup | `# type: ignore` on Query._columns/_rows/_total_rows_available hides a design smell (ad-hoc attribute injection on a dataclass) | Low-Medium | None | Fix is either: (a) add those fields to the Query dataclass with defaults, or (b) return a separate result container alongside Query. Option (b) is cleaner -- a `QueryResult` dataclass holding columns/rows/total_rows_available, returned as a tuple from `execute_query`. |
+| Test coverage to 70% per module | Below 70% signals untested code paths, especially in metadata.py (heavy exception handling) and MCP tool layer | Medium-High | pytest-cov (already installed) | The MCP tool layer uses `asyncio.to_thread` wrapping sync functions -- test the sync inner functions directly, not through the async wrapper. metadata.py has ~13 bare except blocks that need exercising. |
+| MCP session cleanup | Connections leak if LLM client disconnects without calling disconnect; `ConnectionManager` has no session lifecycle hook | Medium | FastMCP session/lifecycle events | FastMCP supports server lifecycle context managers. Wire `disconnect_all()` to session/server shutdown. |
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Replace `json.dumps()` with `toon_format.encode()` in all 9 tool return paths | The entire point of the migration; partial conversion means two formats in flight | LOW | 41 `json.dumps` call sites across 3 tool modules (schema_tools, query_tools, analysis_tools). Mechanical replacement: build the same dict, call `encode()` instead of `json.dumps()`. |
-| Preserve response structure (field names, types, nesting) | PROJECT.md constraint: "Response structure must remain identical -- only serialization format changes" | LOW | `encode()` accepts any JSON-serializable Python value, so existing dict-building code stays unchanged. |
-| Handle error responses correctly | Every tool has `{"status": "error", "error_message": ...}` paths; these must encode cleanly | LOW | Simple flat dicts. TOON encodes these trivially as `status: error` / `error_message: ...`. No quoting issues expected. |
-| Update all test assertions from `json.loads()` to `toon_format.decode()` | 65 `json.loads`/`json.dumps` occurrences across 7 test files; tests break immediately without this | MEDIUM | Bulk find-and-replace with some care around test helpers. The decode function exists and is stable. Most integration tests parse the tool return string and check dict fields. |
-| Update tool docstrings to document TOON format | FastMCP reads docstrings verbatim as tool descriptions sent to LLM clients. If docstrings still say "JSON string with..." the LLM consumer gets wrong format info. | MEDIUM | 9 tools, each with a `Returns:` docstring block showing JSON examples. Must rewrite to show TOON structure, types, and enum literals. This is the most labor-intensive table-stakes item because each tool has a unique response shape. |
-| Add `toon-format` (`toon_format`) as project dependency | Nothing works without the library installed | LOW | Single `uv add` of the package. Python 3.8+ supported, project uses 3.11+. |
+## Differentiators
 
-### Differentiators (Competitive Advantage)
+Features that set the product apart. Not expected, but valuable.
 
-Features that go beyond "it works" to make the migration robust and maintainable.
+| Feature | Value Proposition | Complexity | Dependencies | Notes |
+|---------|-------------------|------------|--------------|-------|
+| Azure AD token refresh in connection pool | Current code acquires a token once at connection creation via the `creator` callable. Azure AD tokens expire after ~60-75 minutes. Long-running sessions silently break when pool returns a stale connection. | Medium | azure-identity (already installed) | The `creator` function in `_create_engine` already calls `provider.get_token()` per physical connection, which is good. But SQLAlchemy's pool reuses physical connections -- `pool_pre_ping` only tests connectivity (SELECT 1), not token validity. Solution: set `pool_recycle` to ~3000s (under 60-min expiry), so pooled connections are recycled before tokens expire. Optionally cache `AccessToken.expires_on` and force reconnect when approaching expiry. |
+| Type handler registry for serialization | Current `_truncate_value` in query.py handles types inline with if/elif chains (datetime, Decimal, bytes, etc.). `_pre_serialize` in serialization.py has a parallel chain. Adding a new type requires editing two places. | Medium | None | Pattern: a registry dict mapping `type -> callable` that both query result processing and TOON serialization consult. Register handlers at module load. Enables extending for `uuid.UUID`, `memoryview`, `bytearray`, custom SQL types without touching core logic. |
+| SQL identifier validation against metadata | Current `_sanitize_identifier` uses regex `[a-zA-Z0-9_\s]+` -- rejects valid SQL Server identifiers (e.g., names with hyphens, unicode chars) and cannot verify the column actually exists | Medium | MetadataService (already exists) | Pattern: accept identifier if it matches a known column/table from metadata cache, OR is bracket-quoted. This prevents injection AND handles weird-but-valid names. Requires threading metadata context into QueryService. |
+| Configuration file for connections and defaults | Currently all config is passed via MCP tool parameters at call time; no way to set defaults, connection presets, or customize SP allowlist without code changes | Medium | tomllib (stdlib in 3.11+) | TOML is the Python standard (PEP 680). Pattern: `dbmcp.toml` in project root or `~/.config/dbmcp/config.toml`. Sections: `[defaults]` (query_timeout, row_limit, pool_recycle), `[connections.name]` (server, database, auth), `[validation]` (additional safe_procedures). Config is optional -- all current behavior works without a file. |
+| sqlglot version pinning with edge case fixtures | sqlglot API changes between major versions (e.g., Execute vs Command for EXEC between v25 and v29); current range `>=26,<30` is wide | Low-Medium | None | Pin more tightly to the currently-installed minor version. Add test fixtures for known parsing edge cases: DBCC commands, multi-statement batches, EXEC with output params, nested CTEs. These act as regression canaries when bumping sqlglot. |
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Docstring-schema staleness test | Catches drift between response data models and docstrings automatically. Without it, docstrings rot silently and LLM consumers get stale format descriptions. PROJECT.md lists this as a core requirement. | MEDIUM | Approach: for each tool, invoke it with mock/fixture data, inspect the returned dict's keys and value types, compare against parsed docstring claims. Does not require auto-generation -- just validation. Key challenge is defining "what to check" (field names, types, conditional presence) without being so brittle the test breaks on every refactor. |
-| Tabular encoding for list-heavy responses | TOON's biggest token savings come from tabular arrays (uniform objects become CSV-like rows). Tools like `list_tables`, `execute_query`, `get_sample_data`, `list_schemas`, and `find_fk_candidates` return arrays of uniform objects -- these should encode as tables automatically. | LOW | `toon_format.encode()` auto-detects tabular arrays when all elements are objects with identical keys and primitive values. No special code needed **unless** response objects have optional/conditional fields (see Pitfall below). |
-| Conditional field handling for analysis tools | `get_column_info` includes `numeric_stats`, `datetime_stats`, or `string_stats` conditionally per column. `find_fk_candidates` conditionally includes `overlap_count`/`overlap_percentage`. These non-uniform objects break TOON tabular encoding and fall back to expanded list format (more tokens). | MEDIUM | Options: (1) Accept the fallback -- expanded list is still more compact than JSON. (2) Restructure responses to always include all fields as null -- enables tabular but adds null noise. Recommendation: Accept fallback for analysis tools (they return fewer rows, so savings difference is small). Keep tabular optimization for high-volume tools (list_tables, execute_query, get_sample_data). |
-| Token savings measurement | Quantify actual savings per tool using `toon_format.estimate_savings()` or `compare_formats()`. Validates the 30-60% claim against real response data. | LOW | The library ships with built-in benchmarking utilities. Run against fixture data from existing tests. Useful for the PR description and for prioritizing future optimization. |
-| `default=str` handling for datetime serialization | Several tools use `json.dumps(response, default=str)` to handle datetime objects. `toon_format.encode()` normalizes datetime to ISO 8601 automatically per spec, so the `default=str` pattern can be dropped. | LOW | Verify that `encode()` handles `datetime` objects directly. The spec says "datetime -> ISO 8601". If `encode()` does not handle raw datetimes (only JSON-serializable values), pre-convert with `.isoformat()` as currently done in `to_dict()` methods. Test with real datetime values. |
+## Anti-Features
 
-### Anti-Features (Commonly Requested, Often Problematic)
+Features to explicitly NOT build.
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Format negotiation (JSON vs TOON toggle) | "What if some client needs JSON?" | Only consumers are LLMs. Adding negotiation means two code paths, two test suites, content-type header complexity, and defeats the simplicity goal. PROJECT.md explicitly scopes this out. | Hard switch. If a non-LLM consumer appears later, add a JSON endpoint then. YAGNI. |
-| Auto-generate docstrings from data models | Eliminates manual docstring maintenance | Investigated and rejected in PROJECT.md. Wrapper fields differ per tool (pagination metadata, computed fields, conditional sections). Auto-gen would need per-tool templates, which is just a different kind of manual maintenance with more indirection. | Staleness test catches drift without the complexity of generation. Manual docstrings with automated validation. |
-| Pydantic migration for response models | "Dataclasses are legacy, Pydantic validates" | Current dataclasses work. Pydantic adds a dependency, changes serialization patterns, and is orthogonal to the format migration. Coupling two migrations increases risk. | Keep dataclasses. Migrate to Pydantic (if ever) as a separate effort. |
-| Custom TOON encoder for domain-specific optimization | "We could hand-tune the encoding for our specific schemas" | The library handles encoding correctly. Custom encoding means maintaining a fork, losing upstream improvements, and introducing bugs. The auto-tabular detection already handles the main optimization opportunity. | Use `encode()` as-is. Accept the library's formatting decisions. |
-| Streaming/chunked TOON responses | "Large query results should stream" | TOON is a document format, not a streaming protocol. MCP tool responses are single strings. Chunked encoding would require protocol-level changes outside this migration's scope. | Keep existing row_limit parameters (max 10000). If responses are too large, the limit is the control mechanism, not streaming. |
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Pydantic migration | PROJECT.md explicitly marks this out of scope; dataclasses work fine for this scale. Pydantic adds import overhead and dependency weight for no benefit here. | Keep dataclasses. Fix type issues by adding proper fields or companion types. |
+| Custom exception middleware/framework | Over-engineering for a tool with 9 endpoints. Exception handling should be specific but simple -- not an abstract framework. | Map specific exceptions to error responses at the tool boundary. A simple helper function per error category is sufficient. |
+| Configuration GUI/TUI | This is a headless MCP server consumed by LLMs. No human interacts with it directly at runtime. | TOML config file with clear defaults and comments. |
+| Retry logic for Azure AD tokens | Token refresh on expiry is correct; automatic retry with backoff adds complexity and can mask auth misconfiguration. | Fail fast on auth errors with actionable messages (already done well in azure_auth.py). Use pool_recycle for preemptive refresh. |
+| Query result caching | Explicitly out of scope per PROJECT.md; adds stale data risk and memory pressure for unclear benefit. | Keep stateless: every query hits the database. |
+| Audit logging | Explicitly out of scope per PROJECT.md; future milestone. | Defer entirely. |
 
 ## Feature Dependencies
 
 ```
-[Add toon-format dependency]
-    |
-    v
-[Replace json.dumps with encode() in tool modules] ---requires---> [Add toon-format dependency]
-    |
-    v
-[Update test assertions from json.loads to decode()] ---requires---> [Replace json.dumps]
-    |
-    v
-[Update tool docstrings for TOON format] ---requires---> [Replace json.dumps]
-    |                                                      (need to see actual output first)
-    v
-[Docstring staleness test] ---requires---> [Updated docstrings]
-                                           [Updated test infrastructure]
-
-[Token savings measurement] ---independent---> (can run anytime after encode() is wired up)
-
-[Conditional field handling analysis] ---informs---> [Replace json.dumps]
-                                                     (decides whether to restructure before encoding)
+Dead code removal -------> (none, independent)
+Exception specificity ---> (none, but benefits from test coverage to verify no regressions)
+Type ignore cleanup -----> (none, independent; creates QueryResult type)
+Test coverage -----------> Exception specificity (tests validate correct exceptions caught)
+                       --> Type ignore cleanup (tests validate new QueryResult type)
+                       --> MCP session cleanup (tests validate cleanup behavior)
+Azure AD token refresh --> (none, independent change to pool_recycle + token caching)
+MCP session cleanup -----> (none, but test coverage should cover it)
+Identifier validation ---> MetadataService (already exists, need to thread context)
+Type handler registry ---> Type ignore cleanup (registry replaces inline chains)
+                       --> Serialization module (refactor _pre_serialize)
+Config file -------------> (none, but influences defaults for pool_recycle, query_timeout, SP allowlist)
+sqlglot pinning ---------> (none, independent; add test fixtures)
 ```
 
-### Dependency Notes
+Key ordering constraint: do refactoring (exception specificity, type cleanup) BEFORE writing tests. Writing tests against code you plan to refactor wastes effort.
 
-- **Replace json.dumps requires toon-format dependency:** Cannot call `encode()` without the package installed.
-- **Test updates require json.dumps replacement:** Tests call tools and parse output. Must update parsing to match new format.
-- **Docstring updates require seeing actual TOON output:** Best written after encoding is working so examples are accurate, not guessed.
-- **Staleness test requires updated docstrings:** The test validates docstrings against schemas. If docstrings still describe JSON, the test would flag everything as stale immediately.
-- **Token savings measurement is independent:** Can be done as a side task once encoding works, or even before as a motivating benchmark.
+## MVP Recommendation
 
-## MVP Definition
+Prioritize (Phase 1 -- cleanup and safety):
+1. **Dead code removal** -- 15 minutes, zero risk, cleans up codebase
+2. **Exception specificity** -- highest impact on debuggability; the 25 bare-except blocks in metadata.py and MCP tools mask real errors
+3. **Type ignore cleanup** -- small scope, introduces QueryResult container type
+4. **MCP session cleanup** -- prevents connection leaks in production
 
-### Launch With (v1)
+Prioritize (Phase 2 -- hardening):
+5. **Test coverage to 70%** -- validates Phase 1 changes and catches regressions; do after refactoring so tests cover final code
+6. **Azure AD token refresh** -- prevents silent auth failures in long sessions
+7. **sqlglot pinning + edge case fixtures** -- prevents surprise breakage on dependency updates
 
-Minimum to ship the format migration and call it done.
+Defer (Phase 3 -- infrastructure):
+8. **Identifier validation against metadata** -- requires threading metadata context; moderate scope
+9. **Type handler registry** -- nice-to-have extensibility; current inline approach works
+10. **Configuration file** -- lowest urgency; current parameter-passing works; most impactful for the SP allowlist customization
 
-- [ ] `toon-format` added as dependency -- gate for everything else
-- [ ] All 9 tools return `encode(response_dict)` instead of `json.dumps(response_dict)` -- the core deliverable
-- [ ] All existing tests pass with `decode()` instead of `json.loads()` -- proves nothing broke
-- [ ] Tool docstrings rewritten for TOON format -- LLM consumers need accurate format descriptions
+**Rationale:** Clean up first (dead code, exceptions, types), then prove it with tests, then add infrastructure. Config file is last because it only improves developer experience, not correctness or safety.
 
-### Add After Validation (v1.x)
+## Complexity Estimates
 
-Features to add once the core migration is verified working.
+| Feature | Lines Changed (est.) | Test Effort | Risk |
+|---------|---------------------|-------------|------|
+| Dead code removal | ~5 (delete file, remove any stale refs) | None needed | Negligible |
+| Exception specificity | ~100-150 (25 blocks to refine) | Medium (verify each exception path) | Low -- narrowing catches is safe |
+| Type ignore cleanup | ~30-50 (new dataclass + refactor execute_query return) | Low-Medium | Low -- internal refactor |
+| MCP session cleanup | ~15-25 (lifecycle hook + test) | Low | Low |
+| Test coverage to 70% | ~300-500 (new test cases) | High (this IS the test effort) | Negligible |
+| Azure AD token refresh | ~20-30 (pool_recycle tuning + token expiry check) | Medium (mock token expiry) | Low |
+| sqlglot pinning | ~5 (pyproject.toml) + ~100 (edge case fixtures) | Medium | Low |
+| Identifier validation | ~50-80 (metadata-aware validation) | Medium | Medium -- behavior change |
+| Type handler registry | ~80-120 (registry + migration of inline handlers) | Medium | Low-Medium |
+| Config file | ~150-200 (TOML loader + schema + integration) | Medium | Low |
 
-- [ ] Docstring staleness test -- prevents future drift; not needed for initial migration correctness
-- [ ] Token savings measurement -- validates the business case; nice for documentation but not blocking
+## Exception Specificity Detail
 
-### Future Consideration (v2+)
+Breakdown of the 25 `except Exception` blocks by module and what they should catch:
 
-- [ ] Response restructuring for better tabular encoding (e.g., flattening conditional fields) -- only if measurement shows significant savings opportunity
-- [ ] TOON encode options tuning (delimiter, indent, length markers) -- only if LLM consumers show preference
+**metadata.py (13 blocks):** Most are around SQL Server DMV queries that can fail with permission errors or connectivity issues. Replace with `sqlalchemy.exc.OperationalError` (connection lost), `sqlalchemy.exc.ProgrammingError` (permission denied / invalid query), `pyodbc.Error` (driver-level failures).
 
-## Feature Prioritization Matrix
+**MCP tool layer (9 blocks across schema_tools, query_tools, analysis_tools):** These are the outermost boundary. Pattern: catch `ValueError` (validation), `ConnectionError` (auth/connect), `sqlalchemy.exc.SQLAlchemyError` (any DB operation), then bare `Exception` only as final sentinel with `logger.exception()`. Already partially done in some tools (connect_database catches ConnectionError and ValueError specifically).
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Add toon-format dependency | HIGH (blocker) | LOW | P1 |
-| Replace json.dumps with encode() | HIGH (core goal) | LOW | P1 |
-| Update test assertions | HIGH (prevents regression) | MEDIUM | P1 |
-| Update tool docstrings | HIGH (LLM consumers need this) | MEDIUM | P1 |
-| Docstring staleness test | MEDIUM (prevents future drift) | MEDIUM | P2 |
-| Token savings measurement | LOW (informational) | LOW | P2 |
-| Conditional field analysis | LOW (marginal gains) | LOW | P3 |
-| TOON encode options tuning | LOW (defaults are fine) | LOW | P3 |
+**query.py (3 blocks):** `_run_query` catches Exception for query execution errors -- should catch `sqlalchemy.exc.OperationalError` (timeout, connection lost), `sqlalchemy.exc.ProgrammingError` (syntax error), `sqlalchemy.exc.ResourceClosedError` (result set issues). The `_get_total_row_count` swallows Exception silently -- acceptable for best-effort count, but should at minimum catch `sqlalchemy.exc.SQLAlchemyError`.
 
-**Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
-
-## Response Shape Analysis
-
-Mapping each tool's response to expected TOON encoding behavior.
-
-| Tool | Response Shape | Tabular Candidate? | Expected Savings | Notes |
-|------|---------------|---------------------|------------------|-------|
-| `connect_database` | Flat dict (5-6 fields) | N/A (single object) | Low (~20%) | Small response, minimal key overhead |
-| `list_schemas` | Flat dict + array of uniform objects | YES (schemas array) | High (~50%) | `schemas` array has identical keys per row |
-| `list_tables` | Flat dict + array of uniform objects | YES (tables array) | High (~50%) | Large arrays, repeated keys. `columns` sub-array in detailed mode breaks tabular for that field. |
-| `get_table_schema` | Nested dict (table > columns[], indexes[], foreign_keys[]) | PARTIAL | Medium (~35%) | `columns` array is tabular; `indexes` has list fields (`columns`, `included_columns`) that break tabular; top-level is nested |
-| `get_sample_data` | Flat dict + array of row objects | YES (rows array) | High (~50%) | Rows are uniform dicts. Biggest volume tool. |
-| `execute_query` | Flat dict + columns array + rows array | YES (rows array) | High (~50%) | Same as sample_data -- high-volume, uniform rows |
-| `get_column_info` | Flat dict + array of non-uniform objects | NO (conditional stats fields) | Medium (~30%) | Falls back to expanded list due to numeric_stats/datetime_stats/string_stats being conditional |
-| `find_pk_candidates` | Flat dict + array of uniform objects | YES (candidates array) | Medium (~40%) | Small result sets typically |
-| `find_fk_candidates` | Flat dict + array of conditionally-uniform objects | MAYBE | Medium (~35%) | Uniform when `include_overlap=False`; non-uniform when True (adds 2 optional fields) |
+**connection.py (1 block):** Already specific (`ConnectionError` re-raise + generic Exception -> ConnectionError wrapping). Good pattern, no change needed.
 
 ## Sources
 
-- TOON specification v3.0 (Working Draft): https://github.com/toon-format/spec
-- toon-python library (v0.9.x beta): https://github.com/toon-format/toon-python
-- PROJECT.md: Local project requirements and constraints
-- Codebase analysis: 41 `json.dumps` call sites, 65 `json.loads` test assertions, 9 MCP tools
-
----
-*Feature research for: TOON format migration for MCP server responses*
-*Researched: 2026-03-04*
+- Codebase analysis: all `src/` modules read directly (connection.py, query.py, validation.py, metadata.py, azure_auth.py, serialization.py, metrics.py, server.py, schema_tools.py, query_tools.py, analysis_tools.py)
+- PROJECT.md: active requirements, out-of-scope items, constraints
+- SQLAlchemy exception hierarchy: `sqlalchemy.exc` module -- OperationalError, ProgrammingError, InterfaceError, DisconnectionError, InvalidRequestError, ResourceClosedError
+- pyodbc exception hierarchy: PEP 249 DB-API 2.0 -- DatabaseError > DataError, OperationalError, IntegrityError, InternalError, ProgrammingError, NotSupportedError
+- azure-identity exceptions: `CredentialUnavailableError`, `ClientAuthenticationError` from `azure.core.exceptions`
+- Azure AD token lifetime: default 60-75 minutes for access tokens (Microsoft identity platform documentation)
+- Python 3.11 tomllib: PEP 680, stdlib read-only TOML parser
+- FastMCP lifecycle: server context managers for startup/shutdown hooks

@@ -1,395 +1,451 @@
-# Architecture Research
+# Architecture Patterns
 
-**Domain:** TOON serialization integration into existing MCP server
-**Researched:** 2026-03-04
-**Confidence:** HIGH
+**Domain:** MCP server concern-handling improvements (v1.1)
+**Researched:** 2026-03-06
+**Confidence:** HIGH (based on direct codebase analysis)
 
-## System Overview
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                      MCP Tool Layer                              │
-│  ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐    │
-│  │ schema_tools │ │ query_tools  │ │ analysis_tools        │    │
-│  │ (4 tools)    │ │ (2 tools)    │ │ (3 tools)             │    │
-│  └──────┬───────┘ └──────┬───────┘ └───────────┬───────────┘    │
-│         │                │                     │                │
-│         └────────────────┼─────────────────────┘                │
-│                          │                                      │
-│                          ▼                                      │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │              Serialization Layer (NEW)                     │  │
-│  │  json.dumps(response_dict) --> toon_format.encode(dict)   │  │
-│  └───────────────────────────────┬───────────────────────────┘  │
-│                                  │                              │
-│                                  ▼                              │
-│                          TOON string returned                   │
-│                          to FastMCP framework                   │
-├──────────────────────────────────────────────────────────────────┤
-│                      Service Layer                               │
-│  ┌──────────────┐ ┌──────────────┐ ┌───────────────────────┐    │
-│  │ MetadataService│ │ QueryService │ │ Analysis collectors  │    │
-│  └──────────────┘ └──────────────┘ └───────────────────────┘    │
-├──────────────────────────────────────────────────────────────────┤
-│                      Data Models                                 │
-│  ┌──────────────┐ ┌──────────────┐                              │
-│  │ schema.py    │ │ analysis.py  │  (dataclasses w/ to_dict())  │
-│  └──────────────┘ └──────────────┘                              │
-├──────────────────────────────────────────────────────────────────┤
-│                      Database Layer                               │
-│  ┌──────────────────┐ ┌──────────────┐                          │
-│  │ ConnectionManager │ │ SQLAlchemy   │                          │
-│  └──────────────────┘ └──────────────┘                          │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-| Component | Responsibility | Affected by TOON Migration |
-|-----------|----------------|---------------------------|
-| Tool functions (schema_tools, query_tools, analysis_tools) | Orchestrate business logic, build response dicts, serialize to string | YES -- swap `json.dumps()` for `toon_format.encode()` |
-| Response dict construction | Each tool builds a Python dict with status, data, metadata | NO -- dict structure stays identical |
-| Data models (schema.py, analysis.py) | Dataclasses with `to_dict()` methods | NO -- untouched |
-| Service layer (MetadataService, QueryService, etc.) | Database queries, business logic | NO -- untouched |
-| Docstrings | FastMCP reads these as tool descriptions for LLM clients | YES -- must document TOON format instead of JSON |
-| Staleness tests (NEW) | Validate docstrings match actual response schemas | YES -- new component |
-
-## Current Serialization Flow (What Changes)
-
-### Before (JSON)
+## Current Architecture Overview
 
 ```
-Tool function
-    │
-    ├── Business logic produces data (models, dicts)
-    │
-    ├── Build response_dict = {"status": "success", ...data...}
-    │
-    └── return json.dumps(response_dict)
-              ▲
-              │
-              This is the ONLY line that changes per tool
+Entry Point: src/mcp_server/server.py
+  - Creates FastMCP instance, singleton ConnectionManager
+  - Imports tool modules (schema_tools, query_tools, analysis_tools)
+  - Tool modules register via @mcp.tool() decorators
+
+Request Flow:
+  MCP Client -> FastMCP (stdio) -> @mcp.tool() handler (async)
+    -> asyncio.to_thread(_sync_work)
+      -> ConnectionManager.get_engine(connection_id)
+      -> Service layer (MetadataService / QueryService / ColumnStatsCollector / etc.)
+        -> SQLAlchemy Engine -> pyodbc -> SQL Server
+    -> encode_response(result_dict) -> TOON string -> MCP Client
+
+Exception Flow (current):
+  Service layer raises -> _sync_work propagates -> to_thread propagates
+    -> tool handler catches (ValueError | Exception) -> encode_response({status: "error"})
 ```
 
-### After (TOON)
+### Component Map
 
-```
-Tool function
-    │
-    ├── Business logic produces data (models, dicts)  [unchanged]
-    │
-    ├── Build response_dict = {"status": "success", ...data...}  [unchanged]
-    │
-    └── return toon_format.encode(response_dict)
-              ▲
-              │
-              Mechanical substitution: json.dumps → toon_format.encode
-```
+| Component | File | Responsibility | Dependencies |
+|-----------|------|----------------|--------------|
+| Server bootstrap | `server.py` | FastMCP, singleton CM, tool registration | ConnectionManager, logging_config |
+| Schema tools | `schema_tools.py` | connect, list_schemas, list_tables, get_table_schema | server.py (mcp, CM, logger), MetadataService |
+| Query tools | `query_tools.py` | get_sample_data, execute_query | server.py (mcp, CM, logger), QueryService |
+| Analysis tools | `analysis_tools.py` | get_column_info, find_pk_candidates, find_fk_candidates | server.py (mcp, CM), ColumnStatsCollector, PKDiscovery, FKCandidateSearch |
+| Connection mgmt | `connection.py` | Engine creation, pooling, connect/disconnect | AzureTokenProvider, SQLAlchemy, pyodbc |
+| Query execution | `query.py` | Query running, row limit injection, value truncation | validation.py, sqlglot, SQLAlchemy |
+| Query validation | `validation.py` | AST denylist, SP allowlist | sqlglot |
+| Metadata | `metadata.py` | Schema/table/column/index introspection | SQLAlchemy inspector, DMVs |
+| Serialization | `serialization.py` | Pre-serialize Python types, encode to TOON | toon_format |
+| Azure auth | `azure_auth.py` | Token acquisition and packing | azure-identity |
+| Metrics (dead) | `metrics.py` | Performance tracking (unused) | stdlib only |
 
-### Key Architectural Insight
+## Concern Integration Analysis
 
-The migration is a leaf-node change. Every tool already constructs a plain Python dict, then calls `json.dumps()` as the final step. The dict construction, data models, service layer, and database layer are all untouched. This means:
+### 1. Removing metrics.py -- Clean Delete
 
-1. **No new abstraction layer needed.** A serialization helper module would be over-engineering for a one-liner substitution (`json.dumps(d)` to `toon_format.encode(d)`).
-2. **No interface changes.** Tools still return `str`. FastMCP doesn't care what the string contains.
-3. **The real work is in docstrings and tests**, not in the serialization swap itself.
+**Impact assessment:** NONE. No hidden imports or side effects.
 
-## Component Boundaries
+Evidence:
+- `grep` for `from src.metrics` and `import.*metrics` found only the self-reference in `metrics.py` line 7 (docstring usage example)
+- No `__init__.py` re-exports metrics
+- No other source file imports it
+- No test file imports it (it has its own tests but those can be deleted too)
+- No entry point references it
+- It is a standalone singleton with no side effects on import
 
-### Boundary 1: Tool Function -> Serialization
+**Integration point:** Delete `src/metrics.py` and any corresponding test file. No other files change.
 
-**Current:** Each tool has 1-5 `json.dumps()` call sites (success path + error paths).
+**Files to modify:** 1 deleted (`src/metrics.py`), plus test cleanup
+**Files affected:** 0
 
-**Count by module:**
-- `schema_tools.py`: ~12 `json.dumps()` calls across 4 tools
-- `query_tools.py`: ~8 `json.dumps()` calls across 2 tools
-- `analysis_tools.py`: ~9 `json.dumps()` calls across 3 tools
+### 2. Exception Handling -- 25 Broad `except Exception` Blocks
 
-**Approach:** Direct substitution at each call site. No wrapper function needed because `toon_format.encode()` accepts the same input type (any JSON-serializable Python value) and returns `str`.
+**Current exception flow** (three distinct patterns):
 
-**One caveat:** Some tools use `json.dumps(response, default=str)` (e.g., `get_column_info`). Need to verify `toon_format.encode()` handles datetime objects and other non-JSON-native types. If not, pre-convert with `to_dict()` / `.isoformat()` before encoding (which most tools already do).
-
-### Boundary 2: Tool Docstrings -> FastMCP Registration
-
-**Current:** Each tool's docstring contains a `Returns:` section with JSON examples using `::` literal blocks. FastMCP reads these at import time and sends them verbatim to LLM clients.
-
-**After:** Docstrings must show TOON format examples instead of JSON. The LLM client needs to understand the response it will receive.
-
-**This is the highest-effort component** because each tool has a bespoke response shape with conditionals (e.g., "on error only", "detailed mode only", "only when include_overlap=True"). Each docstring must be manually updated to reflect TOON encoding of that specific response shape.
-
-### Boundary 3: Staleness Tests -> Data Models + Docstrings
-
-**New component.** A test that:
-1. Imports each tool function
-2. Extracts field names and types from the docstring (parsing the TOON format documentation)
-3. Compares against actual response schema (either from dataclass fields or by calling the tool with mocked data)
-4. Fails if they diverge
-
-This is the most architecturally interesting new piece. Two viable approaches:
-
-**Approach A: Schema-from-mock-response.** Call each tool with test fixtures, decode the TOON response, compare field names against docstring. Pros: Tests the real output path. Cons: Requires test fixtures for every tool.
-
-**Approach B: Schema-from-dict-construction.** Inspect the response dict keys built in each tool's success/error paths. Compare against docstring. Pros: No fixtures needed. Cons: Requires AST analysis or manual schema declarations.
-
-**Recommendation: Approach A.** The project already has 385 tests with fixtures for every tool. Reuse existing fixtures, capture the response dict (before serialization), and diff field names against docstring declarations. This tests the full path and is the more honest verification.
-
-## Recommended Project Structure Changes
-
-```
-src/
-├── mcp_server/
-│   ├── server.py              # Unchanged
-│   ├── schema_tools.py        # json.dumps → toon_format.encode + docstring updates
-│   ├── query_tools.py         # json.dumps → toon_format.encode + docstring updates
-│   └── analysis_tools.py      # json.dumps → toon_format.encode + docstring updates
-├── models/
-│   ├── schema.py              # Unchanged
-│   └── analysis.py            # Unchanged
-tests/
-├── compliance/
-│   └── test_docstring_staleness.py   # NEW: docstring-schema sync validation
-├── unit/
-│   └── (existing tool tests)         # Updated: assertions change from json.loads to
-│                                     #   toon_format.decode (or string matching)
-```
-
-**No new src/ modules needed.** The migration adds one dependency (`toon_format`), modifies three existing modules, and adds one new test file.
-
-## Architectural Patterns
-
-### Pattern 1: Direct Serialization Substitution
-
-**What:** Replace `json.dumps(dict)` with `toon_format.encode(dict)` at each call site. No intermediate abstraction.
-
-**When to use:** When the new serializer has the same interface as the old one (accepts dict, returns str) and there is no need for format negotiation.
-
-**Trade-offs:**
-- Pro: Zero abstraction overhead, easy to grep, easy to review
-- Pro: Each call site is self-documenting
-- Con: If we ever need dual-format support, we'd need to revisit (but PROJECT.md explicitly rules this out)
-
-**Example:**
+**Pattern A: MCP tool handlers (9 occurrences in schema_tools, query_tools, analysis_tools)**
 ```python
-# Before
-return json.dumps({
-    "status": "success",
-    "schemas": [{"schema_name": s.schema_name, ...} for s in schemas],
-    "total_schemas": len(schemas),
-})
-
-# After
-return toon_format.encode({
-    "status": "success",
-    "schemas": [{"schema_name": s.schema_name, ...} for s in schemas],
-    "total_schemas": len(schemas),
-})
+try:
+    result = await asyncio.to_thread(_sync_work)
+    return encode_response(result)
+except ValueError as e:
+    return encode_response({"status": "error", ...})
+except Exception as e:          # <-- BROAD
+    logger.exception("Error in ...")
+    return encode_response({"status": "error", ...})
 ```
+These are the outermost boundary. The broad `except Exception` here is actually *partially justified* -- it is the last line of defense preventing unhandled errors from crashing the MCP server. However, it should be narrowed to catch known database/connection errors specifically, with `Exception` retained only as a true last-resort fallback.
 
-### Pattern 2: Docstring-as-Contract
-
-**What:** FastMCP uses docstrings as the LLM-facing tool description. The docstring IS the API contract for consumers. If the docstring says "returns JSON", the LLM will try to parse JSON. If it says "returns TOON", the LLM needs to understand TOON.
-
-**When to use:** Always in FastMCP tools -- this is how the framework works.
-
-**Trade-offs:**
-- Pro: Single source of truth for LLM consumers
-- Con: Docstrings are free-form text, easy to drift from actual behavior
-- Mitigation: Staleness test (Pattern 3)
-
-**Docstring format after migration:**
+**Recommended replacement:**
 ```python
-"""
-Returns:
-    TOON-encoded string. Structure:
-
-    status: <"success" | "error">
-    schemas[N,]{schema_name,table_count,view_count}:
-      <string>,<int>,<int>
-      ...
-    total_schemas: <int>
-    error_message: <string>     // on error only
-"""
+except ValueError as e:
+    return encode_response(...)
+except (ConnectionError, sqlalchemy.exc.OperationalError, sqlalchemy.exc.DatabaseError) as e:
+    return encode_response(...)  # known DB errors
+except Exception as e:
+    logger.exception("Unexpected error in ...")  # keep as safety net, but now it's the THIRD handler
+    return encode_response(...)
 ```
 
-### Pattern 3: Staleness Test Guard
-
-**What:** A test that programmatically verifies docstring field declarations match the actual response schema produced by each tool.
-
-**When to use:** When docstrings serve as API contracts and drift would confuse consumers.
-
-**Implementation sketch:**
+**Pattern B: Service layer methods (metadata.py ~10 occurrences, query.py ~3, connection.py ~1)**
 ```python
-# tests/compliance/test_docstring_staleness.py
-
-TOOL_SCHEMAS = {
-    "list_schemas": {
-        "success_fields": {"status", "schemas", "total_schemas"},
-        "error_fields": {"status", "error_message"},
-        "nested": {
-            "schemas[]": {"schema_name", "table_count", "view_count"},
-        },
-    },
-    # ... per tool
-}
-
-def test_docstring_declares_all_fields():
-    """Every field in the actual response must appear in the docstring."""
-    for tool_name, schema in TOOL_SCHEMAS.items():
-        docstring = get_tool_docstring(tool_name)
-        for field in schema["success_fields"]:
-            assert field in docstring, f"{tool_name}: missing '{field}' in docstring"
+except Exception:           # swallows all errors silently
+    return []  # or return False, or pass
 ```
+These are the *most dangerous*. They hide real errors (permission denied, network timeout, OOM) behind empty results. The user gets no feedback that something went wrong.
 
-**Trade-off:** Requires maintaining a parallel schema declaration. But this is intentional -- it's a lightweight cross-check that catches when someone adds a field to the response dict but forgets to update the docstring (or vice versa). The schema declaration is 5-10 lines per tool, not burdensome.
+**Recommended replacement (varies by call site):**
+- `metadata.py` inspector calls: Catch `sqlalchemy.exc.NoSuchTableError`, `sqlalchemy.exc.OperationalError`, `sqlalchemy.exc.ProgrammingError`. Log warning. Return empty collection.
+- `query.py` count query: Catch `sqlalchemy.exc.OperationalError`. Silently return None (this is truly best-effort).
+- `connection.py` connect: Already correctly catches `ConnectionError` first, but the fallback `except Exception` should narrow to `(sqlalchemy.exc.OperationalError, pyodbc.Error)`.
 
-## Data Flow
-
-### Request Flow (Unchanged)
-
+**Pattern C: Query execution error capture (query.py `_run_query`)**
+```python
+except Exception as e:
+    error_message = f"Query execution failed: {type(e).__name__}: {str(e)}"
 ```
-LLM Client
-    │ (MCP protocol, stdio transport)
-    ▼
-FastMCP framework
-    │ (dispatches to @mcp.tool() function)
-    ▼
-Tool function (e.g., list_schemas)
-    │
-    ├── Validate inputs
-    ├── Call service layer
-    ├── Build response dict
-    ├── Serialize to TOON string  ◀── ONLY CHANGE
-    │
-    ▼
-FastMCP framework
-    │ (wraps in MCP response envelope)
-    ▼
-LLM Client (reads TOON-encoded content)
-```
+This one captures the error message to return to the user. It needs to catch `sqlalchemy.exc.OperationalError` (timeout), `sqlalchemy.exc.ProgrammingError` (syntax), `pyodbc.Error` specifically. Keep a final `Exception` catch but log it as unexpected.
 
-### Serialization Detail
+**Integration points:**
+- Changes are spread across 6 files but are self-contained per file
+- No cross-module interface changes -- each file's catch blocks are internal
+- The exception *types* to catch come from sqlalchemy and pyodbc (already dependencies)
+
+**Build order consideration:** Do this BEFORE connection lifecycle changes, since you need to understand which exceptions propagate to handle Azure AD token refresh correctly.
+
+### 3. Connection Lifecycle -- Azure AD Token Refresh and Session Cleanup
+
+**Current state of Azure AD token flow:**
 
 ```
-Python dict                    TOON string
-─────────────                  ───────────
-{"status": "success",    →     status: success
- "schemas": [            →     schemas[1,]{schema_name,table_count,view_count}:
-   {"schema_name": "dbo",→       dbo,42,5
-    "table_count": 42,
-    "view_count": 5}
- ],
- "total_schemas": 1}     →     total_schemas: 1
+ConnectionManager.connect()
+  -> _create_engine(authentication_method=AZURE_AD_INTEGRATED)
+    -> Creates AzureTokenProvider(tenant_id)
+    -> Defines creator() closure that calls provider.get_token() on EVERY new raw connection
+    -> create_engine("mssql+pyodbc://", creator=creator, ...)
 ```
 
-The tabular encoding is where TOON delivers the biggest token savings. Tools returning arrays of uniform objects (list_tables, execute_query, get_sample_data, get_column_info, find_fk_candidates) will see the largest reduction because repeated key names are eliminated.
+**Key insight:** The `creator` closure is called by SQLAlchemy's QueuePool whenever it needs a *new physical connection*. The token is fetched fresh each time. However, there is a critical gap:
 
-## Build Order (Dependencies Between Components)
+**Problem 1: Token expiry on pooled connections.** Azure AD tokens are typically valid for 60-90 minutes. A pooled connection that was created with a valid token and then sits idle will have a valid *pyodbc connection* but the underlying token is expired. The next query on that connection will fail with an auth error from SQL Server. `pool_pre_ping=True` (currently enabled) will detect the dead connection and discard it, triggering `creator()` again with a fresh token. **This partially mitigates the issue** but has a race window and generates noisy errors.
+
+**Problem 2: No proactive refresh.** The `pool_recycle=3600` (1 hour) recycles connections by age, which roughly aligns with token lifetime. But there is no coordination between token TTL and pool recycle. If a token has 5 minutes left and a connection is checked out, it may fail mid-query.
+
+**Recommended approach:**
+- Add token expiry tracking to `AzureTokenProvider` (the `azure.core.credentials.AccessToken` returned by `get_token()` includes an `expires_on` field)
+- Set `pool_recycle` to be shorter than token lifetime (e.g., 45 minutes vs 60-minute token)
+- Add a pool event listener (`checkout`) that checks token expiry and invalidates stale connections proactively
+- This stays entirely within `connection.py` and `azure_auth.py` -- no interface changes
+
+**Problem 3: No session cleanup.** The MCP server has no lifecycle hook for when a client disconnects. `ConnectionManager.disconnect_all()` exists but is never called. The `FastMCP` class does not expose a shutdown hook in the current API.
+
+**Recommended approach:**
+- Register an `atexit` handler in `server.py` that calls `_connection_manager.disconnect_all()`
+- Check if FastMCP supports a `shutdown` or `on_close` callback (needs verification against current mcp SDK version)
+- This is a 5-line change in `server.py`
+
+**Integration points:**
+- `azure_auth.py`: Add `expires_on` tracking to `get_token()`, add `is_token_fresh()` method
+- `connection.py`: Add pool checkout event listener for Azure AD engines, adjust `pool_recycle`
+- `server.py`: Add atexit handler
+- No changes to tool modules or serialization
+
+### 4. Identifier Sanitization -- Metadata Validation in Query Pipeline
+
+**Current sanitization in `query.py`:**
+```python
+def _sanitize_identifier(self, identifier: str) -> str:
+    if not re.match(r'^[a-zA-Z0-9_\s]+$', identifier):
+        raise ValueError(f"Invalid identifier: {identifier}")
+    return f"[{identifier}]"  # brackets for SQL Server
+```
+
+**Where it is called:** Only in `get_sample_data()` for user-supplied column names. Table names and schema names are passed directly into f-strings with brackets: `f"[{schema_name}].[{table_name}]"` -- this is bracket-quoting but without regex validation.
+
+**The concern:** The current regex allows any alphanumeric + underscore + space but does NOT validate that the identifier actually exists in the database. A crafted identifier like `]; DROP TABLE Students; --` would be caught by the regex, but `valid_looking_column` that does not exist would generate a SQL error at runtime rather than a clear validation error.
+
+**Where metadata validation should fit:**
 
 ```
-Phase 1: Add dependency + serialization swap
-    │     (toon_format added to pyproject.toml,
-    │      json.dumps → toon_format.encode in all tools)
-    │
-    ▼
-Phase 2: Update docstrings
-    │     (rewrite Returns: sections to document TOON format)
-    │     Depends on Phase 1: need to see actual TOON output
-    │     to write accurate docstrings
-    │
-    ▼
-Phase 3: Staleness tests
-    │     (validate docstrings match schemas)
-    │     Depends on Phase 2: docstrings must exist to test
-    │
-    ▼
-Phase 4: Update existing tests
-          (assertions that parse json.loads need updating)
-          Can partially overlap with Phase 1, but cleanest after
+Current:  MCP tool handler -> QueryService.get_sample_data(columns=[...])
+                                -> _sanitize_identifier(col)  # regex only
+                                -> builds SQL string
+
+Proposed: MCP tool handler -> QueryService.get_sample_data(columns=[...])
+                                -> _validate_identifiers(columns, table_name, schema_name)
+                                   -> MetadataService.get_columns(table, schema)
+                                   -> compare requested columns against actual columns
+                                   -> raise ValueError for unknown columns
+                                -> _sanitize_identifier(col)  # regex (belt-and-suspenders)
+                                -> builds SQL string
 ```
 
-**Rationale for ordering:**
-- Phase 1 before Phase 2: You need to see the actual TOON output of each tool to write accurate docstrings. Encoding a sample response and inspecting the output is the only reliable way to document the format.
-- Phase 2 before Phase 3: Staleness tests compare docstrings against schemas. Docstrings must be written first.
-- Phase 4 (test updates) is the largest effort by line count but mechanically straightforward. It can start during Phase 1 (updating test assertions as each tool is migrated) or be done as a batch after all tools are migrated. Batch is cleaner because it avoids a mixed state where some tests expect JSON and others expect TOON.
+**Integration challenge:** `QueryService` currently takes only an `Engine` in its constructor. It does not have access to `MetadataService`. Options:
 
-**Alternative ordering considered:** Updating tests alongside each tool migration (interleaved). Rejected because it creates a longer period of mixed JSON/TOON expectations in the test suite and makes it harder to review.
+**Option A (recommended): Pass metadata service to QueryService.**
+Change `QueryService.__init__(self, engine, metadata_service=None)`. When metadata_service is provided, use it for identifier validation. This preserves backward compatibility.
 
-## Anti-Patterns
+**Option B: Validate in the tool handler layer.**
+The tool handlers already have access to both services. Move validation to `query_tools.py` and `schema_tools.py` before calling into QueryService. This avoids changing QueryService's interface but scatters validation logic.
 
-### Anti-Pattern 1: Serialization Abstraction Layer
+**Option A is better** because it keeps validation close to the SQL building code, following defense-in-depth.
 
-**What people do:** Create a `serialize_response(dict, format="toon")` helper function that wraps `toon_format.encode()`, add it to a new `src/mcp_server/serialization.py` module, and have all tools call through it.
+**Also needed:** Apply the same regex validation to `schema_name` and `table_name` parameters in `get_sample_data()` and throughout `metadata.py` methods that accept user-supplied identifiers. Currently these are passed raw into bracket-quoted SQL.
 
-**Why it's wrong:** Over-engineering for a one-liner call. The project explicitly rules out format negotiation (JSON vs TOON). An abstraction layer adds indirection with no benefit. If dual-format is ever needed (unlikely per PROJECT.md), it can be added then.
+**Integration points:**
+- `query.py`: Add MetadataService as optional dependency, add identifier validation
+- `query_tools.py` and `schema_tools.py`: Pass MetadataService when constructing QueryService
+- `metadata.py`: Add a lightweight `validate_identifier()` or `column_exists()` method
 
-**Do this instead:** Direct `toon_format.encode()` calls at each site. One import, one call.
+### 5. Type Handler Registry -- Serialization Chain
 
-### Anti-Pattern 2: Auto-Generating Docstrings from Data Models
+**Current serialization chain:**
 
-**What people do:** Build a system that introspects dataclass fields and generates docstring text automatically, then inject it before `@mcp.tool()` registration.
+```
+Tool handler builds result dict (may contain datetime, Decimal, StrEnum, bytes, etc.)
+  |
+  v
+Two separate type-handling paths:
+  Path 1: query.py _truncate_value() handles bytes, datetime, date, time, Decimal
+           (converts to str/float BEFORE putting into result dict)
+  Path 2: serialization.py _pre_serialize() handles datetime, date, Decimal, StrEnum
+           (converts AFTER result dict is built, during TOON encoding)
 
-**Why it's wrong:** PROJECT.md already investigated this and rejected it. Each tool wraps model data in a response envelope with tool-specific metadata (pagination fields, computed fields, conditional sections). The envelope differs per tool, so auto-generation would need per-tool configuration that's as complex as just writing the docstrings.
+  Both paths handle overlapping types with slightly different behavior:
+    - query.py converts Decimal -> float, datetime -> isoformat string
+    - serialization.py converts Decimal -> float, datetime -> isoformat string
+    (same behavior, but duplicated logic)
 
-**Do this instead:** Hand-write docstrings, guard with staleness tests.
+  query.py additionally handles: bytes -> hex preview string, time -> isoformat
+  serialization.py additionally handles: StrEnum -> str value, tuple -> list
 
-### Anti-Pattern 3: Changing Response Dict Structure "While We're At It"
+  Neither handles: uuid.UUID (used in query_id generation but stored as string already)
+```
 
-**What people do:** Since we're touching every tool anyway, also restructure the response dicts, rename fields, change nesting, etc.
+**The concern from PROJECT.md:** "Add type handler registry for query result serialization"
 
-**Why it's wrong:** PROJECT.md constraint: "Response structure (field names, types, nesting) must remain identical -- only serialization format changes." Mixing structural changes with format changes makes it impossible to isolate regressions.
+**Where the registry plugs in:**
 
-**Do this instead:** Pure format swap. If structural changes are needed, do them in a separate feature.
+The type handler registry should replace the ad-hoc isinstance chains in BOTH `query.py._truncate_value()` and `serialization.py._pre_serialize()` with a single registry that maps `type -> handler_function`.
 
-### Anti-Pattern 4: Testing TOON Output by String Comparison
-
-**What people do:** Assert that `tool_result == "status: success\nschemas[1,]..."` with exact string matching.
-
-**Why it's wrong:** Brittle. TOON encoding may have minor formatting variations (whitespace, field ordering) between library versions. Tests would break on `toon_format` upgrades.
-
-**Do this instead:** Decode the TOON output with `toon_format.decode()` and assert on the resulting Python dict. This tests the round-trip and is resilient to formatting changes.
+**Recommended design:**
 
 ```python
-# Bad
-assert result == "status: success\nschemas[1,]..."
+# New file: src/type_handlers.py (or add to serialization.py)
 
-# Good
-decoded = toon_format.decode(result)
-assert decoded["status"] == "success"
-assert len(decoded["schemas"]) == 1
+class TypeHandlerRegistry:
+    """Registry mapping Python types to serialization handlers."""
+
+    def __init__(self):
+        self._handlers: dict[type, Callable[[Any], Any]] = {}
+
+    def register(self, python_type: type, handler: Callable[[Any], Any]):
+        self._handlers[python_type] = handler
+
+    def convert(self, value: Any) -> tuple[Any, bool]:
+        """Convert value using registered handler. Returns (converted, was_converted)."""
+        for type_, handler in self._handlers.items():
+            if isinstance(value, type_):
+                return handler(value), True
+        return value, False
+
+# Default registry with all known types
+DEFAULT_REGISTRY = TypeHandlerRegistry()
+DEFAULT_REGISTRY.register(bytes, lambda v: f"<binary: {v[:32].hex()}{'...' if len(v) > 32 else ''} ({len(v)} bytes)>")
+DEFAULT_REGISTRY.register(datetime, lambda v: v.isoformat())
+DEFAULT_REGISTRY.register(date, lambda v: v.isoformat())
+DEFAULT_REGISTRY.register(Decimal, lambda v: float(v))
+DEFAULT_REGISTRY.register(StrEnum, lambda v: str(v.value))
+# etc.
 ```
 
-## Integration Points
+**Integration:**
+- `serialization.py._pre_serialize()` delegates to registry for non-primitive types
+- `query.py._truncate_value()` delegates to registry, then applies truncation rules on top
+- Truncation (bytes preview, long string trim) remains in `query.py` as it is query-context-specific, not a type conversion concern
 
-### External: toon_format Library
+**Key distinction:** The registry handles *type conversion* (Decimal -> float). Truncation (1000-char limit, binary preview) is a separate concern that stays in QueryService.
 
-| Aspect | Detail |
-|--------|--------|
-| Package | `toon-format` (PyPI) / `toon_format` (import) |
-| Key functions | `encode(value, options=None) -> str`, `decode(input_str, options=None) -> Any` |
-| Input | Any JSON-serializable Python value (dict, list, str, int, float, bool, None) |
-| Output | TOON-formatted string |
-| Concern | Library maturity -- PyPI shows 0.1.0 as namespace reservation, GitHub README describes 0.9.x beta. Need to verify actual installable version and test coverage before depending on it. |
-| Mitigation | Pin version in pyproject.toml. Run full test suite against it before committing. |
+**Integration points:**
+- New: `src/type_handlers.py` (or extend `serialization.py`)
+- Modified: `serialization.py` to use registry
+- Modified: `query.py._truncate_value()` to use registry for type conversion, keep truncation logic
 
-### Internal Boundaries
+### 6. Config File Loading -- Server Startup
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| Tool functions -> toon_format | Direct function call (`encode()`) | Same interface as `json.dumps()` |
-| Tool functions -> data models | `model.to_dict()` -> dict -> `encode()` | No change to model layer |
-| Staleness tests -> tool docstrings | `inspect.getdoc()` to read docstrings | Standard Python introspection |
-| Existing tests -> tool responses | `toon_format.decode(result)` to get dict | Replaces `json.loads(result)` |
+**Current state:** All configuration is hardcoded or passed as function arguments:
+- `PoolConfig` defaults in `connection.py`
+- Log file path hardcoded as `"dbmcp.log"` in `server.py`
+- SP allowlist hardcoded as `SAFE_PROCEDURES` frozenset in `validation.py`
+- No connection presets
 
-## Confidence Notes
+**Where config loading fits in the startup sequence:**
 
-| Claim | Confidence | Basis |
-|-------|------------|-------|
-| toon_format.encode() accepts Python dicts and returns str | MEDIUM | GitHub README shows this API; PyPI page shows 0.1.0 placeholder. Actual installable version needs verification. |
-| Direct substitution works (no wrapper needed) | HIGH | Verified: all 9 tools follow identical pattern of `json.dumps(dict)` as final step |
-| Docstring updates are highest-effort component | HIGH | Verified: each tool has bespoke response shapes with conditionals |
-| Existing test suite needs assertion updates | HIGH | Verified: tests use `json.loads()` to parse tool responses |
-| No changes needed to data models or service layer | HIGH | Verified: serialization is leaf-node concern in tool functions only |
+```
+Current startup:
+  server.py module load:
+    1. setup_logging(log_file="dbmcp.log")
+    2. FastMCP("dbmcp")
+    3. ConnectionManager()  (with default PoolConfig)
+    4. Import tool modules
+  main():
+    5. mcp.run(transport="stdio")
 
----
-*Architecture research for: TOON format migration in dbmcp*
-*Researched: 2026-03-04*
+Proposed startup:
+  server.py module load:
+    1. load_config()  # <-- NEW: reads dbmcp.toml or similar
+    2. setup_logging(log_file=config.log_file)  # from config
+    3. FastMCP("dbmcp")
+    4. ConnectionManager(pool_config=config.pool_config)  # from config
+    5. Import tool modules (which read config.safe_procedures, config.validation)
+  main():
+    6. mcp.run(transport="stdio")
+```
+
+**Config file format recommendation:** TOML (Python 3.11+ has `tomllib` in stdlib, zero new dependencies).
+
+**Recommended config structure:**
+```toml
+[server]
+log_file = "dbmcp.log"
+log_level = "INFO"
+
+[pool]
+pool_size = 5
+max_overflow = 10
+pool_timeout = 30
+pool_recycle = 3600
+query_timeout = 30
+
+[validation]
+# Additional safe stored procedures beyond the built-in 22
+safe_procedures = ["my_custom_sp", "another_safe_sp"]
+
+[connections.mydb]
+server = "myserver.example.com"
+database = "mydb"
+authentication_method = "windows"
+trust_server_cert = true
+```
+
+**Config file discovery order:**
+1. `--config` CLI argument (if added)
+2. `./dbmcp.toml` (project-local)
+3. `~/.config/dbmcp/config.toml` (user-level)
+4. Built-in defaults (current behavior, always works)
+
+**Integration points:**
+- New: `src/config.py` -- loads and validates TOML config, returns typed config object
+- Modified: `server.py` -- calls `load_config()` at top, passes config to components
+- Modified: `connection.py` -- accepts PoolConfig from config (already does this via constructor)
+- Modified: `validation.py` -- `SAFE_PROCEDURES` becomes configurable: built-in set UNION config additions
+- The connect_database tool could optionally accept a connection preset name
+
+## Recommended Architecture Changes
+
+### New Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Config loader | `src/config.py` | TOML config loading, validation, defaults |
+| Type handler registry | `src/type_handlers.py` | Centralized type conversion registry |
+
+### Modified Components
+
+| Component | Change Type | Scope |
+|-----------|------------|-------|
+| `server.py` | Config integration, atexit handler | Small (5-10 lines) |
+| `connection.py` | Azure AD token lifecycle, pool events | Medium (30-50 lines) |
+| `azure_auth.py` | Token expiry tracking | Small (10-15 lines) |
+| `query.py` | MetadataService integration, type registry, exception narrowing | Medium (20-30 lines) |
+| `validation.py` | Configurable SP allowlist, no broad exceptions here currently | Small (5-10 lines) |
+| `metadata.py` | Exception narrowing across ~10 catch blocks | Medium (scattered but mechanical) |
+| `serialization.py` | Delegate to type registry | Small (10 lines) |
+| `schema_tools.py` | Exception narrowing | Small (mechanical) |
+| `query_tools.py` | Exception narrowing, pass MetadataService | Small |
+| `analysis_tools.py` | Exception narrowing | Small (mechanical) |
+
+### Removed Components
+
+| Component | File | Reason |
+|-----------|------|--------|
+| Dead metrics | `src/metrics.py` | Zero imports, zero usage |
+
+## Data Flow Changes
+
+### Before (query execution path):
+```
+Tool handler -> QueryService(engine) -> _sanitize_identifier (regex) -> SQL string -> execute
+```
+
+### After (query execution path):
+```
+Tool handler -> QueryService(engine, metadata_svc) -> _validate_identifiers (DB lookup) -> _sanitize_identifier (regex) -> SQL string -> execute
+```
+
+### Before (serialization):
+```
+query.py: _truncate_value (isinstance chain) -> result dict
+serialization.py: _pre_serialize (isinstance chain) -> TOON
+```
+
+### After (serialization):
+```
+type_handlers.py: TypeHandlerRegistry (centralized)
+query.py: registry.convert(value) + truncation logic -> result dict
+serialization.py: registry.convert(value) -> TOON
+```
+
+## Suggested Build Order
+
+Based on dependency analysis and risk:
+
+| Order | Concern | Rationale |
+|-------|---------|-----------|
+| 1 | Remove metrics.py | Zero risk, zero dependencies, immediate cleanup |
+| 2 | Exception handling narrowing | Foundation for all other changes -- you need to understand error paths before modifying connection lifecycle or adding new components |
+| 3 | Type handler registry | Self-contained, tests can verify parity with existing behavior |
+| 4 | Config file support | Foundation for connection presets and SP allowlist customization |
+| 5 | Identifier sanitization | Requires MetadataService wiring into QueryService (moderate coupling change) |
+| 6 | Connection lifecycle (Azure AD + cleanup) | Highest risk, most complex, benefits from exception handling being clean first |
+
+**Rationale for this order:**
+- Items 1-2 are pure cleanup with no new features -- they reduce noise and clarify the codebase
+- Item 3 is additive and testable in isolation
+- Item 4 provides infrastructure that items 5-6 can optionally consume
+- Item 5 introduces cross-service coupling (QueryService -> MetadataService) which is easier to reason about after exceptions are clean
+- Item 6 is the riskiest change (connection pooling behavior, token lifecycle, async pool events) and benefits from a clean foundation
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Catching Exception Where You Mean OperationalError
+**What:** Using `except Exception` as shorthand for "database errors"
+**Why bad:** Swallows TypeError, KeyError, AttributeError -- real bugs become silent empty results
+**Instead:** Catch `(sqlalchemy.exc.OperationalError, sqlalchemy.exc.ProgrammingError, pyodbc.Error)` for database errors. Keep `Exception` only at the outermost MCP tool boundary.
+
+### Anti-Pattern 2: Duplicating Type Conversion Logic
+**What:** Both query.py and serialization.py have isinstance chains for the same types
+**Why bad:** Divergent behavior (one handles `time`, the other handles `StrEnum`), maintenance burden
+**Instead:** Single TypeHandlerRegistry used by both paths
+
+### Anti-Pattern 3: Validating Identifiers After Building SQL
+**What:** Current code brackets identifiers then hopes they are valid
+**Why bad:** Invalid identifiers produce SQL errors that are hard to distinguish from other failures
+**Instead:** Validate against metadata BEFORE building SQL, fail with clear ValueError
+
+### Anti-Pattern 4: Config via Code Changes
+**What:** Modifying `SAFE_PROCEDURES` frozenset or `PoolConfig` defaults requires code changes
+**Why bad:** Operators cannot customize without forking
+**Instead:** TOML config file with sane defaults, config augments (not replaces) built-in values
+
+## Scalability Considerations
+
+Not applicable for this milestone -- these are internal quality improvements, not scaling changes. The connection pool configuration becoming configurable (via config file) does enable future scaling tuning without code changes.
+
+## Sources
+
+- Direct codebase analysis (all findings are HIGH confidence)
+- SQLAlchemy 2.0 pool event documentation (for checkout listener pattern)
+- Python 3.11 tomllib documentation (for config file loading)
+- azure-identity AccessToken.expires_on field (for token lifecycle tracking)
