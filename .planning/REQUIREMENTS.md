@@ -9,9 +9,9 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 ### Code Quality
 
-- [ ] **QUAL-01**: Dead metrics module (`src/metrics.py`) removed from codebase with no remaining references
+- [x] **QUAL-01**: Dead metrics module (`src/metrics.py`) removed from codebase with no remaining references
 - [ ] **QUAL-02**: All 25 broad `except Exception:` blocks replaced with specific exception types (SQLAlchemy, pyodbc, stdlib) while preserving user-facing error messages
-- [ ] **QUAL-03**: Three `# type: ignore` suppressions in `src/db/query.py` eliminated by proper typing (QueryResult wrapper or extended dataclass fields)
+- [x] **QUAL-03**: Three `# type: ignore` suppressions in `src/db/query.py` eliminated by proper typing (QueryResult wrapper or extended dataclass fields)
 
 ### Test Coverage
 
@@ -59,9 +59,9 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QUAL-01 | Phase 3 | Pending |
+| QUAL-01 | Phase 3 | Complete |
 | QUAL-02 | Phase 3 | Pending |
-| QUAL-03 | Phase 3 | Pending |
+| QUAL-03 | Phase 3 | Complete |
 | TEST-01 | Phase 3 | Pending |
 | TEST-02 | Phase 3 | Pending |
 | CONN-01 | Phase 4 | Pending |
