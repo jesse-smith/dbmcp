@@ -4,8 +4,11 @@ Tests for list_schemas, list_tables, and related metadata queries.
 These tests use an in-memory SQLite database for realistic testing.
 """
 
+from unittest.mock import MagicMock, PropertyMock, patch
+
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.db.metadata import MetadataService
 from src.models.schema import TableType
@@ -433,3 +436,152 @@ class TestObjectTypeFiltering:
 
         for table in tables:
             assert table.table_type == TableType.VIEW
+
+
+class TestErrorPaths:
+    """Tests for SQLAlchemyError handling in MetadataService methods."""
+
+    def test_get_schema_names_error_returns_fallback(self, test_engine):
+        """Verify list_schemas falls back to [None] when get_schema_names raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_schema_names.side_effect = SQLAlchemyError("connection lost")
+            # After fallback to [None], get_table_names/get_view_names still work
+            mock_insp.get_table_names.return_value = ["t1"]
+            mock_insp.get_view_names.return_value = []
+            mock_inspector_prop.return_value = mock_insp
+
+            schemas = service.list_schemas()
+
+        # Should still return at least one schema (the fallback "main")
+        assert len(schemas) >= 1
+        assert schemas[0].schema_name == "main"
+
+    def test_get_table_names_error_in_schema_loop(self, test_engine):
+        """Verify _list_schemas_generic handles error on get_table_names gracefully."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_schema_names.return_value = ["main"]
+            mock_insp.get_table_names.side_effect = SQLAlchemyError("access denied")
+            mock_insp.get_view_names.side_effect = SQLAlchemyError("access denied")
+            mock_inspector_prop.return_value = mock_insp
+
+            schemas = service.list_schemas()
+
+        # "main" schema still included (display_name in keep-list) but with 0 counts
+        assert len(schemas) >= 1
+        main_schema = next((s for s in schemas if s.schema_name == "main"), None)
+        assert main_schema is not None
+        assert main_schema.table_count == 0
+        assert main_schema.view_count == 0
+
+    def test_table_exists_error_returns_false(self, test_engine):
+        """Verify table_exists returns False when inspector raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_table_names.side_effect = SQLAlchemyError("broken")
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.table_exists("nonexistent", "dbo")
+
+        assert result is False
+
+    def test_get_indexes_error_returns_empty_list(self, test_engine):
+        """Verify get_indexes returns empty list when inspector raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_indexes.side_effect = SQLAlchemyError("no such table")
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.get_indexes("nonexistent", "dbo")
+
+        assert result == []
+
+    def test_get_primary_key_error_returns_empty_dict(self, test_engine):
+        """Verify get_primary_key returns empty dict when inspector raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_pk_constraint.side_effect = SQLAlchemyError("no such table")
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.get_primary_key("nonexistent", "dbo")
+
+        assert result == {}
+
+    def test_get_row_count_error_returns_none(self, test_engine):
+        """Verify _get_row_count_generic returns None on SQLAlchemyError."""
+        service = MetadataService(test_engine)
+
+        # Patch engine.connect to raise when executing the COUNT query
+        with patch.object(service.engine, "connect") as mock_connect:
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.execute.side_effect = SQLAlchemyError("permission denied")
+            mock_connect.return_value = mock_conn
+
+            result = service._get_row_count_generic("secret_table", "dbo")
+
+        assert result is None
+
+    def test_get_columns_error_returns_empty_list(self, test_engine):
+        """Verify get_columns returns empty list when inspector raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_columns.side_effect = SQLAlchemyError("table gone")
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.get_columns("gone_table", "dbo")
+
+        assert result == []
+
+    def test_get_foreign_keys_error_returns_empty_list(self, test_engine):
+        """Verify get_foreign_keys returns empty list when inspector raises."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_foreign_keys.side_effect = SQLAlchemyError("broken")
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.get_foreign_keys("broken_table", "dbo")
+
+        assert result == []
+
+    def test_collect_objects_error_in_list_tables(self, test_engine):
+        """Verify _list_tables_generic handles SQLAlchemyError in _collect_objects_from_schema."""
+        service = MetadataService(test_engine)
+
+        with patch.object(
+            service, "_collect_objects_from_schema", side_effect=SQLAlchemyError("oops")
+        ):
+            tables, pagination = service.list_tables()
+
+        assert tables == []
+        assert pagination["total_count"] == 0
