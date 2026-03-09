@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: defining_requirements
-stopped_at: Defining requirements for v1.1
-last_updated: "2026-03-06T19:00:00.000Z"
-last_activity: 2026-03-06 - Milestone v1.1 started
+status: ready_to_plan
+stopped_at: Roadmap created for v1.1, ready to plan Phase 3
+last_updated: "2026-03-06T20:00:00.000Z"
+last_activity: 2026-03-06 - Roadmap created with 4 phases (3-6)
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,14 +21,32 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Milestone v1.1 Concern Handling — defining requirements
+**Current focus:** Phase 3 — Code Quality & Test Coverage
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-06 — Milestone v1.1 started
+Phase: 3 of 6 (Code Quality & Test Coverage)
+Plan: Ready to plan
+Status: Ready to plan Phase 3
+Last activity: 2026-03-06 — Roadmap created for v1.1 milestone
+
+Progress: [██████████░░░░░░░░░░] 33% (v1.0 phases complete, v1.1 not started)
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 5 (v1.0)
+- Average duration: ~4 hours (v1.0 estimate)
+- Total execution time: ~20 hours (v1.0)
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 1 (v1.0) | 3 | — | — |
+| 2 (v1.0) | 2 | — | — |
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
@@ -36,22 +54,19 @@ Last activity: 2026-03-06 — Milestone v1.1 started
 
 See PROJECT.md Key Decisions table for full log.
 
+Recent:
+- v1.1 scope: 10 concern items from audit grouped into 4 phases
+- Phase ordering: cleanup before tests before new features (research recommendation)
+- Phases 4/5/6 independent of each other but all depend on Phase 3
+
 ### Pending Todos
 
-1. Remove metrics module (tech debt)
-2. Replace broad exception handling with specific types (code quality)
-3. Remove type ignore suppressions in query module (code quality)
-4. Increase test coverage to minimum 70% (testing)
-5. Handle Azure AD token refresh in connection pool (database)
-6. Close database connections when MCP session ends (database)
-7. Fix identifier sanitization to use parameterized queries (security)
-8. Pin sqlglot version and add edge case test fixtures (security)
-9. Add type handler registry for query result JSON serialization (database)
-10. Add config file for connections, defaults, and SP allowlist (general)
+All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ### Blockers/Concerns
 
-None.
+- Azure AD token expiry behavior with `pool_pre_ping` needs live testing (non-blocking; `pool_recycle` is primary defense)
+- FastMCP has no session-level lifecycle hooks; `atexit` is the cleanup mechanism
 
 ### Quick Tasks Completed
 
@@ -65,5 +80,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-06
-Stopped at: Milestone v1.1 started — defining requirements
+Stopped at: Roadmap created for v1.1 — ready to plan Phase 3
 Resume file: N/A
