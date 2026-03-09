@@ -4,6 +4,7 @@ This module provides connection pooling and management using SQLAlchemy.
 Credentials are never logged per NFR-005.
 """
 
+import builtins
 import hashlib
 import time
 from dataclasses import dataclass
@@ -145,7 +146,10 @@ class ConnectionManager:
         # Create engine, test connection, and store metadata
         start_time = time.time()
         try:
-            engine = self._create_engine(odbc_conn_str, authentication_method, tenant_id, query_timeout)
+            engine = self._create_engine(
+                odbc_conn_str, authentication_method, tenant_id, query_timeout,
+                connection_id=connection_id,
+            )
             self._test_connection(engine, start_time, server, database, port)
         except ConnectionError:
             raise
@@ -241,6 +245,7 @@ class ConnectionManager:
         authentication_method: AuthenticationMethod,
         tenant_id: str | None,
         query_timeout: int = 30,
+        connection_id: str | None = None,
     ) -> Engine:
         """Create a SQLAlchemy engine with connection pooling.
 
@@ -249,6 +254,7 @@ class ConnectionManager:
             authentication_method: Authentication method
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
             query_timeout: Per-statement query timeout in seconds (0 = no timeout)
+            connection_id: Connection ID for auto-disconnect on token failure
 
         Returns:
             Configured SQLAlchemy Engine
@@ -278,7 +284,13 @@ class ConnectionManager:
             provider = AzureTokenProvider(tenant_id=tenant_id)
 
             def creator():
-                token = provider.get_token()
+                try:
+                    token = provider.get_token()
+                except builtins.ConnectionError:
+                    logger.debug("Azure AD token re-acquisition failed, cleaning up connection")
+                    if connection_id and connection_id in self._engines:
+                        self.disconnect(connection_id)
+                    raise
                 packed = provider.pack_token_for_pyodbc(token)
                 return pyodbc.connect(
                     odbc_conn_str,

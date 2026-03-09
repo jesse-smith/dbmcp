@@ -3,6 +3,7 @@
 Tests for ConnectionManager and NFR-005 compliance (credentials never logged) - T137.
 """
 
+import builtins
 import logging
 import re
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.models.schema import AuthenticationMethod
+
+# azure_auth.AzureTokenProvider.get_token() raises Python's built-in ConnectionError,
+# which is distinct from src.db.connection.ConnectionError. Alias for test clarity.
+BuiltinConnectionError = builtins.ConnectionError
 
 
 class TestConnectionValidation:
@@ -837,3 +842,192 @@ class TestAzureAdIntegratedErrorPropagation:
 
         error_msg = str(exc_info.value)
         assert "az login" in error_msg or "Azure AD" in error_msg
+
+
+class TestTokenFailureAutoDisconnect:
+    """Tests for auto-disconnect on Azure AD token re-acquisition failure."""
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.pyodbc")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_token_failure_triggers_auto_disconnect(
+        self, mock_create_engine, mock_provider_cls, mock_pyodbc, mock_event,
+    ):
+        """When creator's get_token() raises ConnectionError during pool refresh,
+        the connection_id is auto-disconnected from ConnectionManager."""
+        mock_provider = MagicMock()
+        # First call succeeds (initial connect), subsequent calls fail
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        conn = manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+        connection_id = conn.connection_id
+
+        # Verify connection is established
+        assert manager.is_connected(connection_id)
+
+        # Extract the creator callable
+        creator = mock_create_engine.call_args.kwargs["creator"]
+
+        # Now simulate token failure on pool refresh
+        mock_provider.get_token.side_effect = BuiltinConnectionError(
+            "Azure AD token expired"
+        )
+
+        with pytest.raises(BuiltinConnectionError):
+            creator()
+
+        # Connection should have been auto-disconnected
+        assert not manager.is_connected(connection_id)
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.pyodbc")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_token_failure_reraises_error(
+        self, mock_create_engine, mock_provider_cls, mock_pyodbc, mock_event,
+    ):
+        """When creator's get_token() raises ConnectionError, the original error is re-raised."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        creator = mock_create_engine.call_args.kwargs["creator"]
+
+        mock_provider.get_token.side_effect = BuiltinConnectionError(
+            "Azure AD token expired"
+        )
+
+        with pytest.raises(BuiltinConnectionError, match="Azure AD token expired"):
+            creator()
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.pyodbc")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_token_failure_auto_disconnect_logs_debug(
+        self, mock_create_engine, mock_provider_cls, mock_pyodbc, mock_event,
+    ):
+        """Auto-disconnect on token failure logs at DEBUG level."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        creator = mock_create_engine.call_args.kwargs["creator"]
+
+        mock_provider.get_token.side_effect = BuiltinConnectionError(
+            "Azure AD token expired"
+        )
+
+        # Capture logs from the correct logger (dbmcp.src.db.connection)
+        log_output = []
+
+        class ListHandler(logging.Handler):
+            def emit(self, record):
+                log_output.append(record)
+
+        handler = ListHandler()
+        handler.setLevel(logging.DEBUG)
+        conn_logger = logging.getLogger("dbmcp.src.db.connection")
+        conn_logger.addHandler(handler)
+        original_level = conn_logger.level
+        conn_logger.setLevel(logging.DEBUG)
+
+        try:
+            with pytest.raises(BuiltinConnectionError):
+                creator()
+        finally:
+            conn_logger.removeHandler(handler)
+            conn_logger.setLevel(original_level)
+
+        assert any(
+            "token re-acquisition failed" in record.getMessage().lower()
+            and record.levelno == logging.DEBUG
+            for record in log_output
+        )
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.pyodbc")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_token_failure_no_crash_when_no_stored_engine(
+        self, mock_create_engine, mock_provider_cls, mock_pyodbc, mock_event,
+    ):
+        """If connection_id is not in engines (initial connect), auto-disconnect is a no-op."""
+        mock_provider = MagicMock()
+        # get_token fails on the very first call (during _test_connection's engine.connect())
+        mock_provider.get_token.side_effect = BuiltinConnectionError(
+            "Azure AD token expired"
+        )
+        mock_provider_cls.return_value = mock_provider
+
+        mock_engine_instance = MagicMock()
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+
+        # The creator should raise without crashing even though connection_id
+        # is not yet in _engines. But since _create_engine returns an engine
+        # and _test_connection calls engine.connect() which triggers the pool
+        # to call creator(), we need to test the creator directly.
+
+        # We'll call _create_engine and extract the creator
+        manager._create_engine(
+            "fake_odbc_string",
+            AuthenticationMethod.AZURE_AD_INTEGRATED,
+            tenant_id=None,
+            connection_id="nonexistent_id",
+        )
+
+        creator = mock_create_engine.call_args.kwargs["creator"]
+
+        # Should raise without crashing (no KeyError on _engines)
+        with pytest.raises(BuiltinConnectionError):
+            creator()
