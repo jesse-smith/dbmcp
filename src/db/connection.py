@@ -42,6 +42,12 @@ class PoolConfig:
     pool_recycle: int = 3600
     pool_pre_ping: bool = True
     query_timeout: int = 30
+    azure_ad_pool_recycle: int = 2700
+    """Token-aware recycle interval for Azure AD connections.
+
+    Azure AD tokens expire at ~3600s; default 2700s (45 min) recycles
+    before expiry.
+    """
 
 
 class ConnectionError(Exception):
@@ -256,6 +262,17 @@ class ConnectionManager:
             "pool_recycle": self._pool_config.pool_recycle,
             "echo": False,
         }
+
+        # Auth-aware pool_recycle: Azure AD connections use a shorter recycle
+        # interval to discard connections before token expiry (~3600s).
+        if authentication_method in (
+            AuthenticationMethod.AZURE_AD,
+            AuthenticationMethod.AZURE_AD_INTEGRATED,
+        ):
+            pool_kwargs["pool_recycle"] = self._pool_config.azure_ad_pool_recycle
+            logger.debug(
+                f"Azure AD auth: pool_recycle set to {pool_kwargs['pool_recycle']}s (token-aware)"
+            )
 
         if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
             provider = AzureTokenProvider(tenant_id=tenant_id)

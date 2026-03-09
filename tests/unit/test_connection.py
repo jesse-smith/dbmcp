@@ -628,7 +628,7 @@ class TestAzureAdIntegratedTokenRefresh:
     @patch("src.db.connection.AzureTokenProvider")
     @patch("src.db.connection.create_engine")
     def test_pool_pre_ping_and_recycle_set_for_azure_ad_integrated(self, mock_create_engine, mock_provider_cls, mock_event):
-        """T020: pool_pre_ping=True and pool_recycle=3600 set on azure_ad_integrated engine."""
+        """T020: pool_pre_ping=True and pool_recycle=2700 set on azure_ad_integrated engine."""
         mock_provider = MagicMock()
         mock_provider.get_token.return_value = "fake-token"
         mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
@@ -654,7 +654,163 @@ class TestAzureAdIntegratedTokenRefresh:
 
         call_kwargs = mock_create_engine.call_args.kwargs
         assert call_kwargs["pool_pre_ping"] is True
-        assert call_kwargs["pool_recycle"] == 3600
+        assert call_kwargs["pool_recycle"] == 2700
+
+
+class TestAuthAwarePoolRecycle:
+    """Tests for auth-aware pool_recycle behavior."""
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_azure_ad_integrated_sets_pool_recycle_2700(self, mock_create_engine, mock_provider_cls, mock_event):
+        """Azure AD Integrated auth sets pool_recycle=2700 on engine (default)."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 2700
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.create_engine")
+    def test_azure_ad_password_sets_pool_recycle_2700(self, mock_create_engine, mock_event):
+        """Azure AD (password) auth sets pool_recycle=2700 on engine (default)."""
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            username="user@domain.com",
+            password="password",
+            authentication_method=AuthenticationMethod.AZURE_AD,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 2700
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.create_engine")
+    def test_sql_auth_keeps_pool_recycle_3600(self, mock_create_engine, mock_event):
+        """SQL auth keeps pool_recycle=3600 on engine."""
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            username="user",
+            password="pass",
+            authentication_method=AuthenticationMethod.SQL,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 3600
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.create_engine")
+    def test_windows_auth_keeps_pool_recycle_3600(self, mock_create_engine, mock_event):
+        """Windows auth keeps pool_recycle=3600 on engine."""
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            authentication_method=AuthenticationMethod.WINDOWS,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 3600
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.AzureTokenProvider")
+    @patch("src.db.connection.create_engine")
+    def test_custom_azure_ad_pool_recycle_respected(self, mock_create_engine, mock_provider_cls, mock_event):
+        """Custom azure_ad_pool_recycle=1800 in PoolConfig is respected for Azure AD."""
+        mock_provider = MagicMock()
+        mock_provider.get_token.return_value = "fake-token"
+        mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
+        mock_provider_cls.return_value = mock_provider
+
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        from src.db.connection import PoolConfig
+        manager = ConnectionManager(pool_config=PoolConfig(azure_ad_pool_recycle=1800))
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 1800
+
+    @patch("src.db.connection.event")
+    @patch("src.db.connection.create_engine")
+    def test_custom_pool_recycle_used_for_non_azure(self, mock_create_engine, mock_event):
+        """Custom pool_recycle=1800 in PoolConfig is still used for non-Azure auth."""
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = MagicMock(version="SQL Server 2019", database_name="testdb")
+        mock_connection.execute.return_value = mock_result
+        mock_engine_instance = MagicMock()
+        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
+        mock_create_engine.return_value = mock_engine_instance
+
+        from src.db.connection import PoolConfig
+        manager = ConnectionManager(pool_config=PoolConfig(pool_recycle=1800))
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            username="user",
+            password="pass",
+            authentication_method=AuthenticationMethod.SQL,
+        )
+
+        assert mock_create_engine.call_args.kwargs["pool_recycle"] == 1800
+
+    def test_pool_config_azure_ad_pool_recycle_default(self):
+        """PoolConfig.azure_ad_pool_recycle defaults to 2700."""
+        from src.db.connection import PoolConfig
+        config = PoolConfig()
+        assert config.azure_ad_pool_recycle == 2700
 
 
 class TestAzureAdIntegratedErrorPropagation:
