@@ -1031,3 +1031,153 @@ class TestTokenFailureAutoDisconnect:
         # Should raise without crashing (no KeyError on _engines)
         with pytest.raises(BuiltinConnectionError):
             creator()
+
+
+class TestDisconnectAllBestEffort:
+    """Tests for best-effort disconnect_all behavior."""
+
+    def test_disconnect_all_catches_engine_dispose_error(self):
+        """disconnect_all catches SQLAlchemyError from engine.dispose() and continues."""
+        manager = ConnectionManager()
+
+        engine1 = MagicMock()
+        engine1.dispose.side_effect = SQLAlchemyError("dispose failed")
+        engine2 = MagicMock()
+
+        manager._engines = {"conn1": engine1, "conn2": engine2}
+        manager._connections = {"conn1": MagicMock(), "conn2": MagicMock()}
+
+        count = manager.disconnect_all()
+
+        # Should still report 2 connections handled
+        assert count == 2
+        # engine2.dispose should still have been called
+        engine2.dispose.assert_called_once()
+
+    def test_disconnect_all_returns_correct_count_with_partial_failure(self):
+        """disconnect_all returns total count even when some engines fail to dispose."""
+        manager = ConnectionManager()
+
+        engine1 = MagicMock()
+        engine2 = MagicMock()
+        engine2.dispose.side_effect = SQLAlchemyError("fail")
+        engine3 = MagicMock()
+
+        manager._engines = {"a": engine1, "b": engine2, "c": engine3}
+        manager._connections = {"a": MagicMock(), "b": MagicMock(), "c": MagicMock()}
+
+        count = manager.disconnect_all()
+        assert count == 3
+
+    def test_disconnect_all_clears_dicts_on_partial_failure(self):
+        """disconnect_all clears both _engines and _connections even on partial failure."""
+        manager = ConnectionManager()
+
+        engine1 = MagicMock()
+        engine1.dispose.side_effect = SQLAlchemyError("fail")
+        engine2 = MagicMock()
+
+        manager._engines = {"conn1": engine1, "conn2": engine2}
+        manager._connections = {"conn1": MagicMock(), "conn2": MagicMock()}
+
+        manager.disconnect_all()
+
+        assert len(manager._engines) == 0
+        assert len(manager._connections) == 0
+
+    def test_disconnect_all_logs_errors_at_debug_level(self):
+        """disconnect_all logs errors at DEBUG level (not WARNING/ERROR)."""
+        manager = ConnectionManager()
+
+        engine1 = MagicMock()
+        engine1.dispose.side_effect = SQLAlchemyError("dispose failed")
+
+        manager._engines = {"conn1": engine1}
+        manager._connections = {"conn1": MagicMock()}
+
+        log_output = []
+
+        class ListHandler(logging.Handler):
+            def emit(self, record):
+                log_output.append(record)
+
+        handler = ListHandler()
+        handler.setLevel(logging.DEBUG)
+        conn_logger = logging.getLogger("dbmcp.src.db.connection")
+        conn_logger.addHandler(handler)
+        original_level = conn_logger.level
+        conn_logger.setLevel(logging.DEBUG)
+
+        try:
+            manager.disconnect_all()
+        finally:
+            conn_logger.removeHandler(handler)
+            conn_logger.setLevel(original_level)
+
+        error_records = [
+            r for r in log_output
+            if "error" in r.getMessage().lower() and "disposing" in r.getMessage().lower()
+        ]
+        assert len(error_records) > 0, "Expected error log for failed dispose"
+        for record in error_records:
+            assert record.levelno == logging.DEBUG, (
+                f"Expected DEBUG level, got {record.levelname}"
+            )
+
+
+class TestClassifyDbError:
+    """Tests for _classify_db_error error classification function."""
+
+    def _make_sqlalchemy_error(self, sqlstate: str | None = None, message: str = "error"):
+        """Helper to create a mock SQLAlchemyError with orig.args."""
+        exc = SQLAlchemyError(message)
+        orig = MagicMock()
+        if sqlstate is not None:
+            orig.args = [sqlstate, message]
+        else:
+            orig.args = [message]
+        exc.orig = orig
+        return exc
+
+    def test_auth_failure_28000(self):
+        """SQLSTATE '28000' returns auth_failure category."""
+        from src.db.connection import _classify_db_error
+
+        exc = self._make_sqlalchemy_error("28000", "Login failed for user")
+        category, guidance = _classify_db_error(exc)
+        assert category == "auth_failure"
+        assert "credentials" in guidance.lower() or "credential" in guidance.lower()
+
+    def test_connection_lost_08S01(self):
+        """SQLSTATE '08S01' returns connection_lost category."""
+        from src.db.connection import _classify_db_error
+
+        exc = self._make_sqlalchemy_error("08S01", "Communication link failure")
+        category, guidance = _classify_db_error(exc)
+        assert category == "connection_lost"
+        assert "server" in guidance.lower() or "unreachable" in guidance.lower()
+
+    def test_connection_lost_08001(self):
+        """SQLSTATE '08001' returns connection_lost category."""
+        from src.db.connection import _classify_db_error
+
+        exc = self._make_sqlalchemy_error("08001", "Unable to connect")
+        category, guidance = _classify_db_error(exc)
+        assert category == "connection_lost"
+
+    def test_token_expired_message(self):
+        """Message containing 'token' and 'expired' returns token_expired category."""
+        from src.db.connection import _classify_db_error
+
+        exc = self._make_sqlalchemy_error(None, "The Azure AD token has expired")
+        category, guidance = _classify_db_error(exc)
+        assert category == "token_expired"
+        assert "az login" in guidance.lower()
+
+    def test_unknown_error(self):
+        """Unknown error returns unknown category."""
+        from src.db.connection import _classify_db_error
+
+        exc = self._make_sqlalchemy_error(None, "Some random error")
+        category, guidance = _classify_db_error(exc)
+        assert category == "unknown"

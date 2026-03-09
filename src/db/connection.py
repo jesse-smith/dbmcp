@@ -57,6 +57,57 @@ class ConnectionError(Exception):
     pass
 
 
+def _classify_db_error(exc: SQLAlchemyError) -> tuple[str, str]:
+    """Classify a database error and return (category, user_guidance).
+
+    Examines SQLSTATE codes and message content to produce actionable
+    error categories for user-facing messages.
+
+    Args:
+        exc: The SQLAlchemy exception to classify.
+
+    Returns:
+        A tuple of (category, guidance) where category is one of:
+        'auth_failure', 'connection_lost', 'token_expired', 'unknown'.
+    """
+    sqlstate = None
+    message = str(exc)
+
+    # Extract SQLSTATE from the underlying driver error if available
+    if hasattr(exc, "orig") and exc.orig is not None and hasattr(exc.orig, "args"):
+        args = exc.orig.args
+        if args and isinstance(args[0], str) and len(args[0]) == 5:
+            sqlstate = args[0]
+        # Combine all args into the message for pattern matching
+        message = " ".join(str(a) for a in args)
+
+    # Check SQLSTATE-based categories
+    if sqlstate and sqlstate.startswith("28"):
+        return (
+            "auth_failure",
+            "Check your credentials (username/password) and verify the account has access to the database.",
+        )
+
+    if sqlstate and sqlstate.startswith("08"):
+        return (
+            "connection_lost",
+            "The database server is unreachable. Check the server address, port, and network connectivity.",
+        )
+
+    # Check message-based patterns for Azure AD token issues
+    msg_lower = message.lower()
+    if "token" in msg_lower and "expired" in msg_lower:
+        return (
+            "token_expired",
+            "The Azure AD token has expired. Run 'az login' to re-authenticate.",
+        )
+
+    return (
+        "unknown",
+        "An unexpected database error occurred. Check the server logs for details.",
+    )
+
+
 class ConnectionManager:
     """Manages database connections with SQLAlchemy pooling.
 
@@ -443,17 +494,27 @@ class ConnectionManager:
         return True
 
     def disconnect_all(self) -> int:
-        """Close all database connections.
+        """Close all database connections (best-effort).
+
+        Iterates over all engines and disposes each one. Per-engine errors
+        are caught and logged at DEBUG level so that a single failed dispose
+        does not prevent cleanup of remaining connections.
 
         Returns:
-            Number of connections closed
+            Number of connections that were tracked (regardless of dispose success)
         """
         count = len(self._engines)
-        for engine in self._engines.values():
-            engine.dispose()
+        for conn_id, engine in list(self._engines.items()):
+            try:
+                engine.dispose()
+            except (SQLAlchemyError, OSError) as exc:
+                logger.debug(
+                    f"Error disposing engine {conn_id} during shutdown: {exc}",
+                    exc_info=True,
+                )
         self._engines.clear()
         self._connections.clear()
-        logger.info(f"Disconnected {count} connections")
+        logger.debug(f"Shutdown cleanup: disposed {count} connection(s)")
         return count
 
     def list_connections(self) -> list[Connection]:
