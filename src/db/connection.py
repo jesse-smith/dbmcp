@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 import pyodbc
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import QueuePool
 
 from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
@@ -142,7 +143,7 @@ class ConnectionManager:
             self._test_connection(engine, start_time, server, database, port)
         except ConnectionError:
             raise
-        except Exception as e:
+        except SQLAlchemyError as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Connection to {server}:{port}/{database} failed after {elapsed_ms}ms: {type(e).__name__}")
             raise ConnectionError(f"Could not connect to {server}:{port}/{database}: {str(e)}") from e

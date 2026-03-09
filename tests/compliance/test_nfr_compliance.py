@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.db.metadata import MetadataService
@@ -267,7 +268,7 @@ class TestNFR005CredentialSecurity:
         secret_password = "NFR005_SecretPassword!@#$"
 
         with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = Exception("Connection refused")
+            mock_engine.side_effect = SQLAlchemyError("Connection refused")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -317,7 +318,7 @@ class TestNFR005CredentialSecurity:
         secret_password = "NFR005_ODBCPass#789"
 
         with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = Exception("Test error")
+            mock_engine.side_effect = SQLAlchemyError("Test error")
 
             with pytest.raises(ConnectionError):
                 manager.connect(

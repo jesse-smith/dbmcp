@@ -8,6 +8,7 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.db.connection import ConnectionError, ConnectionManager
 from src.models.schema import AuthenticationMethod
@@ -113,7 +114,7 @@ class TestNFR005CredentialSafety:
 
         with patch("src.db.connection.create_engine") as mock_engine:
             # Simulate connection failure to trigger error logging
-            mock_engine.side_effect = Exception("Connection refused")
+            mock_engine.side_effect = SQLAlchemyError("Connection refused")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -166,7 +167,7 @@ class TestNFR005CredentialSafety:
         secret_password = "ODbc_Passw0rd#789"
 
         with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = Exception("Test error")
+            mock_engine.side_effect = SQLAlchemyError("Test error")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -187,7 +188,7 @@ class TestNFR005CredentialSafety:
         secret_password = "Pattern_Test_Pass!000"
 
         with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = Exception("Test error")
+            mock_engine.side_effect = SQLAlchemyError("Test error")
 
             with pytest.raises(ConnectionError):
                 manager.connect(

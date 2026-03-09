@@ -16,6 +16,7 @@ from typing import Any
 import sqlglot
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlglot import exp
 
 from src.db.validation import validate_query
@@ -127,8 +128,8 @@ class QueryService:
                     actual_method = SamplingMethod.TOP
                     self._process_rows(fallback_result, rows, truncated_columns)
 
-        except Exception as e:
-            logger.error(f"Error sampling data from {schema_name}.{table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.error(f"Error sampling data from {schema_name}.{table_name}: {type(e).__name__}: {e}")
             raise
 
         # Create sample ID
@@ -612,7 +613,7 @@ class QueryService:
                 conn.commit()
                 return [], [], rows_affected, None, None
 
-        except Exception as e:
+        except SQLAlchemyError as e:
             error_message = f"Query execution failed: {type(e).__name__}: {str(e)}"
             logger.error(f"Query execution error: {e}")
             return [], [], 0, error_message, None
@@ -682,7 +683,7 @@ class QueryService:
             count_value = count_result.scalar()
             if isinstance(count_value, int):
                 return count_value
-        except Exception:
+        except SQLAlchemyError:
             pass
 
         return None
