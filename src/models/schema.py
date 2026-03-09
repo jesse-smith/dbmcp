@@ -7,6 +7,7 @@ All entities are internal data structures - no persistent database storage requi
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 
 class AuthenticationMethod(StrEnum):
@@ -232,6 +233,9 @@ class Query:
     error_message: str | None = None
     executed_at: datetime | None = None
     denial_reasons: list[DenialReason] | None = None
+    columns: list[str] = field(default_factory=list)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    total_rows_available: int | None = None
 
 
 @dataclass

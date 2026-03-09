@@ -541,11 +541,10 @@ class QueryService:
             executed_at=datetime.now(),
         )
 
-        # Store additional result data as attributes (not in dataclass)
-        # These are returned separately in the response
-        query._columns = columns  # type: ignore
-        query._rows = rows  # type: ignore
-        query._total_rows_available = total_rows_available  # type: ignore
+        # Store result data in proper dataclass fields
+        query.columns = columns
+        query.rows = rows
+        query.total_rows_available = total_rows_available
 
         return query
 
@@ -713,9 +712,9 @@ class QueryService:
         Returns:
             Dict with columns, rows, and metadata
         """
-        columns = getattr(query, '_columns', [])
-        rows = getattr(query, '_rows', [])
-        total_rows_available = getattr(query, '_total_rows_available', None)
+        columns = query.columns
+        rows = query.rows
+        total_rows_available = query.total_rows_available
 
         result: dict[str, Any] = {
             "query_id": query.query_id,
