@@ -48,10 +48,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. An Azure AD-authenticated connection pool automatically discards connections whose tokens have expired (via `pool_recycle` and/or `pool_pre_ping`), so queries after 60+ minutes of idle time succeed without manual reconnection
   2. When the MCP server process exits (normally or via client disconnect), all SQLAlchemy engine connections are disposed and no database connections remain open
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 04-01: TBD
+- [ ] 04-01-PLAN.md — Auth-aware pool_recycle for Azure AD connections and token failure auto-disconnect
+- [ ] 04-02-PLAN.md — Session cleanup via atexit/SIGTERM, best-effort disconnect_all, and error classification
 
 ### Phase 5: Security Hardening
 **Goal**: Query validation catches edge cases that the current regex/blocklist approach misses
@@ -91,6 +92,6 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 1. Atomic TOON Migration | v1.0 | 3/3 | Complete | 2026-03-04 |
 | 2. Staleness Guard | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 3. Code Quality & Test Coverage | v1.1 | 0/3 | Planned | - |
-| 4. Connection Management | v1.1 | 0/? | Not started | - |
+| 4. Connection Management | v1.1 | 0/2 | Planned | - |
 | 5. Security Hardening | v1.1 | 0/? | Not started | - |
 | 6. Serialization & Configuration | v1.1 | 0/? | Not started | - |
