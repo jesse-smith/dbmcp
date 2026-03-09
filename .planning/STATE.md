@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: completed
-stopped_at: Phase 5 context gathered
-last_updated: "2026-03-09T22:54:22.883Z"
-last_activity: 2026-03-09 — Completed plan 04-02 (session cleanup and error classification)
+status: in-progress
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-03-09T23:17:33.596Z"
+last_activity: 2026-03-09 — Completed plan 05-01 (sqlglot pin and edge case fixtures)
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  completed_phases: 3
+  total_plans: 8
+  completed_plans: 8
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Phase 4 — Connection Management
+**Current focus:** Phase 5 — Security Hardening
 
 ## Current Position
 
-Phase: 4 of 6 (Connection Management)
-Plan: 2 of 2 complete
-Status: Phase 4 complete
-Last activity: 2026-03-09 — Completed plan 04-02 (session cleanup and error classification)
+Phase: 5 of 6 (Security Hardening)
+Plan: 1 of 2 complete
+Status: In progress
+Last activity: 2026-03-09 — Completed plan 05-01 (sqlglot pin and edge case fixtures)
 
-Progress: [██████████] 100% (v1.0 complete, v1.1 Phase 4: 2/2 plans done)
+Progress: [███████░░░] 70% (v1.0 complete, v1.1 Phase 5: 1/2 plans done)
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100% (v1.0 complete, v1.1 Phase 4: 2/
 | Phase 03 P03 | 2min | 2 tasks | 3 files |
 | Phase 04 P01 | 4min | 2 tasks | 2 files |
 | Phase 04 P02 | 4min | 2 tasks | 4 files |
+| Phase 05 P01 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Recent:
 - [Phase 04]: Catch builtins.ConnectionError (not local ConnectionError) in Azure AD creator closure
 - [Phase 04]: Source inspection test for atexit registration to avoid MCP registry corruption from module reload
 - [Phase 04]: _classify_db_error as module-level function (not method) for reuse outside ConnectionManager
+- [Phase 05]: WHILE-wrapped DML returns OPERATIONAL (not DML) -- sqlglot doesn't fully parse T-SQL WHILE bodies
+- [Phase 05]: Comment injection tests assert is_safe=True -- commented-out SQL is not executable
 
 ### Pending Todos
 
@@ -91,6 +94,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-09T22:54:22.881Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-security-hardening/05-CONTEXT.md
+Last session: 2026-03-09T23:16:25Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: .planning/phases/05-security-hardening/05-01-SUMMARY.md
