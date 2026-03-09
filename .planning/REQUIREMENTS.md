@@ -25,7 +25,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 ### Security Hardening
 
-- [ ] **SEC-01**: Identifier sanitization validates column names against `sys.columns` metadata before incorporating into SQL, replacing regex blocklist approach
+- [x] **SEC-01**: Identifier sanitization validates column names against `sys.columns` metadata before incorporating into SQL, replacing regex blocklist approach
 - [x] **SEC-02**: sqlglot pinned to `>=29.0.0,<30.0.0` in pyproject.toml with edge case test fixtures covering malformed SQL, injection attempts, T-SQL syntax, and comment obfuscation
 
 ### Infrastructure
@@ -66,7 +66,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 | TEST-02 | Phase 3 | Complete |
 | CONN-01 | Phase 4 | Complete |
 | CONN-02 | Phase 4 | Complete |
-| SEC-01 | Phase 5 | Pending |
+| SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 5 | Complete |
 | INFRA-01 | Phase 6 | Pending |
 | INFRA-02 | Phase 6 | Pending |

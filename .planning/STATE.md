@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: in-progress
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-03-09T23:17:33.596Z"
-last_activity: 2026-03-09 — Completed plan 05-01 (sqlglot pin and edge case fixtures)
+status: executing
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-03-09T23:18:36.160Z"
+last_activity: 2026-03-09 — Completed plan 05-02 (metadata-based identifier validation)
 progress:
   total_phases: 4
   completed_phases: 3
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-06)
 ## Current Position
 
 Phase: 5 of 6 (Security Hardening)
-Plan: 1 of 2 complete
-Status: In progress
-Last activity: 2026-03-09 — Completed plan 05-01 (sqlglot pin and edge case fixtures)
+Plan: 2 of 2 complete
+Status: Phase 5 complete
+Last activity: 2026-03-09 — Completed plan 05-02 (metadata-based identifier validation)
 
-Progress: [███████░░░] 70% (v1.0 complete, v1.1 Phase 5: 1/2 plans done)
+Progress: [██████████] 100% (v1.0 complete, v1.1 Phase 5: 2/2 plans done)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [███████░░░] 70% (v1.0 complete, v1.1 Phase 5: 1/2
 | Phase 04 P01 | 4min | 2 tasks | 2 files |
 | Phase 04 P02 | 4min | 2 tasks | 4 files |
 | Phase 05 P01 | 2min | 2 tasks | 2 files |
+| Phase 05 P02 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,7 @@ Recent:
 - [Phase 04]: _classify_db_error as module-level function (not method) for reuse outside ConnectionManager
 - [Phase 05]: WHILE-wrapped DML returns OPERATIONAL (not DML) -- sqlglot doesn't fully parse T-SQL WHILE bodies
 - [Phase 05]: Comment injection tests assert is_safe=True -- commented-out SQL is not executable
+- [Phase 05]: Metadata is single source of truth for identifier validation; regex only as fallback when metadata unavailable
 
 ### Pending Todos
 
@@ -94,6 +96,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-09T23:16:25Z
-Stopped at: Completed 05-01-PLAN.md
-Resume file: .planning/phases/05-security-hardening/05-01-SUMMARY.md
+Last session: 2026-03-09T23:18:36.158Z
+Stopped at: Completed 05-02-PLAN.md
+Resume file: None
