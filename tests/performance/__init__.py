@@ -8,7 +8,7 @@ T123: NFR-001 validation (<30s metadata retrieval)
 T124: NFR-002 validation (<10s sample data)
 T125: NFR-003 validation (<1MB documentation)
 T126: FK inference scaling profile
-T127-T128: Performance metrics logging
+T127-T128: Performance metrics (module removed — metrics.py was dead code)
 T129: Report generator
 T130: Baseline report generation
 
