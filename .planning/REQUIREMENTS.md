@@ -20,7 +20,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 ### Connection Management
 
-- [ ] **CONN-01**: Azure AD token refresh handled via `pool_recycle` (< token lifetime) and `pool_pre_ping` so pooled connections with expired tokens are discarded before use
+- [x] **CONN-01**: Azure AD token refresh handled via `pool_recycle` (< token lifetime) and `pool_pre_ping` so pooled connections with expired tokens are discarded before use
 - [ ] **CONN-02**: Database connections cleaned up when MCP session ends via `atexit` handler (or FastMCP lifecycle hook if available)
 
 ### Security Hardening
@@ -64,7 +64,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 | QUAL-03 | Phase 3 | Complete |
 | TEST-01 | Phase 3 | Complete |
 | TEST-02 | Phase 3 | Complete |
-| CONN-01 | Phase 4 | Pending |
+| CONN-01 | Phase 4 | Complete |
 | CONN-02 | Phase 4 | Pending |
 | SEC-01 | Phase 5 | Pending |
 | SEC-02 | Phase 5 | Pending |

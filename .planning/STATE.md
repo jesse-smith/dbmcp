@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-09T18:26:48.640Z"
-last_activity: 2026-03-09 — Completed plan 03-02 (narrow exception handlers to SQLAlchemyError)
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-09T19:10:02.943Z"
+last_activity: 2026-03-09 — Completed plan 04-01 (auth-aware pool recycling)
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 44
+  total_plans: 5
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Phase 3 — Code Quality & Test Coverage
+**Current focus:** Phase 4 — Connection Management
 
 ## Current Position
 
-Phase: 3 of 6 (Code Quality & Test Coverage)
-Plan: 2 of 3 complete
-Status: Executing Phase 3 plans
-Last activity: 2026-03-09 — Completed plan 03-02 (narrow exception handlers to SQLAlchemyError)
+Phase: 4 of 6 (Connection Management)
+Plan: 1 of 2 complete
+Status: Executing Phase 4 plans
+Last activity: 2026-03-09 — Completed plan 04-01 (auth-aware pool recycling)
 
-Progress: [████████████░░░░░░░░] 44% (v1.0 complete, v1.1 Phase 3: 2/3 plans done)
+Progress: [████████████████░░░░] 80% (v1.0 complete, v1.1 Phase 4: 1/2 plans done)
 
 ## Performance Metrics
 
@@ -49,6 +49,7 @@ Progress: [████████████░░░░░░░░] 44% (v1
 
 *Updated after each plan completion*
 | Phase 03 P03 | 2min | 2 tasks | 3 files |
+| Phase 04 P01 | 4min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,7 @@ Recent:
 - SQLAlchemyError only for db-layer catching -- no pyodbc (SQLAlchemy wraps pyodbc errors)
 - MCP tool safety nets (9 blocks) intentionally kept as except Exception
 - [Phase 03]: 70% coverage floor enforced via fail_under and codecov absolute target; MSSQL DMV code left uncovered (74% > 70%)
+- [Phase 04]: Catch builtins.ConnectionError (not local ConnectionError) in Azure AD creator closure
 
 ### Pending Todos
 
@@ -86,6 +88,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-09T18:26:48.637Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-connection-management/04-CONTEXT.md
+Last session: 2026-03-09T19:10:02.940Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None
