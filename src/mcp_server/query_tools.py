@@ -5,6 +5,7 @@ Tools: get_sample_data, execute_query
 
 import asyncio
 
+from src.db.metadata import MetadataService
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import SamplingMethod
@@ -80,7 +81,8 @@ async def get_sample_data(
     def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
-        query_svc = QueryService(engine)
+        metadata_svc = MetadataService(engine)
+        query_svc = QueryService(engine, metadata_service=metadata_svc)
 
         sample = query_svc.get_sample_data(
             table_name=table_name,
