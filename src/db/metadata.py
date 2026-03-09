@@ -12,6 +12,7 @@ from datetime import datetime
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.logging_config import get_logger
 from src.models.schema import Column, Index, Schema, Table, TableType
@@ -127,7 +128,7 @@ class MetadataService:
         # Get schema names from inspector
         try:
             schema_names = self.inspector.get_schema_names()
-        except Exception:
+        except SQLAlchemyError:
             # Some databases don't support schema introspection
             schema_names = [None]  # Use default schema
 
@@ -142,7 +143,7 @@ class MetadataService:
             try:
                 tables = self.inspector.get_table_names(schema=schema_name)
                 views = self.inspector.get_view_names(schema=schema_name)
-            except Exception:
+            except SQLAlchemyError:
                 tables = []
                 views = []
 
@@ -287,7 +288,7 @@ class MetadataService:
         try:
             pk = self.inspector.get_pk_constraint(table_name, schema=schema)
             return bool(pk.get("constrained_columns"))
-        except Exception:
+        except SQLAlchemyError:
             return False
 
     def _list_tables_generic(
@@ -311,7 +312,7 @@ class MetadataService:
         else:
             try:
                 schemas_to_check = self.inspector.get_schema_names()
-            except Exception:
+            except SQLAlchemyError:
                 schemas_to_check = [None]
 
         # T133: Determine which object types to collect
@@ -327,7 +328,7 @@ class MetadataService:
                     tables.extend(self._collect_objects_from_schema(
                         schema, table_type, name_pattern, min_row_count,
                     ))
-                except Exception:
+                except SQLAlchemyError:
                     pass
 
         # Sort tables
@@ -369,8 +370,8 @@ class MetadataService:
                 result = conn.execute(text(f"SELECT COUNT(*) FROM {qualified_name}"))
                 row = result.fetchone()
                 return row[0] if row else None
-        except Exception as e:
-            logger.debug(f"Could not get row count for {table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.debug(f"Could not get row count for {table_name}: {type(e).__name__}: {e}")
             return None
 
     def _list_tables_mssql(
@@ -552,8 +553,8 @@ class MetadataService:
                     is_foreign_key=col["name"] in fk_columns,
                 ))
 
-        except Exception as e:
-            logger.warning(f"Error getting columns for {schema_name}.{table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.warning(f"Error getting columns for {schema_name}.{table_name}: {type(e).__name__}: {e}")
 
         return columns
 
@@ -588,8 +589,8 @@ class MetadataService:
                     included_columns=idx.get("include_columns", []) or [],
                 ))
 
-        except Exception as e:
-            logger.warning(f"Error getting indexes for {schema_name}.{table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.warning(f"Error getting indexes for {schema_name}.{table_name}: {type(e).__name__}: {e}")
 
         return indexes
 
@@ -605,8 +606,8 @@ class MetadataService:
         """
         try:
             return self.inspector.get_foreign_keys(table_name, schema=schema_name)
-        except Exception as e:
-            logger.warning(f"Error getting foreign keys for {schema_name}.{table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.warning(f"Error getting foreign keys for {schema_name}.{table_name}: {type(e).__name__}: {e}")
             return []
 
     def get_primary_key(self, table_name: str, schema_name: str = "dbo") -> dict:
@@ -621,8 +622,8 @@ class MetadataService:
         """
         try:
             return self.inspector.get_pk_constraint(table_name, schema=schema_name)
-        except Exception as e:
-            logger.warning(f"Error getting primary key for {schema_name}.{table_name}: {e}")
+        except SQLAlchemyError as e:
+            logger.warning(f"Error getting primary key for {schema_name}.{table_name}: {type(e).__name__}: {e}")
             return {}
 
     def get_table_schema(
@@ -709,5 +710,5 @@ class MetadataService:
         try:
             tables = self.inspector.get_table_names(schema=schema_name)
             return table_name in tables
-        except Exception:
+        except SQLAlchemyError:
             return False
