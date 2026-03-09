@@ -8,6 +8,9 @@ CRITICAL: Never use print() or stdout - it corrupts JSON-RPC messages.
 All logging goes to file and stderr only.
 """
 
+import atexit
+import signal
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -24,6 +27,7 @@ mcp = FastMCP("dbmcp")
 
 # Global connection manager (singleton for the server lifetime)
 _connection_manager = ConnectionManager()
+atexit.register(_connection_manager.disconnect_all)
 
 
 def get_connection_manager() -> ConnectionManager:
@@ -57,6 +61,7 @@ from src.mcp_server.schema_tools import (  # noqa: E402, F401
 
 def main():
     """Run the MCP server on stdio transport."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     logger.info("Starting dbmcp MCP server")
     mcp.run(transport="stdio")
 
