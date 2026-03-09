@@ -62,10 +62,11 @@ Plans:
   1. `get_sample_data` and any tool that incorporates user-supplied identifiers validates column/table names against actual database metadata (via `sys.columns` or equivalent) before embedding them in SQL
   2. sqlglot is pinned to `>=29.0.0,<30.0.0` in `pyproject.toml` and a dedicated test fixture file covers malformed SQL, SQL injection attempts, T-SQL-specific syntax, and comment-based obfuscation
   3. All edge case fixtures pass, confirming the pinned sqlglot version handles the project's validation needs
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 05-01: TBD
+- [ ] 05-01-PLAN.md — Pin sqlglot to >=29.0.0,<30.0.0 with ~25 edge case test fixtures
+- [ ] 05-02-PLAN.md — Replace regex identifier sanitization with metadata-based validation
 
 ### Phase 6: Serialization & Configuration
 **Goal**: Type conversion is centralized and the server supports external configuration
@@ -93,5 +94,5 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 2. Staleness Guard | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 3. Code Quality & Test Coverage | v1.1 | 0/3 | Planned | - |
 | 4. Connection Management | v1.1 | 0/2 | Planned | - |
-| 5. Security Hardening | v1.1 | 0/? | Not started | - |
+| 5. Security Hardening | v1.1 | 0/2 | Planned | - |
 | 6. Serialization & Configuration | v1.1 | 0/? | Not started | - |
