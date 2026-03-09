@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlglot import exp
 
+from src.db.metadata import MetadataService
 from src.db.validation import validate_query
 from src.logging_config import get_logger
 from src.models.schema import (
@@ -41,13 +42,16 @@ class QueryService:
         engine: SQLAlchemy engine for database connection
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, metadata_service: MetadataService | None = None):
         """Initialize query service.
 
         Args:
             engine: SQLAlchemy engine
+            metadata_service: Optional MetadataService for metadata-based
+                identifier validation. When None, falls back to regex validation.
         """
         self.engine = engine
+        self._metadata_service = metadata_service
 
     def get_sample_data(
         self,
@@ -82,8 +86,7 @@ class QueryService:
         # Build column list
         column_sql = "*"
         if columns:
-            # Sanitize column names (basic protection against SQL injection)
-            sanitized_columns = [self._sanitize_identifier(col) for col in columns]
+            sanitized_columns = self._get_validated_columns(columns, table_name, schema_name)
             column_sql = ", ".join(sanitized_columns)
 
         # Build query based on sampling method
@@ -252,6 +255,65 @@ class QueryService:
         else:
             # SQL Server uses brackets
             return f"[{identifier}]"
+
+    def _validate_identifier(self, identifier: str, valid_names: list[str], context: str) -> str:
+        """Validate an identifier against a list of known valid names.
+
+        Uses case-insensitive comparison matching SQL Server default collation.
+        Returns the actual-cased name from metadata, bracket-quoted for SQL Server.
+
+        Args:
+            identifier: User-supplied column name to validate
+            valid_names: List of valid column names from metadata
+            context: Table context for error messages (e.g. "[dbo].[Users]")
+
+        Returns:
+            Bracket-quoted (SQL Server) or bare (SQLite) validated identifier
+
+        Raises:
+            ValueError: If identifier does not match any valid name
+        """
+        lookup = {name.lower(): name for name in valid_names}
+        actual_name = lookup.get(identifier.lower())
+        if actual_name is None:
+            raise ValueError(f"Column '{identifier}' does not exist in {context}")
+
+        dialect_name = self.engine.dialect.name
+        if dialect_name == "sqlite":
+            return actual_name
+        return f"[{actual_name}]"
+
+    def _get_validated_columns(
+        self, columns: list[str], table_name: str, schema_name: str
+    ) -> list[str]:
+        """Validate and quote column names, using metadata when available.
+
+        When a MetadataService is injected, validates columns against actual
+        database metadata. Falls back to regex-based sanitization when
+        metadata_service is None or metadata lookup returns no columns.
+
+        Args:
+            columns: User-supplied column names
+            table_name: Table name for metadata lookup
+            schema_name: Schema name for metadata lookup
+
+        Returns:
+            List of validated, bracket-quoted column names
+        """
+        if self._metadata_service is None:
+            return [self._sanitize_identifier(col) for col in columns]
+
+        meta_columns = self._metadata_service.get_columns(table_name, schema_name)
+        if not meta_columns:
+            logger.warning(
+                f"Metadata returned no columns for {schema_name}.{table_name}; "
+                f"falling back to regex validation"
+            )
+            return [self._sanitize_identifier(col) for col in columns]
+
+        valid_names = [c.column_name for c in meta_columns]
+        context = f"[{schema_name}].[{table_name}]"
+        return [self._validate_identifier(col, valid_names, context) for col in columns]
 
     def _process_rows(
         self,
