@@ -15,8 +15,8 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 ### Test Coverage
 
-- [ ] **TEST-01**: All source modules at 70% or higher test coverage (analysis_tools currently 16%, schema_tools 53%, metadata 67%)
-- [ ] **TEST-02**: Coverage reporting configured and baseline established for CI enforcement
+- [x] **TEST-01**: All source modules at 70% or higher test coverage (analysis_tools currently 16%, schema_tools 53%, metadata 67%)
+- [x] **TEST-02**: Coverage reporting configured and baseline established for CI enforcement
 
 ### Connection Management
 
@@ -62,8 +62,8 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 | QUAL-01 | Phase 3 | Complete |
 | QUAL-02 | Phase 3 | Complete |
 | QUAL-03 | Phase 3 | Complete |
-| TEST-01 | Phase 3 | Pending |
-| TEST-02 | Phase 3 | Pending |
+| TEST-01 | Phase 3 | Complete |
+| TEST-02 | Phase 3 | Complete |
 | CONN-01 | Phase 4 | Pending |
 | CONN-02 | Phase 4 | Pending |
 | SEC-01 | Phase 5 | Pending |
