@@ -93,12 +93,16 @@ Plans:
   1. `query.py` reads `text_truncation_limit` from config (via `get_config()`) instead of hardcoding `1000` at lines ~333 and ~667
   2. `_classify_db_error` is either called in at least one production code path or removed entirely — no unused definitions remain
   3. Setting `text_truncation_limit = 500` in config actually changes truncation behavior (verified by test)
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Plumb text_truncation_limit config into query.py truncation call sites
+- [ ] 07-02-PLAN.md — Wire _classify_db_error into all 9 MCP tool safety nets
 
 ## Progress
 
 **Execution Order:**
-Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 3 but are independent of each other.
+Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 3 but are independent of each other. Phase 7 depends on Phase 6.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -108,4 +112,4 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 4. Connection Management | v1.1 | 0/2 | Planned | - |
 | 5. Security Hardening | v1.1 | 0/2 | Planned | - |
 | 6. Serialization & Configuration | v1.1 | 0/2 | Planned | - |
-| 7. Wire Orphaned Exports | v1.1 | 0/0 | Planned | - |
+| 7. Wire Orphaned Exports | v1.1 | 0/2 | Planned | - |
