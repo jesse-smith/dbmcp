@@ -17,6 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlglot import exp
 
+from src.config import get_config
 from src.db.metadata import MetadataService
 from src.db.validation import validate_query
 from src.logging_config import get_logger
@@ -330,7 +331,7 @@ class QueryService:
         for row in result:
             row_dict = {}
             for column_name, value in row._mapping.items():
-                truncated_value, was_truncated = convert(value, 1000)
+                truncated_value, was_truncated = convert(value, get_config().defaults.text_truncation_limit)
                 row_dict[column_name] = truncated_value
                 if was_truncated and column_name not in truncated_columns:
                     truncated_columns.append(column_name)
@@ -664,7 +665,7 @@ class QueryService:
         for row in fetched_rows:
             row_dict = {}
             for col_name, value in zip(columns, row, strict=True):
-                truncated_value, _ = convert(value, 1000)
+                truncated_value, _ = convert(value, get_config().defaults.text_truncation_limit)
                 row_dict[col_name] = truncated_value
             rows.append(row_dict)
 
