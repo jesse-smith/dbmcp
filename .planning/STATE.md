@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: completed
-stopped_at: Phase 7 context gathered
-last_updated: "2026-03-10T19:38:16.239Z"
-last_activity: 2026-03-10 — Completed plan 06-02 (TOML config file support)
+status: in-progress
+stopped_at: Completed 07-01 (wire text_truncation_limit)
+last_updated: "2026-03-10T19:54:39.350Z"
+last_activity: 2026-03-10 — Completed plan 07-01 (wire text_truncation_limit into query.py)
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 11
+  completed_plans: 10
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Phase 6 — Serialization & Configuration
+**Current focus:** Phase 7 — Wire Orphaned Exports
 
 ## Current Position
 
-Phase: 6 of 6 (Serialization & Configuration)
-Plan: 2 of 2 complete
-Status: Phase 6 complete
-Last activity: 2026-03-10 — Completed plan 06-02 (TOML config file support)
+Phase: 7 of 7 (Wire Orphaned Exports)
+Plan: 1 of 2 complete
+Status: Phase 7 in progress
+Last activity: 2026-03-10 — Completed plan 07-01 (wire text_truncation_limit into query.py)
 
-Progress: [██████████] 100% (v1.0 complete, v1.1 all phases complete)
+Progress: [█████████░] 91% (v1.0 complete, v1.1 phase 7 in progress)
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [██████████] 100% (v1.0 complete, v1.1 all phases 
 | Phase 05 P02 | 2min | 2 tasks | 3 files |
 | Phase 06 P01 | 4min | 2 tasks | 5 files |
 | Phase 06 P02 | 6min | 2 tasks | 6 files |
+| Phase 07 P01 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,7 @@ Recent:
 - [Phase 06]: Env vars resolved at connection time, not load time, for credential security
 - [Phase 06]: SP name validation allows schema-qualified names (dbo.my_proc) via ^[a-zA-Z_][\w.]*$
 - [Phase 06]: Tool arg precedence: explicit > named connection config > hardcoded defaults
+- [Phase 07]: Inline get_config() call at each truncation site, not cached, matching query_tools.py pattern
 
 ### Pending Todos
 
@@ -103,6 +105,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-10T19:38:16.235Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-wire-orphaned-exports/07-CONTEXT.md
+Last session: 2026-03-10T19:54:02Z
+Stopped at: Completed 07-01 (wire text_truncation_limit)
+Resume file: .planning/phases/07-wire-orphaned-exports/07-01-SUMMARY.md
