@@ -10,9 +10,10 @@ Tests cover:
 - Row limit injection
 - Query execution
 - AST-based denylist query validation
+- Config-driven truncation limit
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -752,3 +753,60 @@ class TestQueryExecution:
         assert "DDL" in query.error_message
         assert query.denial_reasons is not None
         assert query.denial_reasons[0].category == DenialCategory.DDL
+
+
+class TestTruncationConfig:
+    """Test that truncation limit is driven by config, not hardcoded."""
+
+    def _make_mock_result(self, row_mapping: dict):
+        """Create a mock SQLAlchemy result with a single row."""
+        mock_result = MagicMock()
+        mock_row = MagicMock()
+        mock_row._mapping = MagicMock()
+        mock_row._mapping.items.return_value = list(row_mapping.items())
+        mock_result.__iter__ = lambda self: iter([mock_row])
+        return mock_result
+
+    def _make_mock_config(self, text_truncation_limit: int):
+        """Create a mock config with the given truncation limit."""
+        mock_config = MagicMock()
+        mock_config.defaults.text_truncation_limit = text_truncation_limit
+        return mock_config
+
+    @patch("src.db.query.get_config")
+    def test_truncation_uses_config_limit_500(self, mock_get_config, mock_engine):
+        """With text_truncation_limit=500, a 700-char string is truncated."""
+        mock_get_config.return_value = self._make_mock_config(500)
+
+        long_text = "a" * 700
+        mock_result = self._make_mock_result({"ID": 1, "Description": long_text})
+
+        service = QueryService(mock_engine)
+        rows: list = []
+        truncated_cols: list = []
+        service._process_rows(mock_result, rows, truncated_cols)
+
+        assert len(rows) == 1
+        # String should be truncated (shorter than original 700 chars)
+        assert len(rows[0]["Description"]) < 700
+        assert "Description" in truncated_cols
+
+    @patch("src.db.query.get_config")
+    def test_truncation_default_limit_preserves_short_strings(
+        self, mock_get_config, mock_engine
+    ):
+        """With text_truncation_limit=1000, a 700-char string is NOT truncated."""
+        mock_get_config.return_value = self._make_mock_config(1000)
+
+        text_700 = "b" * 700
+        mock_result = self._make_mock_result({"ID": 1, "Description": text_700})
+
+        service = QueryService(mock_engine)
+        rows: list = []
+        truncated_cols: list = []
+        service._process_rows(mock_result, rows, truncated_cols)
+
+        assert len(rows) == 1
+        # String should NOT be truncated (700 < 1000 limit)
+        assert rows[0]["Description"] == text_700
+        assert "Description" not in truncated_cols
