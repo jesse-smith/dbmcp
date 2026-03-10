@@ -30,7 +30,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Type handler registry unifies `_truncate_value()` and `_pre_serialize()` into single conversion pipeline with fallback logging for unknown types
+- [x] **INFRA-01**: Type handler registry unifies `_truncate_value()` and `_pre_serialize()` into single conversion pipeline with fallback logging for unknown types
 - [ ] **INFRA-02**: Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`) supporting named connections, default parameters, and SP allowlist extensions
 
 ## Future Requirements
@@ -68,7 +68,7 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 | CONN-02 | Phase 4 | Complete |
 | SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 5 | Complete |
-| INFRA-01 | Phase 6 | Pending |
+| INFRA-01 | Phase 6 | Complete |
 | INFRA-02 | Phase 6 | Pending |
 
 **Coverage:**

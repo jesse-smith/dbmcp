@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-03-10T17:29:54.440Z"
-last_activity: 2026-03-09 — Completed plan 05-02 (metadata-based identifier validation)
+status: in-progress
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-03-10T17:59:35.370Z"
+last_activity: 2026-03-10 — Completed plan 06-01 (unified type handler registry)
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Phase 5 — Security Hardening
+**Current focus:** Phase 6 — Serialization & Configuration
 
 ## Current Position
 
-Phase: 5 of 6 (Security Hardening)
-Plan: 2 of 2 complete
-Status: Phase 5 complete
-Last activity: 2026-03-09 — Completed plan 05-02 (metadata-based identifier validation)
+Phase: 6 of 6 (Serialization & Configuration)
+Plan: 1 of 2 complete
+Status: Phase 6 in progress
+Last activity: 2026-03-10 — Completed plan 06-01 (unified type handler registry)
 
-Progress: [██████████] 100% (v1.0 complete, v1.1 Phase 5: 2/2 plans done)
+Progress: [█████████░] 89% (v1.0 complete, v1.1 Phase 6: 1/2 plans done)
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██████████] 100% (v1.0 complete, v1.1 Phase 5: 2/
 | Phase 04 P02 | 4min | 2 tasks | 4 files |
 | Phase 05 P01 | 2min | 2 tasks | 2 files |
 | Phase 05 P02 | 2min | 2 tasks | 3 files |
+| Phase 06 P01 | 4min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,8 @@ Recent:
 - [Phase 05]: WHILE-wrapped DML returns OPERATIONAL (not DML) -- sqlglot doesn't fully parse T-SQL WHILE bodies
 - [Phase 05]: Comment injection tests assert is_safe=True -- commented-out SQL is not executable
 - [Phase 05]: Metadata is single source of truth for identifier validation; regex only as fallback when metadata unavailable
+- [Phase 06]: Module-level ordered handler chain for type registry (subclass-first isinstance ordering)
+- [Phase 06]: sys.maxsize for serialization path truncation limit; 1000 for query path (configurable in plan 02)
 
 ### Pending Todos
 
@@ -96,6 +99,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-10T17:29:54.436Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-serialization-configuration/06-CONTEXT.md
+Last session: 2026-03-10T17:59:00Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: .planning/phases/06-serialization-configuration/06-02-PLAN.md
