@@ -5,7 +5,10 @@ Tools: get_sample_data, execute_query
 
 import asyncio
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from src.config import get_config
+from src.db.connection import _classify_db_error
 from src.db.metadata import MetadataService
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
@@ -115,7 +118,12 @@ async def get_sample_data(
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_sample_data")
-        return encode_response({"status": "error", "error_message": f"Failed to get sample data: {str(e)}"})
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Failed to get sample data: {str(e)}"
+        return encode_response({"status": "error", "error_message": error_msg})
 
 
 # =============================================================================
@@ -202,7 +210,12 @@ async def execute_query(
         })
     except Exception as e:
         logger.exception("Error in execute_query")
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Query execution failed: {type(e).__name__}: {str(e)}"
         return encode_response({
             "status": "error",
-            "error_message": f"Query execution failed: {type(e).__name__}: {str(e)}",
+            "error_message": error_msg,
         })

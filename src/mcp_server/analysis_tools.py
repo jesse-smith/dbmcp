@@ -11,10 +11,12 @@ All tools expose raw statistics and structural metadata only — no interpretati
 import asyncio
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
+from src.db.connection import _classify_db_error
 from src.mcp_server.server import get_connection_manager, mcp
 from src.serialization import encode_response
 
@@ -134,9 +136,14 @@ async def get_column_info(
             "error_message": str(e),
         })
     except Exception as e:
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Unexpected error: {str(e)}"
         return encode_response({
             "status": "error",
-            "error_message": f"Unexpected error: {str(e)}",
+            "error_message": error_msg,
         })
 
 
@@ -234,9 +241,14 @@ async def find_pk_candidates(
             "error_message": str(e),
         })
     except Exception as e:
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Unexpected error: {str(e)}"
         return encode_response({
             "status": "error",
-            "error_message": f"Unexpected error: {str(e)}",
+            "error_message": error_msg,
         })
 
 
@@ -397,7 +409,12 @@ async def find_fk_candidates(
             "error_message": str(e),
         })
     except Exception as e:
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Unexpected error: {str(e)}"
         return encode_response({
             "status": "error",
-            "error_message": f"Unexpected error: {str(e)}",
+            "error_message": error_msg,
         })

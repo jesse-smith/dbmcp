@@ -6,8 +6,10 @@ Tools: connect_database, list_schemas, list_tables, get_table_schema
 import asyncio
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from src.config import get_config, resolve_env_vars
-from src.db.connection import ConnectionError
+from src.db.connection import ConnectionError, _classify_db_error
 from src.db.metadata import MetadataService
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.models.schema import AuthenticationMethod
@@ -256,9 +258,14 @@ async def connect_database(
         })
     except Exception as e:
         logger.exception("Unexpected error in connect_database")
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Unexpected error: {type(e).__name__}: {str(e)}"
         return encode_response({
             "status": "error",
-            "error_message": f"Unexpected error: {type(e).__name__}: {str(e)}",
+            "error_message": error_msg,
         })
 
 
@@ -314,7 +321,12 @@ async def list_schemas(connection_id: str) -> str:
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_schemas")
-        return encode_response({"status": "error", "error_message": f"Failed to list schemas: {str(e)}"})
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Failed to list schemas: {str(e)}"
+        return encode_response({"status": "error", "error_message": error_msg})
 
 
 @mcp.tool()
@@ -419,7 +431,12 @@ async def list_tables(
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in list_tables")
-        return encode_response({"status": "error", "error_message": f"Failed to list tables: {str(e)}"})
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Failed to list tables: {str(e)}"
+        return encode_response({"status": "error", "error_message": error_msg})
 
 
 # =============================================================================
@@ -505,4 +522,9 @@ async def get_table_schema(
         return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Error in get_table_schema")
-        return encode_response({"status": "error", "error_message": f"Failed to get table schema: {str(e)}"})
+        if isinstance(e, SQLAlchemyError):
+            _cat, guidance = _classify_db_error(e)
+            error_msg = f"{guidance} ({e})"
+        else:
+            error_msg = f"Failed to get table schema: {str(e)}"
+        return encode_response({"status": "error", "error_message": error_msg})
