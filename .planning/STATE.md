@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Concern Handling
 status: completed
 stopped_at: Completed 07-02 (wire _classify_db_error into safety nets)
-last_updated: "2026-03-10T20:01:52.636Z"
+last_updated: "2026-03-10T21:39:46.251Z"
 last_activity: 2026-03-10 — Completed plan 07-02 (wire _classify_db_error into all 9 MCP tool safety nets)
 progress:
   total_phases: 5
@@ -18,19 +18,18 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-06)
+See: .planning/PROJECT.md (updated 2026-03-10)
 
 **Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Phase 7 — Wire Orphaned Exports
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 7 of 7 (Wire Orphaned Exports)
-Plan: 2 of 2 complete
-Status: Phase 7 complete -- all v1.1 phases complete
-Last activity: 2026-03-10 — Completed plan 07-02 (wire _classify_db_error into all 9 MCP tool safety nets)
+Milestone: v1.1 Concern Handling — SHIPPED 2026-03-10
+Status: Milestone complete, awaiting `/gsd:new-milestone` for next cycle
+Last activity: 2026-03-10 — Milestone v1.1 archived
 
-Progress: [██████████] 100% (v1.0 complete, v1.1 all phases complete)
+Progress: [██████████] 100% (v1.0 + v1.1 shipped)
 
 ## Performance Metrics
 
@@ -63,33 +62,11 @@ Progress: [██████████] 100% (v1.0 complete, v1.1 all phases 
 ### Decisions
 
 See PROJECT.md Key Decisions table for full log.
-
-Recent:
-- v1.1 scope: 10 concern items from audit grouped into 4 phases
-- Phase ordering: cleanup before tests before new features (research recommendation)
-- Phases 4/5/6 independent of each other but all depend on Phase 3
-- Delete metrics.py entirely without archiving (disposable dead code)
-- Use proper dataclass fields over monkey-patched attributes with type: ignore
-- SQLAlchemyError only for db-layer catching -- no pyodbc (SQLAlchemy wraps pyodbc errors)
-- MCP tool safety nets (9 blocks) intentionally kept as except Exception
-- [Phase 03]: 70% coverage floor enforced via fail_under and codecov absolute target; MSSQL DMV code left uncovered (74% > 70%)
-- [Phase 04]: Catch builtins.ConnectionError (not local ConnectionError) in Azure AD creator closure
-- [Phase 04]: Source inspection test for atexit registration to avoid MCP registry corruption from module reload
-- [Phase 04]: _classify_db_error as module-level function (not method) for reuse outside ConnectionManager
-- [Phase 05]: WHILE-wrapped DML returns OPERATIONAL (not DML) -- sqlglot doesn't fully parse T-SQL WHILE bodies
-- [Phase 05]: Comment injection tests assert is_safe=True -- commented-out SQL is not executable
-- [Phase 05]: Metadata is single source of truth for identifier validation; regex only as fallback when metadata unavailable
-- [Phase 06]: Module-level ordered handler chain for type registry (subclass-first isinstance ordering)
-- [Phase 06]: sys.maxsize for serialization path truncation limit; 1000 for query path (configurable in plan 02)
-- [Phase 06]: Env vars resolved at connection time, not load time, for credential security
-- [Phase 06]: SP name validation allows schema-qualified names (dbo.my_proc) via ^[a-zA-Z_][\w.]*$
-- [Phase 06]: Tool arg precedence: explicit > named connection config > hardcoded defaults
-- [Phase 07]: Inline get_config() call at each truncation site, not cached, matching query_tools.py pattern
-- [Phase 07]: Used create=True on mock.patch for _classify_db_error to support pre- and post-wiring test execution
+All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 ### Pending Todos
 
-All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
+(None — next milestone not yet defined)
 
 ### Blockers/Concerns
 
