@@ -21,7 +21,7 @@
 - [ ] **Phase 4: Connection Management** - Handle Azure AD token refresh and clean up connections on session end
 - [ ] **Phase 5: Security Hardening** - Validate identifiers against metadata and pin sqlglot with edge case fixtures
 - [ ] **Phase 6: Serialization & Configuration** - Unify type conversion pipeline and add TOML config file support
-- [ ] **Phase 7: Wire Orphaned Exports** - Plumb text_truncation_limit config into query.py and resolve unused _classify_db_error
+- [x] **Phase 7: Wire Orphaned Exports** - Plumb text_truncation_limit config into query.py and resolve unused _classify_db_error (completed 2026-03-10)
 
 ## Phase Details
 
@@ -93,7 +93,7 @@ Plans:
   1. `query.py` reads `text_truncation_limit` from config (via `get_config()`) instead of hardcoding `1000` at lines ~333 and ~667
   2. `_classify_db_error` is either called in at least one production code path or removed entirely — no unused definitions remain
   3. Setting `text_truncation_limit = 500` in config actually changes truncation behavior (verified by test)
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 07-01-PLAN.md — Plumb text_truncation_limit config into query.py truncation call sites
@@ -112,4 +112,4 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 4. Connection Management | v1.1 | 0/2 | Planned | - |
 | 5. Security Hardening | v1.1 | 0/2 | Planned | - |
 | 6. Serialization & Configuration | v1.1 | 0/2 | Planned | - |
-| 7. Wire Orphaned Exports | v1.1 | 0/2 | Planned | - |
+| 7. Wire Orphaned Exports | 2/2 | Complete   | 2026-03-10 | - |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: in-progress
-stopped_at: Completed 07-01 (wire text_truncation_limit)
-last_updated: "2026-03-10T19:54:39.350Z"
-last_activity: 2026-03-10 — Completed plan 07-01 (wire text_truncation_limit into query.py)
+status: completed
+stopped_at: Completed 07-02 (wire _classify_db_error into safety nets)
+last_updated: "2026-03-10T19:56:11Z"
+last_activity: 2026-03-10 — Completed plan 07-02 (wire _classify_db_error into all 9 MCP tool safety nets)
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 11
-  completed_plans: 10
-  percent: 100
+  completed_plans: 11
+  percent: 91
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-06)
 ## Current Position
 
 Phase: 7 of 7 (Wire Orphaned Exports)
-Plan: 1 of 2 complete
-Status: Phase 7 in progress
-Last activity: 2026-03-10 — Completed plan 07-01 (wire text_truncation_limit into query.py)
+Plan: 2 of 2 complete
+Status: Phase 7 complete -- all v1.1 phases complete
+Last activity: 2026-03-10 — Completed plan 07-02 (wire _classify_db_error into all 9 MCP tool safety nets)
 
-Progress: [█████████░] 91% (v1.0 complete, v1.1 phase 7 in progress)
+Progress: [██████████] 100% (v1.0 complete, v1.1 all phases complete)
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [█████████░] 91% (v1.0 complete, v1.1 phase 7 in p
 | Phase 06 P01 | 4min | 2 tasks | 5 files |
 | Phase 06 P02 | 6min | 2 tasks | 6 files |
 | Phase 07 P01 | 2min | 2 tasks | 2 files |
+| Phase 07 P02 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,7 @@ Recent:
 - [Phase 06]: SP name validation allows schema-qualified names (dbo.my_proc) via ^[a-zA-Z_][\w.]*$
 - [Phase 06]: Tool arg precedence: explicit > named connection config > hardcoded defaults
 - [Phase 07]: Inline get_config() call at each truncation site, not cached, matching query_tools.py pattern
+- [Phase 07]: Used create=True on mock.patch for _classify_db_error to support pre- and post-wiring test execution
 
 ### Pending Todos
 
@@ -105,6 +107,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-10T19:54:02Z
-Stopped at: Completed 07-01 (wire text_truncation_limit)
-Resume file: .planning/phases/07-wire-orphaned-exports/07-01-SUMMARY.md
+Last session: 2026-03-10T19:56:11Z
+Stopped at: Completed 07-02 (wire _classify_db_error into safety nets)
+Resume file: .planning/phases/07-wire-orphaned-exports/07-02-SUMMARY.md
