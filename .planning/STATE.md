@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Concern Handling
-status: in-progress
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-03-10T17:59:35.370Z"
-last_activity: 2026-03-10 — Completed plan 06-01 (unified type handler registry)
+status: completed
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-03-10T18:01:00.000Z"
+last_activity: 2026-03-10 — Completed plan 06-02 (TOML config file support)
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 10
   percent: 100
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-06)
 ## Current Position
 
 Phase: 6 of 6 (Serialization & Configuration)
-Plan: 1 of 2 complete
-Status: Phase 6 in progress
-Last activity: 2026-03-10 — Completed plan 06-01 (unified type handler registry)
+Plan: 2 of 2 complete
+Status: Phase 6 complete
+Last activity: 2026-03-10 — Completed plan 06-02 (TOML config file support)
 
-Progress: [█████████░] 89% (v1.0 complete, v1.1 Phase 6: 1/2 plans done)
+Progress: [██████████] 100% (v1.0 complete, v1.1 all phases complete)
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [█████████░] 89% (v1.0 complete, v1.1 Phase 6: 1/2
 | Phase 05 P01 | 2min | 2 tasks | 2 files |
 | Phase 05 P02 | 2min | 2 tasks | 3 files |
 | Phase 06 P01 | 4min | 2 tasks | 5 files |
+| Phase 06 P02 | 6min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent:
 - [Phase 05]: Metadata is single source of truth for identifier validation; regex only as fallback when metadata unavailable
 - [Phase 06]: Module-level ordered handler chain for type registry (subclass-first isinstance ordering)
 - [Phase 06]: sys.maxsize for serialization path truncation limit; 1000 for query path (configurable in plan 02)
+- [Phase 06]: Env vars resolved at connection time, not load time, for credential security
+- [Phase 06]: SP name validation allows schema-qualified names (dbo.my_proc) via ^[a-zA-Z_][\w.]*$
+- [Phase 06]: Tool arg precedence: explicit > named connection config > hardcoded defaults
 
 ### Pending Todos
 
@@ -99,6 +103,6 @@ All 10 concern items now tracked as requirements (QUAL-01 through INFRA-02).
 
 ## Session Continuity
 
-Last session: 2026-03-10T17:59:00Z
-Stopped at: Completed 06-01-PLAN.md
-Resume file: .planning/phases/06-serialization-configuration/06-02-PLAN.md
+Last session: 2026-03-10T18:01:00Z
+Stopped at: Completed 06-02-PLAN.md (Phase 6 complete, all v1.1 phases done)
+Resume file: N/A (milestone complete)
