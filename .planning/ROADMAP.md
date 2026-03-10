@@ -77,11 +77,11 @@ Plans:
   2. The server reads an optional TOML config file (`~/.dbmcp/config.toml` or project-local `dbmcp.toml`) for named connections, default parameters, and SP allowlist extensions
   3. Missing or malformed config files produce a warning log but do not prevent server startup (graceful degradation)
   4. Hardcoded system stored procedures remain non-overridable regardless of config file contents (security invariant preserved)
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01-PLAN.md — Unify type conversion into single type handler registry
+- [ ] 06-02-PLAN.md — Add optional TOML config file with named connections, defaults, and SP allowlist
 
 ## Progress
 
@@ -95,4 +95,4 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 3. Code Quality & Test Coverage | v1.1 | 0/3 | Planned | - |
 | 4. Connection Management | v1.1 | 0/2 | Planned | - |
 | 5. Security Hardening | v1.1 | 0/2 | Planned | - |
-| 6. Serialization & Configuration | v1.1 | 0/? | Not started | - |
+| 6. Serialization & Configuration | v1.1 | 0/2 | Planned | - |
