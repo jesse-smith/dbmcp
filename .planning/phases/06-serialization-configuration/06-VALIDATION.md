@@ -1,10 +1,11 @@
 ---
 phase: 6
 slug: serialization-configuration
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-03-10
+validated: 2026-03-10
 ---
 
 # Phase 6 — Validation Strategy
@@ -38,24 +39,24 @@ created: 2026-03-10
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 06-01-01 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py -x` | ❌ W0 | ⬜ pending |
-| 06-01-02 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py::test_subclass_ordering -x` | ❌ W0 | ⬜ pending |
-| 06-01-03 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py::test_unknown_type_raises -x` | ❌ W0 | ⬜ pending |
-| 06-01-04 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_serialization.py -x` | ✅ | ⬜ pending |
-| 06-01-05 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_query.py -x` | ✅ | ⬜ pending |
-| 06-02-01 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_local_config -x` | ❌ W0 | ⬜ pending |
-| 06-02-02 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_global_config -x` | ❌ W0 | ⬜ pending |
-| 06-02-03 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_local_overrides_global -x` | ❌ W0 | ⬜ pending |
-| 06-02-04 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_missing_config -x` | ❌ W0 | ⬜ pending |
-| 06-02-05 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_malformed_config -x` | ❌ W0 | ⬜ pending |
-| 06-02-06 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_named_connection -x` | ❌ W0 | ⬜ pending |
-| 06-02-07 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_env_var_resolution -x` | ❌ W0 | ⬜ pending |
-| 06-02-08 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_unresolved_env_var -x` | ❌ W0 | ⬜ pending |
-| 06-02-09 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_bounds_validation -x` | ❌ W0 | ⬜ pending |
-| 06-02-10 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_sp_allowlist_merge -x` | ❌ W0 | ⬜ pending |
-| 06-02-11 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_sp_name_validation -x` | ❌ W0 | ⬜ pending |
-| 06-02-12 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_hardcoded_sp_preserved -x` | ❌ W0 | ⬜ pending |
-| 06-02-13 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::test_precedence -x` | ❌ W0 | ⬜ pending |
+| 06-01-01 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py -x` | ✅ | ✅ green |
+| 06-01-02 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py::TestSubclassOrdering -x` | ✅ | ✅ green |
+| 06-01-03 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_type_registry.py::TestUnknownType -x` | ✅ | ✅ green |
+| 06-01-04 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_serialization.py -x` | ✅ | ✅ green |
+| 06-01-05 | 01 | 1 | INFRA-01 | unit | `uv run pytest tests/unit/test_query.py -x` | ✅ | ✅ green |
+| 06-02-01 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestLoadConfig::test_local_takes_precedence_over_home -x` | ✅ | ✅ green |
+| 06-02-02 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestLoadConfig::test_home_config_used_when_no_local -x` | ✅ | ✅ green |
+| 06-02-03 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestLoadConfig::test_local_takes_precedence_over_home -x` | ✅ | ✅ green |
+| 06-02-04 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestLoadConfig::test_no_config_file_returns_defaults -x` | ✅ | ✅ green |
+| 06-02-05 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestLoadConfig::test_malformed_toml_returns_defaults -x` | ✅ | ✅ green |
+| 06-02-06 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestConnectionConfig -x` | ✅ | ✅ green |
+| 06-02-07 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestResolveEnvVars -x` | ✅ | ✅ green |
+| 06-02-08 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestResolveEnvVars::test_missing_var_raises -x` | ✅ | ✅ green |
+| 06-02-09 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestValidateDefaults -x` | ✅ | ✅ green |
+| 06-02-10 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestSPAllowlistValidation -x` | ✅ | ✅ green |
+| 06-02-11 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestSPAllowlistValidation::test_invalid_sp_names_rejected -x` | ✅ | ✅ green |
+| 06-02-12 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestSPAllowlistValidation -x` | ✅ | ✅ green |
+| 06-02-13 | 02 | 2 | INFRA-02 | unit | `uv run pytest tests/unit/test_config.py::TestSingleton -x` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -63,9 +64,9 @@ created: 2026-03-10
 
 ## Wave 0 Requirements
 
-- [ ] `tests/unit/test_type_registry.py` — stubs for INFRA-01a through INFRA-01d
-- [ ] `tests/unit/test_config.py` — stubs for INFRA-02a through INFRA-02m
-- [ ] No new framework install needed — pytest already configured
+- [x] `tests/unit/test_type_registry.py` — 46 tests covering all handlers, subclass ordering, edge cases
+- [x] `tests/unit/test_config.py` — 32 tests covering config loading, validation, env vars, SP allowlist
+- [x] No new framework install needed — pytest already configured
 
 ---
 
@@ -79,11 +80,25 @@ created: 2026-03-10
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated
+
+---
+
+## Validation Audit 2026-03-10
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| Total tests (type_registry) | 46 |
+| Total tests (config) | 32 |
+| Total tests (serialization) | 21 |
+| All green | 99/99 |
