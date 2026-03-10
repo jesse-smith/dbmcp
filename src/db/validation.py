@@ -8,6 +8,7 @@ Pure functions — no side effects, no database connection required.
 import sqlglot
 from sqlglot import exp
 
+from src.config import get_config
 from src.logging_config import get_logger
 from src.models.schema import (
     DenialCategory,
@@ -67,6 +68,18 @@ SAFE_PROCEDURES: frozenset[str] = frozenset({
 })
 
 logger = get_logger(__name__)
+
+
+def get_allowed_procedures() -> frozenset[str]:
+    """Return the full set of allowed stored procedures.
+
+    Merges the hardcoded SAFE_PROCEDURES with any additional procedures
+    from the config file's allowed_stored_procedures.
+
+    Returns:
+        Frozenset of allowed procedure names (lowercase, unqualified).
+    """
+    return SAFE_PROCEDURES | get_config().allowed_stored_procedures
 
 # Types that indicate a garbage parse (not real SQL statements)
 _GARBAGE_PARSE_TYPES = (exp.Alias, exp.Column, exp.Identifier, exp.Literal)
@@ -179,7 +192,7 @@ def _check_execute(stmt: exp.Execute, idx: int) -> list[DenialReason]:
 
     canonical = proc_name.rsplit(".", 1)[-1].lower()
 
-    if canonical in SAFE_PROCEDURES:
+    if canonical in get_allowed_procedures():
         return []
 
     return [DenialReason(
@@ -239,7 +252,7 @@ def _check_stored_procedure(stmt: exp.Command, idx: int) -> list[DenialReason]:
             idx,
         )]
 
-    if canonical in SAFE_PROCEDURES:
+    if canonical in get_allowed_procedures():
         return []
 
     return [DenialReason(

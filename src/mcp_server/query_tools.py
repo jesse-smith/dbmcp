@@ -5,6 +5,7 @@ Tools: get_sample_data, execute_query
 
 import asyncio
 
+from src.config import get_config
 from src.db.metadata import MetadataService
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
@@ -21,7 +22,7 @@ async def get_sample_data(
     connection_id: str,
     table_name: str,
     schema_name: str = "dbo",
-    sample_size: int = 5,
+    sample_size: int | None = None,
     sampling_method: str = "top",
     columns: list[str] | None = None,
 ) -> str:
@@ -56,8 +57,11 @@ async def get_sample_data(
             sampled_at: ISO 8601 string        // on success only
             error_message: string              // on error only
     """
+    # Apply config default if not explicitly provided
+    effective_sample_size = sample_size if sample_size is not None else get_config().defaults.sample_size
+
     # Validate parameters (fast, no I/O)
-    if sample_size < 1 or sample_size > 1000:
+    if effective_sample_size < 1 or effective_sample_size > 1000:
         return encode_response({
             "status": "error",
             "error_message": "sample_size must be between 1 and 1000",
@@ -87,7 +91,7 @@ async def get_sample_data(
         sample = query_svc.get_sample_data(
             table_name=table_name,
             schema_name=schema_name,
-            sample_size=sample_size,
+            sample_size=effective_sample_size,
             sampling_method=method_enum,
             columns=columns,
         )
@@ -123,7 +127,7 @@ async def get_sample_data(
 async def execute_query(
     connection_id: str,
     query_text: str,
-    row_limit: int = 1000,
+    row_limit: int | None = None,
 ) -> str:
     """Execute a SQL SELECT query and return results.
 
@@ -153,13 +157,16 @@ async def execute_query(
             execution_time_ms: float           // on success only
             error_message: string              // on error/blocked only
     """
+    # Apply config default if not explicitly provided
+    effective_row_limit = row_limit if row_limit is not None else get_config().defaults.row_limit
+
     # Validate parameters (fast, no I/O)
-    if row_limit < 1:
+    if effective_row_limit < 1:
         return encode_response({
             "status": "error",
             "error_message": "row_limit must be at least 1",
         })
-    if row_limit > 10000:
+    if effective_row_limit > 10000:
         return encode_response({
             "status": "error",
             "error_message": "row_limit cannot exceed 10000",
@@ -179,7 +186,7 @@ async def execute_query(
         query = query_svc.execute_query(
             connection_id=connection_id,
             query_text=query_text,
-            row_limit=row_limit,
+            row_limit=effective_row_limit,
             allow_write=False,
         )
 

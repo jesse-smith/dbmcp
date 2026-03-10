@@ -15,6 +15,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from src.config import init_config
 from src.db.connection import ConnectionManager
 from src.logging_config import CredentialFilter, setup_logging
 
@@ -63,6 +64,7 @@ def main():
     """Run the MCP server on stdio transport."""
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     logger.info("Starting dbmcp MCP server")
+    init_config()
     mcp.run(transport="stdio")
 
 

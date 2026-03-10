@@ -6,6 +6,7 @@ Tools: connect_database, list_schemas, list_tables, get_table_schema
 import asyncio
 from pathlib import Path
 
+from src.config import get_config, resolve_env_vars
 from src.db.connection import ConnectionError
 from src.db.metadata import MetadataService
 from src.mcp_server.server import get_connection_manager, logger, mcp
@@ -77,20 +78,24 @@ def _get_metadata_service(connection_id: str) -> MetadataService:
 
 @mcp.tool()
 async def connect_database(
-    server: str,
-    database: str,
+    server: str | None = None,
+    database: str | None = None,
     username: str | None = None,
     password: str | None = None,
-    port: int = 1433,
-    authentication_method: str = "sql",
-    trust_server_cert: bool = False,
-    connection_timeout: int = 30,
+    port: int | None = None,
+    authentication_method: str | None = None,
+    trust_server_cert: bool | None = None,
+    connection_timeout: int | None = None,
     tenant_id: str | None = None,
+    connection_name: str | None = None,
 ) -> str:
     """Connect to a SQL Server database.
 
     Establishes a pooled connection to a SQL Server database. Required before
     any other database operations. Returns a connection_id for subsequent calls.
+
+    Can use a named connection from dbmcp.toml config file via connection_name.
+    Explicit arguments override config values.
 
     Args:
         server: SQL Server host (hostname or IP address)
@@ -102,6 +107,7 @@ async def connect_database(
         trust_server_cert: Trust server certificate without validation (default: False)
         connection_timeout: Connection timeout in seconds, 5-300 (default: 30)
         tenant_id: Azure AD tenant ID for azure_ad_integrated auth (optional, default: None)
+        connection_name: Named connection from config file (optional)
 
     Returns:
         TOON-encoded string with connection details:
@@ -113,27 +119,106 @@ async def connect_database(
             has_cached_docs: bool              // on success only
             error_message: string              // on error only
     """
+    # Resolve named connection from config if provided
+    if connection_name is not None:
+        config = get_config()
+        if connection_name not in config.connections:
+            return encode_response({
+                "status": "error",
+                "error_message": f"Named connection '{connection_name}' not found in config. "
+                f"Available: {sorted(config.connections.keys()) or 'none'}",
+            })
+        conn_cfg = config.connections[connection_name]
+
+        # Merge: explicit args override config values override hardcoded defaults
+        eff_server = server if server is not None else conn_cfg.server
+        eff_database = database if database is not None else conn_cfg.database
+        eff_port = port if port is not None else conn_cfg.port
+        eff_auth = authentication_method if authentication_method is not None else conn_cfg.authentication_method
+        eff_trust = trust_server_cert if trust_server_cert is not None else conn_cfg.trust_server_cert
+        eff_timeout = connection_timeout if connection_timeout is not None else conn_cfg.connection_timeout
+        eff_tenant_id = tenant_id if tenant_id is not None else conn_cfg.tenant_id
+
+        # Username: explicit arg overrides config
+        eff_username = username if username is not None else conn_cfg.username
+
+        # Password/tenant_id from config: resolve env vars at connection time
+        if password is not None:
+            eff_password = password
+        elif conn_cfg.password is not None:
+            try:
+                eff_password = resolve_env_vars(conn_cfg.password)
+            except ValueError as e:
+                return encode_response({
+                    "status": "error",
+                    "error_message": str(e),
+                })
+        else:
+            eff_password = None
+
+        if tenant_id is None and conn_cfg.tenant_id is not None:
+            try:
+                eff_tenant_id = resolve_env_vars(conn_cfg.tenant_id)
+            except ValueError as e:
+                return encode_response({
+                    "status": "error",
+                    "error_message": str(e),
+                })
+    else:
+        # No named connection: use explicit args with hardcoded defaults
+        eff_server = server
+        eff_database = database
+        eff_port = port if port is not None else 1433
+        eff_auth = authentication_method if authentication_method is not None else "sql"
+        eff_trust = trust_server_cert if trust_server_cert is not None else False
+        eff_timeout = connection_timeout if connection_timeout is not None else 30
+        eff_username = username
+        eff_password = password
+        eff_tenant_id = tenant_id
+
+    # Validate required fields
+    if not eff_server:
+        return encode_response({
+            "status": "error",
+            "error_message": "server is required (provide directly or via connection_name)",
+        })
+    if not eff_database:
+        return encode_response({
+            "status": "error",
+            "error_message": "database is required (provide directly or via connection_name)",
+        })
+
     # Parse authentication method (fast, no I/O)
     try:
-        auth_method = AuthenticationMethod(authentication_method.lower())
+        auth_method = AuthenticationMethod(eff_auth.lower())
     except ValueError:
         return encode_response({
             "status": "error",
-            "error_message": f"Invalid authentication_method '{authentication_method}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
+            "error_message": f"Invalid authentication_method '{eff_auth}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
         })
+
+    # Capture effective values for closure
+    final_server = eff_server
+    final_database = eff_database
+    final_port = eff_port
+    final_trust = eff_trust
+    final_timeout = eff_timeout
+    final_username = eff_username
+    final_password = eff_password
+    final_tenant_id = eff_tenant_id
 
     def _sync_connect():
         conn_manager = get_connection_manager()
         connection = conn_manager.connect(
-            server=server,
-            database=database,
-            username=username,
-            password=password,
-            port=port,
+            server=final_server,
+            database=final_database,
+            username=final_username,
+            password=final_password,
+            port=final_port,
             authentication_method=auth_method,
-            trust_server_cert=trust_server_cert,
-            connection_timeout=connection_timeout,
-            tenant_id=tenant_id,
+            trust_server_cert=final_trust,
+            connection_timeout=final_timeout,
+            tenant_id=final_tenant_id,
         )
 
         engine = conn_manager.get_engine(connection.connection_id)
@@ -143,12 +228,12 @@ async def connect_database(
         cache_dir = Path("docs") / connection.connection_id
         has_cached_docs = cache_dir.exists() and any(cache_dir.iterdir())
 
-        logger.info(f"Connected to {database} on {server}:{port}")
+        logger.info(f"Connected to {final_database} on {final_server}:{final_port}")
 
         return {
             "connection_id": connection.connection_id,
             "status": "success",
-            "message": f"Successfully connected to {database}",
+            "message": f"Successfully connected to {final_database}",
             "schema_count": len(schemas),
             "has_cached_docs": has_cached_docs,
         }
