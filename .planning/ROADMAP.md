@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 TOON Response Format Migration** — Phases 1-2 (shipped 2026-03-05)
-- 🚧 **v1.1 Concern Handling** — Phases 3-6 (in progress)
+- 🚧 **v1.1 Concern Handling** — Phases 3-7 (in progress)
 
 ## Phases
 
@@ -21,6 +21,7 @@
 - [ ] **Phase 4: Connection Management** - Handle Azure AD token refresh and clean up connections on session end
 - [ ] **Phase 5: Security Hardening** - Validate identifiers against metadata and pin sqlglot with edge case fixtures
 - [ ] **Phase 6: Serialization & Configuration** - Unify type conversion pipeline and add TOML config file support
+- [ ] **Phase 7: Wire Orphaned Exports** - Plumb text_truncation_limit config into query.py and resolve unused _classify_db_error
 
 ## Phase Details
 
@@ -83,6 +84,17 @@ Plans:
 - [ ] 06-01-PLAN.md — Unify type conversion into single type handler registry
 - [ ] 06-02-PLAN.md — Add optional TOML config file with named connections, defaults, and SP allowlist
 
+### Phase 7: Wire Orphaned Exports
+**Goal**: All cross-phase exports are wired into production code — no config fields are silently ignored and no utility functions are dead code
+**Depends on**: Phase 6
+**Requirements**: CONN-02, INFRA-02
+**Gap Closure:** Closes integration gaps from v1.1 audit
+**Success Criteria** (what must be TRUE):
+  1. `query.py` reads `text_truncation_limit` from config (via `get_config()`) instead of hardcoding `1000` at lines ~333 and ~667
+  2. `_classify_db_error` is either called in at least one production code path or removed entirely — no unused definitions remain
+  3. Setting `text_truncation_limit = 500` in config actually changes truncation behavior (verified by test)
+**Plans:** TBD
+
 ## Progress
 
 **Execution Order:**
@@ -96,3 +108,4 @@ Phases 3 through 6 execute sequentially. Phases 4, 5, and 6 all depend on Phase 
 | 4. Connection Management | v1.1 | 0/2 | Planned | - |
 | 5. Security Hardening | v1.1 | 0/2 | Planned | - |
 | 6. Serialization & Configuration | v1.1 | 0/2 | Planned | - |
+| 7. Wire Orphaned Exports | v1.1 | 0/0 | Planned | - |

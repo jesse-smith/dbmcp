@@ -65,11 +65,11 @@ Requirements for concern handling milestone. Each maps to roadmap phases.
 | TEST-01 | Phase 3 | Complete |
 | TEST-02 | Phase 3 | Complete |
 | CONN-01 | Phase 4 | Complete |
-| CONN-02 | Phase 4 | Complete |
+| CONN-02 | Phase 4, Phase 7 | Complete |
 | SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 5 | Complete |
 | INFRA-01 | Phase 6 | Complete |
-| INFRA-02 | Phase 6 | Complete |
+| INFRA-02 | Phase 6, Phase 7 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 11 total
