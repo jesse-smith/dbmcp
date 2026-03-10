@@ -6,7 +6,8 @@ from enum import StrEnum
 import pytest
 import toon_format
 
-from src.serialization import _pre_serialize, encode_response
+from src.serialization import encode_response
+from src.type_registry import convert
 
 
 class SampleEnum(StrEnum):
@@ -38,8 +39,12 @@ def test_toon_import():
 # ---------------------------------------------------------------------------
 
 
-class TestPreSerialize:
-    """Tests for the recursive pre-serialization walker."""
+class TestConvertForSerialization:
+    """Tests for the type registry convert() used by serialization.
+
+    These tests verify the same behaviors previously covered by _pre_serialize,
+    now handled by the unified type registry.
+    """
 
     @pytest.mark.parametrize(
         "value",
@@ -47,33 +52,36 @@ class TestPreSerialize:
         ids=["none", "true", "false", "int", "float", "str"],
     )
     def test_primitives_passthrough(self, value):
-        assert _pre_serialize(value) is value
+        result, _ = convert(value)
+        assert result is value
 
     def test_dict_values_recursed(self):
-        result = _pre_serialize({"ts": datetime(2026, 1, 1, 12, 0, 0)})
+        result, _ = convert({"ts": datetime(2026, 1, 1, 12, 0, 0)})
         assert result == {"ts": "2026-01-01T12:00:00"}
 
     def test_list_values_recursed(self):
-        result = _pre_serialize([datetime(2026, 1, 1)])
+        result, _ = convert([datetime(2026, 1, 1)])
         assert result == ["2026-01-01T00:00:00"]
 
     def test_tuple_converted_to_list(self):
-        result = _pre_serialize((3, 2, 1))
+        result, _ = convert((3, 2, 1))
         assert result == [3, 2, 1]
         assert isinstance(result, list)
 
     def test_datetime_to_isoformat(self):
         dt = datetime(2026, 3, 4, 15, 30, 0)
-        assert _pre_serialize(dt) == "2026-03-04T15:30:00"
+        result, _ = convert(dt)
+        assert result == "2026-03-04T15:30:00"
 
     def test_date_to_isoformat(self):
         d = date(2026, 3, 4)
-        assert _pre_serialize(d) == "2026-03-04"
+        result, _ = convert(d)
+        assert result == "2026-03-04"
 
     def test_strenum_to_string(self):
         from src.models.schema import AuthenticationMethod
 
-        result = _pre_serialize(AuthenticationMethod.SQL)
+        result, _ = convert(AuthenticationMethod.SQL)
         assert result == "sql"
         assert isinstance(result, str)
         assert type(result) is str  # not StrEnum subclass
@@ -81,7 +89,7 @@ class TestPreSerialize:
     def test_unknown_type_raises_typeerror(self):
         obj = CustomObj()
         with pytest.raises(TypeError, match="CustomObj"):
-            _pre_serialize(obj)
+            convert(obj)
 
     def test_nested_structure(self):
         """Dict containing list of dicts with datetime and StrEnum values."""
@@ -91,7 +99,7 @@ class TestPreSerialize:
                 {"ts": datetime(2026, 6, 15), "kind": SampleEnum.OPTION_B},
             ]
         }
-        result = _pre_serialize(data)
+        result, _ = convert(data)
         assert result == {
             "items": [
                 {"ts": "2026-01-01T00:00:00", "kind": "alpha"},

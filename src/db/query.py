@@ -8,9 +8,7 @@ import hashlib
 import re
 import time
 import uuid
-from datetime import date, datetime
-from datetime import time as dt_time
-from decimal import Decimal
+from datetime import datetime
 from typing import Any
 
 import sqlglot
@@ -28,6 +26,7 @@ from src.models.schema import (
     SampleData,
     SamplingMethod,
 )
+from src.type_registry import convert
 
 logger = get_logger(__name__)
 
@@ -331,53 +330,11 @@ class QueryService:
         for row in result:
             row_dict = {}
             for column_name, value in row._mapping.items():
-                truncated_value, was_truncated = self._truncate_value(value, column_name)
+                truncated_value, was_truncated = convert(value, 1000)
                 row_dict[column_name] = truncated_value
                 if was_truncated and column_name not in truncated_columns:
                     truncated_columns.append(column_name)
             rows.append(row_dict)
-
-    def _truncate_value(self, value: Any, column_name: str) -> tuple[Any, bool]:
-        """Truncate large or binary values for display.
-
-        Args:
-            value: Column value
-            column_name: Name of column (for context)
-
-        Returns:
-            Tuple of (truncated_value, was_truncated)
-        """
-        # Handle None
-        if value is None:
-            return None, False
-
-        # Handle binary data (bytes)
-        if isinstance(value, bytes):
-            if len(value) > 32:
-                hex_preview = value[:32].hex()
-                return f"<binary: {hex_preview}... ({len(value)} bytes)>", True
-            else:
-                return f"<binary: {value.hex()} ({len(value)} bytes)>", True
-
-        # Handle datetime/date/time types (not JSON serializable)
-        if isinstance(value, datetime):
-            return value.isoformat(), False
-        if isinstance(value, date):
-            return value.isoformat(), False
-        if isinstance(value, dt_time):
-            return value.isoformat(), False
-
-        # Handle Decimal (not JSON serializable)
-        if isinstance(value, Decimal):
-            return float(value), False
-
-        # Handle large text (>1000 characters)
-        if isinstance(value, str):
-            if len(value) > 1000:
-                return value[:1000] + f"... ({len(value)} chars total)", True
-
-        # All other types: return as-is
-        return value, False
 
     # =========================================================================
     # Query Execution Methods (User Story 7)
@@ -707,7 +664,7 @@ class QueryService:
         for row in fetched_rows:
             row_dict = {}
             for col_name, value in zip(columns, row, strict=True):
-                truncated_value, _ = self._truncate_value(value, col_name)
+                truncated_value, _ = convert(value, 1000)
                 row_dict[col_name] = truncated_value
             rows.append(row_dict)
 
