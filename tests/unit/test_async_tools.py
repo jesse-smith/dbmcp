@@ -213,3 +213,120 @@ class TestAsyncErrorHandling:
             result = await get_column_info(connection_id="test-conn", table_name="test")
             assert "error" in result
             assert "Timeout expired" in result
+
+
+# ---------------------------------------------------------------------------
+# Error classification wiring tests
+# ---------------------------------------------------------------------------
+
+import pytest
+from sqlalchemy.exc import SQLAlchemyError
+
+
+# All 9 MCP tools with their module path (for patching _classify_db_error)
+# and minimal kwargs needed to invoke them past parameter validation into
+# the try/except safety net (where asyncio.to_thread is called).
+_TOOL_PARAMS = [
+    pytest.param(
+        connect_database,
+        "src.mcp_server.schema_tools",
+        {"server": "localhost", "database": "testdb"},
+        id="connect_database",
+    ),
+    pytest.param(
+        list_schemas,
+        "src.mcp_server.schema_tools",
+        {"connection_id": "test-conn"},
+        id="list_schemas",
+    ),
+    pytest.param(
+        list_tables,
+        "src.mcp_server.schema_tools",
+        {"connection_id": "test-conn"},
+        id="list_tables",
+    ),
+    pytest.param(
+        get_table_schema,
+        "src.mcp_server.schema_tools",
+        {"connection_id": "test-conn", "table_name": "test"},
+        id="get_table_schema",
+    ),
+    pytest.param(
+        get_sample_data,
+        "src.mcp_server.query_tools",
+        {"connection_id": "test-conn", "table_name": "test"},
+        id="get_sample_data",
+    ),
+    pytest.param(
+        execute_query,
+        "src.mcp_server.query_tools",
+        {"connection_id": "test-conn", "query_text": "SELECT 1"},
+        id="execute_query",
+    ),
+    pytest.param(
+        get_column_info,
+        "src.mcp_server.analysis_tools",
+        {"connection_id": "test-conn", "table_name": "test"},
+        id="get_column_info",
+    ),
+    pytest.param(
+        find_pk_candidates,
+        "src.mcp_server.analysis_tools",
+        {"connection_id": "test-conn", "table_name": "test"},
+        id="find_pk_candidates",
+    ),
+    pytest.param(
+        find_fk_candidates,
+        "src.mcp_server.analysis_tools",
+        {"connection_id": "test-conn", "table_name": "test", "column_name": "id"},
+        id="find_fk_candidates",
+    ),
+]
+
+
+class TestSafetyNetErrorClassification:
+    """Verify all 9 MCP tool safety nets wire _classify_db_error for SQLAlchemy errors."""
+
+    @pytest.mark.parametrize("tool_fn,module_path,kwargs", _TOOL_PARAMS)
+    async def test_safety_net_classifies_sqlalchemy_errors(
+        self, tool_fn, module_path, kwargs
+    ):
+        """SQLAlchemyError in a tool triggers _classify_db_error and includes guidance."""
+        fake_guidance = "Check your credentials (username/password) and verify the account has access to the database."
+        raw_error_text = "Login failed for user 'bob'"
+
+        with (
+            patch("asyncio.to_thread") as mock_to_thread,
+            patch(
+                f"{module_path}._classify_db_error",
+                return_value=("auth_failure", fake_guidance),
+                create=True,
+            ) as mock_classify,
+        ):
+            mock_to_thread.side_effect = SQLAlchemyError(raw_error_text)
+            result = await tool_fn(**kwargs)
+
+            mock_classify.assert_called_once()
+            # Guidance text should appear in the response
+            assert fake_guidance in result
+            # Raw error should also appear (in parens)
+            assert raw_error_text in result
+
+    @pytest.mark.parametrize("tool_fn,module_path,kwargs", _TOOL_PARAMS)
+    async def test_safety_net_generic_error_fallback(
+        self, tool_fn, module_path, kwargs
+    ):
+        """Non-SQLAlchemy error uses generic fallback, does NOT call _classify_db_error."""
+        with (
+            patch("asyncio.to_thread") as mock_to_thread,
+            patch(
+                f"{module_path}._classify_db_error",
+                create=True,
+            ) as mock_classify,
+        ):
+            mock_to_thread.side_effect = ValueError("something broke")
+            result = await tool_fn(**kwargs)
+
+            mock_classify.assert_not_called()
+            # Generic fallback should contain the error text
+            assert "something broke" in result
