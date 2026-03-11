@@ -5,7 +5,7 @@ milestone_name: Concern Handling
 status: completed
 stopped_at: Completed 07-02 (wire _classify_db_error into safety nets)
 last_updated: "2026-03-10T21:39:46.251Z"
-last_activity: 2026-03-10 — Completed plan 07-02 (wire _classify_db_error into all 9 MCP tool safety nets)
+last_activity: 2026-03-11 — Completed quick task 5 (refactor connect_database complexity)
 progress:
   total_phases: 5
   completed_phases: 5
@@ -81,6 +81,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 2 | Fix ruff warnings and complete PoolConfig docstring | 2026-03-05 | 86ee5df | Verified | [2-verify-query-timeout-changes-meet-codeba](./quick/2-verify-query-timeout-changes-meet-codeba/) |
 | 3 | Reduce connect() complexity from 17 to under 15 | 2026-03-05 | d89d245 | Done | [3-reduce-connect-complexity-from-17-to-und](./quick/3-reduce-connect-complexity-from-17-to-und/) |
 | 4 | Update README to reflect current project | 2026-03-05 | 58ffbf3 | Verified | [4-update-readme-to-reflect-current-project](./quick/4-update-readme-to-reflect-current-project/) |
+| 5 | Refactor connect_database complexity from 48 to under 15 | 2026-03-11 | b3b6ab1 | Done | [5-refactor-connect-database-to-bring-cyclo](./quick/5-refactor-connect-database-to-bring-cyclo/) |
 
 ## Session Continuity
 
