@@ -19,6 +19,21 @@ class AuthenticationMethod(StrEnum):
     AZURE_AD_INTEGRATED = "azure_ad_integrated"
 
 
+@dataclass
+class ResolvedConnectionParams:
+    """Effective connection parameters after merging config + explicit args."""
+
+    server: str
+    database: str
+    port: int
+    authentication_method: str
+    trust_server_cert: bool
+    connection_timeout: int
+    username: str | None
+    password: str | None
+    tenant_id: str | None
+
+
 class TableType(StrEnum):
     """Database object types."""
 

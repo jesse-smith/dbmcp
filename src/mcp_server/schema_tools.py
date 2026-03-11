@@ -12,7 +12,7 @@ from src.config import get_config, resolve_env_vars
 from src.db.connection import ConnectionError, _classify_db_error
 from src.db.metadata import MetadataService
 from src.mcp_server.server import get_connection_manager, logger, mcp
-from src.models.schema import AuthenticationMethod
+from src.models.schema import AuthenticationMethod, ResolvedConnectionParams
 from src.serialization import encode_response
 
 
@@ -74,6 +74,170 @@ def _get_metadata_service(connection_id: str) -> MetadataService:
 
 
 # =============================================================================
+# Connection resolution helpers
+# =============================================================================
+
+
+def _pick(explicit, config_val):
+    """Return explicit arg if provided, else config value."""
+    return explicit if explicit is not None else config_val
+
+
+def _resolve_env_field(explicit: str | None, config_val: str | None) -> tuple[str | None, dict | None]:
+    """Resolve a credential field that may contain env var references.
+
+    Returns:
+        (resolved_value, error_dict_or_none) — if error_dict is not None, return it.
+    """
+    if explicit is not None:
+        return explicit, None
+    if config_val is not None:
+        try:
+            return resolve_env_vars(config_val), None
+        except ValueError as e:
+            return None, {"status": "error", "error_message": str(e)}
+    return None, None
+
+
+def _merge_with_config(
+    server: str | None,
+    database: str | None,
+    port: int | None,
+    authentication_method: str | None,
+    trust_server_cert: bool | None,
+    connection_timeout: int | None,
+    username: str | None,
+    password: str | None,
+    tenant_id: str | None,
+    conn_cfg,
+) -> tuple[dict | None, dict | None]:
+    """Merge explicit args with a named ConnectionConfig.
+
+    Returns:
+        (merged_dict, error_dict_or_none) — merged_dict has all effective values,
+        or error_dict if env var resolution failed.
+    """
+    eff_password, err = _resolve_env_field(password, conn_cfg.password)
+    if err is not None:
+        return None, err
+
+    eff_tenant_id, err = _resolve_env_field(tenant_id, conn_cfg.tenant_id)
+    if err is not None:
+        return None, err
+
+    return {
+        "server": _pick(server, conn_cfg.server),
+        "database": _pick(database, conn_cfg.database),
+        "port": _pick(port, conn_cfg.port),
+        "authentication_method": _pick(authentication_method, conn_cfg.authentication_method),
+        "trust_server_cert": _pick(trust_server_cert, conn_cfg.trust_server_cert),
+        "connection_timeout": _pick(connection_timeout, conn_cfg.connection_timeout),
+        "username": _pick(username, conn_cfg.username),
+        "password": eff_password,
+        "tenant_id": eff_tenant_id,
+    }, None
+
+
+def _defaults_only(
+    server: str | None,
+    database: str | None,
+    port: int | None,
+    authentication_method: str | None,
+    trust_server_cert: bool | None,
+    connection_timeout: int | None,
+    username: str | None,
+    password: str | None,
+    tenant_id: str | None,
+) -> dict:
+    """Build effective params from explicit args + hardcoded defaults (no named connection)."""
+    return {
+        "server": server,
+        "database": database,
+        "port": port if port is not None else 1433,
+        "authentication_method": authentication_method if authentication_method is not None else "sql",
+        "trust_server_cert": trust_server_cert if trust_server_cert is not None else False,
+        "connection_timeout": connection_timeout if connection_timeout is not None else 30,
+        "username": username,
+        "password": password,
+        "tenant_id": tenant_id,
+    }
+
+
+def _resolve_connection_params(
+    server: str | None,
+    database: str | None,
+    username: str | None,
+    password: str | None,
+    port: int | None,
+    authentication_method: str | None,
+    trust_server_cert: bool | None,
+    connection_timeout: int | None,
+    tenant_id: str | None,
+    connection_name: str | None,
+) -> tuple[ResolvedConnectionParams | None, dict | None]:
+    """Resolve all connect_database parameters into a ResolvedConnectionParams.
+
+    Returns:
+        (params, None) on success, or (None, error_dict) on failure.
+    """
+    if connection_name is not None:
+        config = get_config()
+        if connection_name not in config.connections:
+            return None, {
+                "status": "error",
+                "error_message": f"Named connection '{connection_name}' not found in config. "
+                f"Available: {sorted(config.connections.keys()) or 'none'}",
+            }
+        merged, err = _merge_with_config(
+            server, database, port, authentication_method,
+            trust_server_cert, connection_timeout, username, password,
+            tenant_id, config.connections[connection_name],
+        )
+        if err is not None:
+            return None, err
+        eff = merged
+    else:
+        eff = _defaults_only(
+            server, database, port, authentication_method,
+            trust_server_cert, connection_timeout, username, password, tenant_id,
+        )
+
+    # Validate required fields
+    if not eff["server"]:
+        return None, {
+            "status": "error",
+            "error_message": "server is required (provide directly or via connection_name)",
+        }
+    if not eff["database"]:
+        return None, {
+            "status": "error",
+            "error_message": "database is required (provide directly or via connection_name)",
+        }
+
+    # Parse authentication method
+    try:
+        AuthenticationMethod(eff["authentication_method"].lower())
+    except ValueError:
+        return None, {
+            "status": "error",
+            "error_message": f"Invalid authentication_method '{eff['authentication_method']}'. "
+            "Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
+        }
+
+    return ResolvedConnectionParams(
+        server=eff["server"],
+        database=eff["database"],
+        port=eff["port"],
+        authentication_method=eff["authentication_method"],
+        trust_server_cert=eff["trust_server_cert"],
+        connection_timeout=eff["connection_timeout"],
+        username=eff["username"],
+        password=eff["password"],
+        tenant_id=eff["tenant_id"],
+    ), None
+
+
+# =============================================================================
 # Connection Tools
 # =============================================================================
 
@@ -121,106 +285,28 @@ async def connect_database(
             has_cached_docs: bool              // on success only
             error_message: string              // on error only
     """
-    # Resolve named connection from config if provided
-    if connection_name is not None:
-        config = get_config()
-        if connection_name not in config.connections:
-            return encode_response({
-                "status": "error",
-                "error_message": f"Named connection '{connection_name}' not found in config. "
-                f"Available: {sorted(config.connections.keys()) or 'none'}",
-            })
-        conn_cfg = config.connections[connection_name]
+    params, err = _resolve_connection_params(
+        server, database, username, password, port,
+        authentication_method, trust_server_cert, connection_timeout,
+        tenant_id, connection_name,
+    )
+    if err is not None:
+        return encode_response(err)
 
-        # Merge: explicit args override config values override hardcoded defaults
-        eff_server = server if server is not None else conn_cfg.server
-        eff_database = database if database is not None else conn_cfg.database
-        eff_port = port if port is not None else conn_cfg.port
-        eff_auth = authentication_method if authentication_method is not None else conn_cfg.authentication_method
-        eff_trust = trust_server_cert if trust_server_cert is not None else conn_cfg.trust_server_cert
-        eff_timeout = connection_timeout if connection_timeout is not None else conn_cfg.connection_timeout
-        eff_tenant_id = tenant_id if tenant_id is not None else conn_cfg.tenant_id
-
-        # Username: explicit arg overrides config
-        eff_username = username if username is not None else conn_cfg.username
-
-        # Password/tenant_id from config: resolve env vars at connection time
-        if password is not None:
-            eff_password = password
-        elif conn_cfg.password is not None:
-            try:
-                eff_password = resolve_env_vars(conn_cfg.password)
-            except ValueError as e:
-                return encode_response({
-                    "status": "error",
-                    "error_message": str(e),
-                })
-        else:
-            eff_password = None
-
-        if tenant_id is None and conn_cfg.tenant_id is not None:
-            try:
-                eff_tenant_id = resolve_env_vars(conn_cfg.tenant_id)
-            except ValueError as e:
-                return encode_response({
-                    "status": "error",
-                    "error_message": str(e),
-                })
-    else:
-        # No named connection: use explicit args with hardcoded defaults
-        eff_server = server
-        eff_database = database
-        eff_port = port if port is not None else 1433
-        eff_auth = authentication_method if authentication_method is not None else "sql"
-        eff_trust = trust_server_cert if trust_server_cert is not None else False
-        eff_timeout = connection_timeout if connection_timeout is not None else 30
-        eff_username = username
-        eff_password = password
-        eff_tenant_id = tenant_id
-
-    # Validate required fields
-    if not eff_server:
-        return encode_response({
-            "status": "error",
-            "error_message": "server is required (provide directly or via connection_name)",
-        })
-    if not eff_database:
-        return encode_response({
-            "status": "error",
-            "error_message": "database is required (provide directly or via connection_name)",
-        })
-
-    # Parse authentication method (fast, no I/O)
-    try:
-        auth_method = AuthenticationMethod(eff_auth.lower())
-    except ValueError:
-        return encode_response({
-            "status": "error",
-            "error_message": f"Invalid authentication_method '{eff_auth}'. Use 'sql', 'windows', 'azure_ad', or 'azure_ad_integrated'.",
-        })
-
-    # Capture effective values for closure
-    final_server = eff_server
-    final_database = eff_database
-    final_port = eff_port
-    final_trust = eff_trust
-    final_timeout = eff_timeout
-    final_username = eff_username
-    final_password = eff_password
-    final_tenant_id = eff_tenant_id
+    auth_method = AuthenticationMethod(params.authentication_method.lower())
 
     def _sync_connect():
         conn_manager = get_connection_manager()
         connection = conn_manager.connect(
-            server=final_server,
-            database=final_database,
-            username=final_username,
-            password=final_password,
-            port=final_port,
+            server=params.server,
+            database=params.database,
+            username=params.username,
+            password=params.password,
+            port=params.port,
             authentication_method=auth_method,
-            trust_server_cert=final_trust,
-            connection_timeout=final_timeout,
-            tenant_id=final_tenant_id,
+            trust_server_cert=params.trust_server_cert,
+            connection_timeout=params.connection_timeout,
+            tenant_id=params.tenant_id,
         )
 
         engine = conn_manager.get_engine(connection.connection_id)
@@ -230,12 +316,12 @@ async def connect_database(
         cache_dir = Path("docs") / connection.connection_id
         has_cached_docs = cache_dir.exists() and any(cache_dir.iterdir())
 
-        logger.info(f"Connected to {final_database} on {final_server}:{final_port}")
+        logger.info(f"Connected to {params.database} on {params.server}:{params.port}")
 
         return {
             "connection_id": connection.connection_id,
             "status": "success",
-            "message": f"Successfully connected to {final_database}",
+            "message": f"Successfully connected to {params.database}",
             "schema_count": len(schemas),
             "has_cached_docs": has_cached_docs,
         }
