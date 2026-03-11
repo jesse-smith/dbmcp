@@ -195,6 +195,7 @@ def _resolve_connection_params(
         )
         if err is not None:
             return None, err
+        assert merged is not None  # err is None iff merged is not None
         eff = merged
     else:
         eff = _defaults_only(
@@ -292,6 +293,7 @@ async def connect_database(
     )
     if err is not None:
         return encode_response(err)
+    assert params is not None  # err is None iff params is not None
 
     auth_method = AuthenticationMethod(params.authentication_method.lower())
 
