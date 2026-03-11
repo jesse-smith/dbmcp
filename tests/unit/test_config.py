@@ -206,6 +206,7 @@ class TestLoadConfig:
     def test_no_config_file_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
         config = load_config()
         assert config == AppConfig()
 
@@ -244,6 +245,7 @@ class TestLoadConfig:
         home_dir = tmp_path / "fakehome" / ".dbmcp"
         home_dir.mkdir(parents=True)
         monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
 
         (home_dir / "config.toml").write_text(textwrap.dedent("""\
             [defaults]
@@ -261,6 +263,7 @@ class TestLoadConfig:
         home_dir = tmp_path / "fakehome" / ".dbmcp"
         home_dir.mkdir(parents=True)
         monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
 
         (home_dir / "config.toml").write_text(textwrap.dedent("""\
             [defaults]
@@ -302,6 +305,7 @@ class TestSingleton:
         monkeypatch.setattr(config_mod, "_config", None)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
 
         toml_content = textwrap.dedent("""\
             [defaults]
@@ -319,6 +323,7 @@ class TestSingleton:
         monkeypatch.setattr(config_mod, "_config", None)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
 
         first = init_config()
         second = init_config()
