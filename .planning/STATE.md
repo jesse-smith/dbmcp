@@ -81,7 +81,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 2 | Fix ruff warnings and complete PoolConfig docstring | 2026-03-05 | 86ee5df | Verified | [2-verify-query-timeout-changes-meet-codeba](./quick/2-verify-query-timeout-changes-meet-codeba/) |
 | 3 | Reduce connect() complexity from 17 to under 15 | 2026-03-05 | d89d245 | Done | [3-reduce-connect-complexity-from-17-to-und](./quick/3-reduce-connect-complexity-from-17-to-und/) |
 | 4 | Update README to reflect current project | 2026-03-05 | 58ffbf3 | Verified | [4-update-readme-to-reflect-current-project](./quick/4-update-readme-to-reflect-current-project/) |
-| 5 | Refactor connect_database complexity from 48 to under 15 | 2026-03-11 | b3b6ab1 | Done | [5-refactor-connect-database-to-bring-cyclo](./quick/5-refactor-connect-database-to-bring-cyclo/) |
+| 5 | Refactor connect_database complexity from 48 to under 15 | 2026-03-11 | 5d570de | Done | [5-refactor-connect-database-to-bring-cyclo](./quick/5-refactor-connect-database-to-bring-cyclo/) |
 
 ## Session Continuity
 
