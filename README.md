@@ -92,6 +92,117 @@ Add to `.mcp.json` or configure via CLI:
 
 > If installed locally (not via `uv tool`), use `uv run dbmcp` as the command and set `cwd` to the repo directory.
 
+## Configuration
+
+dbmcp loads optional configuration from a TOML file. No config file is required — all settings have sensible defaults.
+
+### Config file locations
+
+dbmcp searches for a config file in this order (first match wins):
+
+| Priority | Path | Use case |
+|----------|------|----------|
+| 1 | `./dbmcp.toml` | Project-level config, committed to repo or kept local |
+| 2 | `~/.dbmcp/config.toml` | User-level config, shared across all projects |
+
+### Setting up a project-level config
+
+Create `dbmcp.toml` in the directory where the MCP server runs (usually your project root):
+
+```toml
+[defaults]
+query_timeout = 60          # seconds (5–300, default: 30)
+row_limit = 5000            # max rows returned (1–10000, default: 1000)
+sample_size = 10            # default sample rows (1–1000, default: 5)
+text_truncation_limit = 2000  # chars before truncation (100–10000, default: 1000)
+
+[connections.dev]
+server = "localhost"
+database = "mydb"
+authentication_method = "sql"
+username = "sa"
+password = "${SA_PASSWORD}"   # resolved from env var at connection time
+trust_server_cert = true
+
+[connections.prod]
+server = "prod-server.example.com"
+database = "proddb"
+port = 1434
+authentication_method = "windows"
+
+allowed_stored_procedures = ["sp_custom_report", "dbo.my_proc"]
+```
+
+### Setting up a user-level config
+
+Create `~/.dbmcp/config.toml` for connections and defaults you want available everywhere:
+
+```bash
+mkdir -p ~/.dbmcp
+```
+
+```toml
+# ~/.dbmcp/config.toml
+
+[defaults]
+query_timeout = 60
+
+[connections.staging]
+server = "staging-db.internal"
+database = "app_staging"
+authentication_method = "azure_ad_integrated"
+tenant_id = "your-tenant-id"
+
+[connections.local]
+server = "localhost"
+database = "devdb"
+authentication_method = "sql"
+username = "sa"
+password = "${SA_PASSWORD}"
+trust_server_cert = true
+```
+
+> **Tip:** If both files exist, the project-level `dbmcp.toml` takes precedence and the user-level file is ignored entirely.
+
+### Using named connections
+
+Once configured, pass the connection name to `connect_database` instead of individual parameters:
+
+```
+connect_database(connection_name="dev")
+```
+
+Explicit parameters override config values, so you can use a named connection as a base and override specific fields:
+
+```
+connect_database(connection_name="dev", database="other_db")
+```
+
+### Connection fields reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `server` | string | *(required)* | SQL Server hostname or IP |
+| `database` | string | *(required)* | Database name |
+| `port` | int | `1433` | SQL Server port |
+| `authentication_method` | string | `"sql"` | `sql`, `windows`, `azure_ad`, or `azure_ad_integrated` |
+| `username` | string | — | For SQL or Azure AD auth |
+| `password` | string | — | Supports `${ENV_VAR}` references |
+| `trust_server_cert` | bool | `false` | Trust server certificate without validation |
+| `connection_timeout` | int | `30` | Connection timeout in seconds |
+| `tenant_id` | string | — | Azure AD tenant ID (for `azure_ad_integrated`) |
+
+### Environment variable references
+
+Credential fields support `${VAR_NAME}` syntax. Variables are resolved at connection time (not when the config is loaded), so the environment variable must be set when you call `connect_database`:
+
+```toml
+[connections.prod]
+server = "prod-server"
+database = "proddb"
+password = "${PROD_DB_PASSWORD}"
+```
+
 ## MCP Tools Reference
 
 | Tool | Description |
