@@ -15,7 +15,25 @@ from src.models.schema import DenialCategory
 
 
 class TestSqlglotVersionFloor:
-    """Verify sqlglot version pin is enforced at runtime."""
+    """Verify sqlglot version pin is enforced at runtime.
+
+    Why this gate exists (SEC-02):
+    - sqlglot is the backbone of our SQL query validation (src/db/validation.py).
+      AST shape changes in sqlglot can silently flip a query from "denied" to
+      "allowed" or vice versa, so every major bump must be reviewed by hand.
+    - The >=29.0.0 FLOOR is functional: sqlglot 29 introduced exp.Execute /
+      exp.ExecuteSql nodes for EXEC/EXECUTE statements. _classify_statement in
+      validation.py branches on these node types to enforce the stored-procedure
+      allowlist and deny sp_executesql. Older versions emit exp.Command instead
+      and the allowlist check would behave differently.
+    - The upper bound is a DELIBERATE UPGRADE GATE, not a known-bad marker.
+      When Dependabot proposes a major bump, this test fails and forces a human
+      to (a) read the sqlglot changelog, (b) re-run the edge-case fixtures in
+      this file, and (c) update the pin string here. If all edge cases still
+      pass against the new version, raise the ceiling to <MAJOR+1.0.0.
+    - Keep the floor and the pyproject pin in sync. If you relax one, relax
+      both together in the same commit so the gate keeps working.
+    """
 
     def test_sqlglot_version_floor(self):
         """sqlglot version must be >= 29.0.0 (Execute node handling)."""
@@ -27,12 +45,17 @@ class TestSqlglotVersionFloor:
         )
 
     def test_pyproject_contains_tightened_pin(self):
-        """pyproject.toml must contain the tightened sqlglot pin."""
+        """pyproject.toml must contain the tightened sqlglot pin.
+
+        This is the upgrade-gate half of the version check. If you're here
+        because a dependabot bump made this fail: read the class docstring
+        above, then run the full edge-case suite against the new version.
+        """
         from pathlib import Path
 
         pyproject = Path("pyproject.toml").read_text()
-        assert "sqlglot>=29.0.0,<30.0.0" in pyproject, (
-            "pyproject.toml must pin sqlglot to >=29.0.0,<30.0.0"
+        assert "sqlglot>=29.0.0,<31.0.0" in pyproject, (
+            "pyproject.toml must pin sqlglot to >=29.0.0,<31.0.0"
         )
 
 
