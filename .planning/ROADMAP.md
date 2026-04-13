@@ -49,7 +49,11 @@
   2. MssqlDialect implements the protocol with all existing MSSQL-specific code (ODBC strings, Azure AD, DMV queries, bracket quoting)
   3. Dialect registry resolves dialect names to strategy implementations with a fallback path
   4. All existing tests pass unchanged (zero behavior regression)
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 08-01-PLAN.md — Define DialectStrategy protocol and dialect registry
+- [ ] 08-02-PLAN.md — Implement MssqlDialect and relocate azure_auth
+- [ ] 08-03-PLAN.md — Wire dialect into ConnectionManager, MetadataService, QueryService
 
 ### Phase 9: Config Discrimination & Validation Dialect
 **Goal**: Users can configure non-MSSQL connections via TOML and execute validated queries against any supported dialect
@@ -123,7 +127,7 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 5. Security Hardening | v1.1 | 2/2 | Complete | 2026-03-09 |
 | 6. Serialization & Configuration | v1.1 | 2/2 | Complete | 2026-03-10 |
 | 7. Wire Orphaned Exports | v1.1 | 2/2 | Complete | 2026-03-10 |
-| 8. Dialect Protocol & MSSQL Extraction | v2.0 | 0/0 | Not started | - |
+| 8. Dialect Protocol & MSSQL Extraction | v2.0 | 0/3 | Planning | - |
 | 9. Config Discrimination & Validation Dialect | v2.0 | 0/0 | Not started | - |
 | 10. GenericDialect & Tool Interface | v2.0 | 0/0 | Not started | - |
 | 11. DatabricksDialect | v2.0 | 0/0 | Not started | - |
