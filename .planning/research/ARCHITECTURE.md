@@ -1,451 +1,494 @@
-# Architecture Patterns
+# Architecture Patterns: Multi-Dialect Integration
 
-**Domain:** MCP server concern-handling improvements (v1.1)
-**Researched:** 2026-03-06
-**Confidence:** HIGH (based on direct codebase analysis)
+**Domain:** Multi-dialect database MCP tool server
+**Researched:** 2026-04-13
+**Confidence:** HIGH (based on direct codebase analysis, SQLAlchemy/sqlglot documentation knowledge)
 
-## Current Architecture Overview
+## Recommended Architecture
 
-```
-Entry Point: src/mcp_server/server.py
-  - Creates FastMCP instance, singleton ConnectionManager
-  - Imports tool modules (schema_tools, query_tools, analysis_tools)
-  - Tool modules register via @mcp.tool() decorators
+### Design Principle: Narrow the Dialect Seam
 
-Request Flow:
-  MCP Client -> FastMCP (stdio) -> @mcp.tool() handler (async)
-    -> asyncio.to_thread(_sync_work)
-      -> ConnectionManager.get_engine(connection_id)
-      -> Service layer (MetadataService / QueryService / ColumnStatsCollector / etc.)
-        -> SQLAlchemy Engine -> pyodbc -> SQL Server
-    -> encode_response(result_dict) -> TOON string -> MCP Client
+The existing codebase already has a two-path pattern (`is_mssql` checks in MetadataService, `dialect_name` checks in QueryService). The refactor replaces these ad-hoc conditionals with a single protocol-based dispatch point. The key insight: **most code does not need to know about dialects at all** -- only a thin layer at the boundary does.
 
-Exception Flow (current):
-  Service layer raises -> _sync_work propagates -> to_thread propagates
-    -> tool handler catches (ValueError | Exception) -> encode_response({status: "error"})
-```
+### Component Boundaries
 
-### Component Map
+| Component | Responsibility | Communicates With |
+|-----------|---------------|-------------------|
+| `src/db/dialect.py` (NEW) | DialectStrategy protocol + registry, dialect detection | ConnectionManager, MetadataService, QueryService, validation |
+| `src/db/dialects/` (NEW package) | MssqlDialect, DatabricksDialect, GenericDialect implementations | dialect.py (via protocol) |
+| `src/db/connection.py` (MODIFIED) | Engine creation delegated to dialect; stores dialect alongside engine | dialect.py |
+| `src/db/metadata.py` (MODIFIED) | Receives dialect, replaces `is_mssql` branches with dialect method calls | dialect.py |
+| `src/db/query.py` (MODIFIED) | Receives dialect for SQL generation (TOP vs LIMIT, identifier quoting) | dialect.py |
+| `src/db/validation.py` (MODIFIED) | Receives sqlglot dialect name from strategy instead of hardcoding `"tsql"` | dialect.py |
+| `src/config.py` (MODIFIED) | Discriminated ConnectionConfig with `dialect` field | connection.py |
+| `src/analysis/` (MODIFIED) | Receives dialect for SQL function adaptation | dialect.py |
+| `src/mcp_server/` (UNCHANGED interfaces) | Tool signatures unchanged; internal wiring passes dialect through | All db modules |
 
-| Component | File | Responsibility | Dependencies |
-|-----------|------|----------------|--------------|
-| Server bootstrap | `server.py` | FastMCP, singleton CM, tool registration | ConnectionManager, logging_config |
-| Schema tools | `schema_tools.py` | connect, list_schemas, list_tables, get_table_schema | server.py (mcp, CM, logger), MetadataService |
-| Query tools | `query_tools.py` | get_sample_data, execute_query | server.py (mcp, CM, logger), QueryService |
-| Analysis tools | `analysis_tools.py` | get_column_info, find_pk_candidates, find_fk_candidates | server.py (mcp, CM), ColumnStatsCollector, PKDiscovery, FKCandidateSearch |
-| Connection mgmt | `connection.py` | Engine creation, pooling, connect/disconnect | AzureTokenProvider, SQLAlchemy, pyodbc |
-| Query execution | `query.py` | Query running, row limit injection, value truncation | validation.py, sqlglot, SQLAlchemy |
-| Query validation | `validation.py` | AST denylist, SP allowlist | sqlglot |
-| Metadata | `metadata.py` | Schema/table/column/index introspection | SQLAlchemy inspector, DMVs |
-| Serialization | `serialization.py` | Pre-serialize Python types, encode to TOON | toon_format |
-| Azure auth | `azure_auth.py` | Token acquisition and packing | azure-identity |
-| Metrics (dead) | `metrics.py` | Performance tracking (unused) | stdlib only |
-
-## Concern Integration Analysis
-
-### 1. Removing metrics.py -- Clean Delete
-
-**Impact assessment:** NONE. No hidden imports or side effects.
-
-Evidence:
-- `grep` for `from src.metrics` and `import.*metrics` found only the self-reference in `metrics.py` line 7 (docstring usage example)
-- No `__init__.py` re-exports metrics
-- No other source file imports it
-- No test file imports it (it has its own tests but those can be deleted too)
-- No entry point references it
-- It is a standalone singleton with no side effects on import
-
-**Integration point:** Delete `src/metrics.py` and any corresponding test file. No other files change.
-
-**Files to modify:** 1 deleted (`src/metrics.py`), plus test cleanup
-**Files affected:** 0
-
-### 2. Exception Handling -- 25 Broad `except Exception` Blocks
-
-**Current exception flow** (three distinct patterns):
-
-**Pattern A: MCP tool handlers (9 occurrences in schema_tools, query_tools, analysis_tools)**
-```python
-try:
-    result = await asyncio.to_thread(_sync_work)
-    return encode_response(result)
-except ValueError as e:
-    return encode_response({"status": "error", ...})
-except Exception as e:          # <-- BROAD
-    logger.exception("Error in ...")
-    return encode_response({"status": "error", ...})
-```
-These are the outermost boundary. The broad `except Exception` here is actually *partially justified* -- it is the last line of defense preventing unhandled errors from crashing the MCP server. However, it should be narrowed to catch known database/connection errors specifically, with `Exception` retained only as a true last-resort fallback.
-
-**Recommended replacement:**
-```python
-except ValueError as e:
-    return encode_response(...)
-except (ConnectionError, sqlalchemy.exc.OperationalError, sqlalchemy.exc.DatabaseError) as e:
-    return encode_response(...)  # known DB errors
-except Exception as e:
-    logger.exception("Unexpected error in ...")  # keep as safety net, but now it's the THIRD handler
-    return encode_response(...)
-```
-
-**Pattern B: Service layer methods (metadata.py ~10 occurrences, query.py ~3, connection.py ~1)**
-```python
-except Exception:           # swallows all errors silently
-    return []  # or return False, or pass
-```
-These are the *most dangerous*. They hide real errors (permission denied, network timeout, OOM) behind empty results. The user gets no feedback that something went wrong.
-
-**Recommended replacement (varies by call site):**
-- `metadata.py` inspector calls: Catch `sqlalchemy.exc.NoSuchTableError`, `sqlalchemy.exc.OperationalError`, `sqlalchemy.exc.ProgrammingError`. Log warning. Return empty collection.
-- `query.py` count query: Catch `sqlalchemy.exc.OperationalError`. Silently return None (this is truly best-effort).
-- `connection.py` connect: Already correctly catches `ConnectionError` first, but the fallback `except Exception` should narrow to `(sqlalchemy.exc.OperationalError, pyodbc.Error)`.
-
-**Pattern C: Query execution error capture (query.py `_run_query`)**
-```python
-except Exception as e:
-    error_message = f"Query execution failed: {type(e).__name__}: {str(e)}"
-```
-This one captures the error message to return to the user. It needs to catch `sqlalchemy.exc.OperationalError` (timeout), `sqlalchemy.exc.ProgrammingError` (syntax), `pyodbc.Error` specifically. Keep a final `Exception` catch but log it as unexpected.
-
-**Integration points:**
-- Changes are spread across 6 files but are self-contained per file
-- No cross-module interface changes -- each file's catch blocks are internal
-- The exception *types* to catch come from sqlalchemy and pyodbc (already dependencies)
-
-**Build order consideration:** Do this BEFORE connection lifecycle changes, since you need to understand which exceptions propagate to handle Azure AD token refresh correctly.
-
-### 3. Connection Lifecycle -- Azure AD Token Refresh and Session Cleanup
-
-**Current state of Azure AD token flow:**
-
-```
-ConnectionManager.connect()
-  -> _create_engine(authentication_method=AZURE_AD_INTEGRATED)
-    -> Creates AzureTokenProvider(tenant_id)
-    -> Defines creator() closure that calls provider.get_token() on EVERY new raw connection
-    -> create_engine("mssql+pyodbc://", creator=creator, ...)
-```
-
-**Key insight:** The `creator` closure is called by SQLAlchemy's QueuePool whenever it needs a *new physical connection*. The token is fetched fresh each time. However, there is a critical gap:
-
-**Problem 1: Token expiry on pooled connections.** Azure AD tokens are typically valid for 60-90 minutes. A pooled connection that was created with a valid token and then sits idle will have a valid *pyodbc connection* but the underlying token is expired. The next query on that connection will fail with an auth error from SQL Server. `pool_pre_ping=True` (currently enabled) will detect the dead connection and discard it, triggering `creator()` again with a fresh token. **This partially mitigates the issue** but has a race window and generates noisy errors.
-
-**Problem 2: No proactive refresh.** The `pool_recycle=3600` (1 hour) recycles connections by age, which roughly aligns with token lifetime. But there is no coordination between token TTL and pool recycle. If a token has 5 minutes left and a connection is checked out, it may fail mid-query.
-
-**Recommended approach:**
-- Add token expiry tracking to `AzureTokenProvider` (the `azure.core.credentials.AccessToken` returned by `get_token()` includes an `expires_on` field)
-- Set `pool_recycle` to be shorter than token lifetime (e.g., 45 minutes vs 60-minute token)
-- Add a pool event listener (`checkout`) that checks token expiry and invalidates stale connections proactively
-- This stays entirely within `connection.py` and `azure_auth.py` -- no interface changes
-
-**Problem 3: No session cleanup.** The MCP server has no lifecycle hook for when a client disconnects. `ConnectionManager.disconnect_all()` exists but is never called. The `FastMCP` class does not expose a shutdown hook in the current API.
-
-**Recommended approach:**
-- Register an `atexit` handler in `server.py` that calls `_connection_manager.disconnect_all()`
-- Check if FastMCP supports a `shutdown` or `on_close` callback (needs verification against current mcp SDK version)
-- This is a 5-line change in `server.py`
-
-**Integration points:**
-- `azure_auth.py`: Add `expires_on` tracking to `get_token()`, add `is_token_fresh()` method
-- `connection.py`: Add pool checkout event listener for Azure AD engines, adjust `pool_recycle`
-- `server.py`: Add atexit handler
-- No changes to tool modules or serialization
-
-### 4. Identifier Sanitization -- Metadata Validation in Query Pipeline
-
-**Current sanitization in `query.py`:**
-```python
-def _sanitize_identifier(self, identifier: str) -> str:
-    if not re.match(r'^[a-zA-Z0-9_\s]+$', identifier):
-        raise ValueError(f"Invalid identifier: {identifier}")
-    return f"[{identifier}]"  # brackets for SQL Server
-```
-
-**Where it is called:** Only in `get_sample_data()` for user-supplied column names. Table names and schema names are passed directly into f-strings with brackets: `f"[{schema_name}].[{table_name}]"` -- this is bracket-quoting but without regex validation.
-
-**The concern:** The current regex allows any alphanumeric + underscore + space but does NOT validate that the identifier actually exists in the database. A crafted identifier like `]; DROP TABLE Students; --` would be caught by the regex, but `valid_looking_column` that does not exist would generate a SQL error at runtime rather than a clear validation error.
-
-**Where metadata validation should fit:**
-
-```
-Current:  MCP tool handler -> QueryService.get_sample_data(columns=[...])
-                                -> _sanitize_identifier(col)  # regex only
-                                -> builds SQL string
-
-Proposed: MCP tool handler -> QueryService.get_sample_data(columns=[...])
-                                -> _validate_identifiers(columns, table_name, schema_name)
-                                   -> MetadataService.get_columns(table, schema)
-                                   -> compare requested columns against actual columns
-                                   -> raise ValueError for unknown columns
-                                -> _sanitize_identifier(col)  # regex (belt-and-suspenders)
-                                -> builds SQL string
-```
-
-**Integration challenge:** `QueryService` currently takes only an `Engine` in its constructor. It does not have access to `MetadataService`. Options:
-
-**Option A (recommended): Pass metadata service to QueryService.**
-Change `QueryService.__init__(self, engine, metadata_service=None)`. When metadata_service is provided, use it for identifier validation. This preserves backward compatibility.
-
-**Option B: Validate in the tool handler layer.**
-The tool handlers already have access to both services. Move validation to `query_tools.py` and `schema_tools.py` before calling into QueryService. This avoids changing QueryService's interface but scatters validation logic.
-
-**Option A is better** because it keeps validation close to the SQL building code, following defense-in-depth.
-
-**Also needed:** Apply the same regex validation to `schema_name` and `table_name` parameters in `get_sample_data()` and throughout `metadata.py` methods that accept user-supplied identifiers. Currently these are passed raw into bracket-quoted SQL.
-
-**Integration points:**
-- `query.py`: Add MetadataService as optional dependency, add identifier validation
-- `query_tools.py` and `schema_tools.py`: Pass MetadataService when constructing QueryService
-- `metadata.py`: Add a lightweight `validate_identifier()` or `column_exists()` method
-
-### 5. Type Handler Registry -- Serialization Chain
-
-**Current serialization chain:**
-
-```
-Tool handler builds result dict (may contain datetime, Decimal, StrEnum, bytes, etc.)
-  |
-  v
-Two separate type-handling paths:
-  Path 1: query.py _truncate_value() handles bytes, datetime, date, time, Decimal
-           (converts to str/float BEFORE putting into result dict)
-  Path 2: serialization.py _pre_serialize() handles datetime, date, Decimal, StrEnum
-           (converts AFTER result dict is built, during TOON encoding)
-
-  Both paths handle overlapping types with slightly different behavior:
-    - query.py converts Decimal -> float, datetime -> isoformat string
-    - serialization.py converts Decimal -> float, datetime -> isoformat string
-    (same behavior, but duplicated logic)
-
-  query.py additionally handles: bytes -> hex preview string, time -> isoformat
-  serialization.py additionally handles: StrEnum -> str value, tuple -> list
-
-  Neither handles: uuid.UUID (used in query_id generation but stored as string already)
-```
-
-**The concern from PROJECT.md:** "Add type handler registry for query result serialization"
-
-**Where the registry plugs in:**
-
-The type handler registry should replace the ad-hoc isinstance chains in BOTH `query.py._truncate_value()` and `serialization.py._pre_serialize()` with a single registry that maps `type -> handler_function`.
-
-**Recommended design:**
+### New Module: `src/db/dialect.py`
 
 ```python
-# New file: src/type_handlers.py (or add to serialization.py)
+from typing import Protocol, runtime_checkable
+from sqlalchemy.engine import Engine
 
-class TypeHandlerRegistry:
-    """Registry mapping Python types to serialization handlers."""
+@runtime_checkable
+class DialectStrategy(Protocol):
+    """Three-tier dialect abstraction.
 
-    def __init__(self):
-        self._handlers: dict[type, Callable[[Any], Any]] = {}
+    Tier 1: SQLAlchemy Inspector (universal) -- not in strategy, used directly
+    Tier 2: Standard SQL with dialect-aware transpilation
+    Tier 3: Dialect-specific optimizations
+    """
 
-    def register(self, python_type: type, handler: Callable[[Any], Any]):
-        self._handlers[python_type] = handler
+    @property
+    def name(self) -> str:
+        """Human-readable dialect name (e.g., 'mssql', 'databricks')."""
+        ...
 
-    def convert(self, value: Any) -> tuple[Any, bool]:
-        """Convert value using registered handler. Returns (converted, was_converted)."""
-        for type_, handler in self._handlers.items():
-            if isinstance(value, type_):
-                return handler(value), True
-        return value, False
+    @property
+    def sqlglot_dialect(self) -> str | None:
+        """sqlglot dialect string for parsing/transpilation. None = auto-detect."""
+        ...
 
-# Default registry with all known types
-DEFAULT_REGISTRY = TypeHandlerRegistry()
-DEFAULT_REGISTRY.register(bytes, lambda v: f"<binary: {v[:32].hex()}{'...' if len(v) > 32 else ''} ({len(v)} bytes)>")
-DEFAULT_REGISTRY.register(datetime, lambda v: v.isoformat())
-DEFAULT_REGISTRY.register(date, lambda v: v.isoformat())
-DEFAULT_REGISTRY.register(Decimal, lambda v: float(v))
-DEFAULT_REGISTRY.register(StrEnum, lambda v: str(v.value))
-# etc.
+    def create_engine(self, config: "DialectConnectionConfig") -> Engine:
+        """Tier 3: Dialect-specific engine construction."""
+        ...
+
+    def fast_row_count_sql(self, schema: str, table: str) -> str | None:
+        """Tier 3: Optimized row count query, or None to fall back to COUNT(*)."""
+        ...
+
+    def list_schemas_sql(self) -> str | None:
+        """Tier 3: Optimized schema listing query, or None for Inspector."""
+        ...
+
+    def list_tables_sql(self, **filters) -> str | None:
+        """Tier 3: Optimized table listing query, or None for Inspector."""
+        ...
+
+    def quote_identifier(self, name: str) -> str:
+        """Tier 2: Dialect-appropriate identifier quoting."""
+        ...
+
+    def qualify_table(self, schema: str, table: str) -> str:
+        """Tier 2: Fully qualified table reference."""
+        ...
+
+    def top_n_sql(self, query_core: str, n: int) -> str:
+        """Tier 2: Apply row limit to a query."""
+        ...
+
+    def test_connection_sql(self) -> str:
+        """Tier 3: Connection validation query (SELECT @@VERSION vs SELECT 1)."""
+        ...
 ```
 
-**Integration:**
-- `serialization.py._pre_serialize()` delegates to registry for non-primitive types
-- `query.py._truncate_value()` delegates to registry, then applies truncation rules on top
-- Truncation (bytes preview, long string trim) remains in `query.py` as it is query-context-specific, not a type conversion concern
-
-**Key distinction:** The registry handles *type conversion* (Decimal -> float). Truncation (1000-char limit, binary preview) is a separate concern that stays in QueryService.
-
-**Integration points:**
-- New: `src/type_handlers.py` (or extend `serialization.py`)
-- Modified: `serialization.py` to use registry
-- Modified: `query.py._truncate_value()` to use registry for type conversion, keep truncation logic
-
-### 6. Config File Loading -- Server Startup
-
-**Current state:** All configuration is hardcoded or passed as function arguments:
-- `PoolConfig` defaults in `connection.py`
-- Log file path hardcoded as `"dbmcp.log"` in `server.py`
-- SP allowlist hardcoded as `SAFE_PROCEDURES` frozenset in `validation.py`
-- No connection presets
-
-**Where config loading fits in the startup sequence:**
+### New Package: `src/db/dialects/`
 
 ```
-Current startup:
-  server.py module load:
-    1. setup_logging(log_file="dbmcp.log")
-    2. FastMCP("dbmcp")
-    3. ConnectionManager()  (with default PoolConfig)
-    4. Import tool modules
-  main():
-    5. mcp.run(transport="stdio")
-
-Proposed startup:
-  server.py module load:
-    1. load_config()  # <-- NEW: reads dbmcp.toml or similar
-    2. setup_logging(log_file=config.log_file)  # from config
-    3. FastMCP("dbmcp")
-    4. ConnectionManager(pool_config=config.pool_config)  # from config
-    5. Import tool modules (which read config.safe_procedures, config.validation)
-  main():
-    6. mcp.run(transport="stdio")
+src/db/dialects/
+    __init__.py          # Re-exports, dialect registry function
+    mssql.py             # MssqlDialect -- extracts existing MSSQL-specific code
+    databricks.py        # DatabricksDialect -- new
+    generic.py           # GenericDialect -- fallback for any SQLAlchemy database
 ```
 
-**Config file format recommendation:** TOML (Python 3.11+ has `tomllib` in stdlib, zero new dependencies).
+**Why a package, not a single file:** Each dialect implementation will be 100-200 lines (MSSQL has the most due to DMV queries, Azure auth, ODBC string building). Keeping them separate avoids a 500+ line monolith and makes it easy to add dialects without touching existing ones.
 
-**Recommended config structure:**
+## Integration Points: Module-by-Module Analysis
+
+### 1. ConnectionManager (`src/db/connection.py`)
+
+**Current state:** Hardcodes `mssql+pyodbc://` URL construction, ODBC connection string building, `@@VERSION` test query, pyodbc-specific timeout setting, Azure AD token injection.
+
+**Changes needed:**
+- `connect()` signature simplified: accepts `DialectConnectionConfig` (discriminated union) or `sqlalchemy_url: str`
+- Engine creation delegated to `dialect.create_engine(config)`
+- Connection test delegated to `dialect.test_connection_sql()`
+- `_engines` dict stores `(Engine, DialectStrategy)` tuples instead of bare engines
+- New `get_dialect(connection_id) -> DialectStrategy` method
+- `_build_odbc_connection_string()` and `_create_engine()` move to `MssqlDialect`
+- `PoolConfig` stays in connection.py (shared across dialects)
+- `_classify_db_error()` stays (error classification is useful for all dialects, SQLSTATE codes are standard)
+
+**What moves out:**
+- `_build_odbc_connection_string()` -> `MssqlDialect`
+- ODBC driver selection -> `MssqlDialect`
+- Azure AD token injection -> `MssqlDialect` (it is pyodbc-specific)
+- `@@VERSION` test -> `MssqlDialect.test_connection_sql()`
+
+**What stays:**
+- Engine/connection lifecycle management
+- Pool configuration
+- Connection ID generation (needs dialect in hash input)
+- `disconnect()`, `disconnect_all()`, `list_connections()`
+
+**New helper:**
+```python
+def get_dialect(self, connection_id: str) -> DialectStrategy:
+    """Get dialect strategy for a connection."""
+    if connection_id not in self._dialects:
+        raise ValueError(f"Connection '{connection_id}' not found.")
+    return self._dialects[connection_id]
+```
+
+### 2. MetadataService (`src/db/metadata.py`)
+
+**Current state:** Has `is_mssql` property and dual-path methods (`_list_schemas_mssql` / `_list_schemas_generic`, `_list_tables_mssql` / `_list_tables_generic`). Generic path already uses SQLAlchemy Inspector.
+
+**Recommended refactoring -- delegation, not separate layer:**
+
+The MetadataService should accept a `DialectStrategy` at construction and delegate Tier 3 operations to it. Do NOT create a separate metadata layer -- the existing MetadataService is already the right abstraction.
+
+```python
+class MetadataService:
+    def __init__(self, engine: Engine, dialect: DialectStrategy | None = None):
+        self.engine = engine
+        self._dialect = dialect
+        self._inspector = None
+
+    def list_schemas(self, connection_id: str = "") -> list[Schema]:
+        # Tier 3: Try dialect-specific optimized query
+        if self._dialect:
+            sql = self._dialect.list_schemas_sql()
+            if sql is not None:
+                return self._execute_schema_query(sql, connection_id)
+        # Tier 1: Fall back to Inspector
+        return self._list_schemas_inspector(connection_id)
+```
+
+**Key insight:** The existing `_list_schemas_generic` and `_list_tables_generic` methods become the Tier 1 fallback (they already use Inspector). The `_list_schemas_mssql` and `_list_tables_mssql` methods move into `MssqlDialect` as the SQL they return from Tier 3 methods. MetadataService executes whatever SQL the dialect provides, or falls back to Inspector.
+
+**What changes:**
+- Constructor accepts optional `DialectStrategy`
+- `is_mssql` property removed
+- `_list_schemas_mssql()` -> SQL moves to `MssqlDialect.list_schemas_sql()`
+- `_list_tables_mssql()` -> SQL moves to `MssqlDialect.list_tables_sql()`
+- `_list_schemas_generic()` renamed to `_list_schemas_inspector()`
+- `_list_tables_generic()` renamed to `_list_tables_inspector()`
+- `_get_row_count_generic()` stays (Tier 2, uses COUNT(*) which is universal)
+- `get_columns()`, `get_indexes()`, `get_foreign_keys()` stay unchanged (already Tier 1 via Inspector)
+
+### 3. QueryService (`src/db/query.py`)
+
+**Current state:** Checks `self.engine.dialect.name` repeatedly for SQL generation (TOP vs LIMIT, bracket quoting vs bare identifiers, TABLESAMPLE syntax).
+
+**Changes needed:**
+- Constructor accepts optional `DialectStrategy`
+- `_build_top_query()` delegates to `dialect.top_n_sql()`
+- `_build_tablesample_query()` uses dialect for syntax variation
+- `_build_modulo_query()` uses dialect for `ROW_NUMBER()` syntax
+- `_sanitize_identifier()` delegates to `dialect.quote_identifier()`
+- `inject_row_limit()` delegates to dialect for TOP/LIMIT injection
+- `parse_query_type()` uses `dialect.sqlglot_dialect` instead of hardcoded `"tsql"`
+
+**Critical:** The `validate_query()` call in `execute_query()` currently hardcodes `dialect="tsql"` in the validation module. This must pass through `dialect.sqlglot_dialect`.
+
+### 4. Query Validation (`src/db/validation.py`)
+
+**Current state:** Hardcodes `sqlglot.parse(sql, dialect="tsql")` and has MSSQL-specific safe stored procedure lists.
+
+**Changes needed:**
+- `validate_query()` accepts optional `dialect: str | None` parameter (the sqlglot dialect name)
+- `SAFE_PROCEDURES` should be dialect-aware (SP concepts are MSSQL-specific; Databricks has no stored procedures)
+- For non-MSSQL dialects, stored procedure checking can be skipped entirely
+
+**Minimal change:** Add `dialect` parameter defaulting to `"tsql"` for backward compatibility:
+```python
+def validate_query(sql: str, allow_write: bool = False, dialect: str = "tsql") -> ValidationResult:
+    statements = sqlglot.parse(sql, dialect=dialect)
+    ...
+```
+
+### 5. Config (`src/config.py`)
+
+**Current state:** `ConnectionConfig` has MSSQL-specific fields (server, port, trust_server_cert, authentication_method, tenant_id).
+
+**Recommended: Discriminated union via `dialect` field:**
+
+```python
+@dataclass(frozen=True)
+class BaseConnectionConfig:
+    """Common fields for all connection types."""
+    dialect: str = "mssql"  # discriminator
+
+@dataclass(frozen=True)
+class MssqlConnectionConfig(BaseConnectionConfig):
+    dialect: str = "mssql"
+    server: str = ""
+    database: str = ""
+    port: int = 1433
+    authentication_method: str = "sql"
+    username: str | None = None
+    password: str | None = None
+    trust_server_cert: bool = False
+    connection_timeout: int = 30
+    tenant_id: str | None = None
+
+@dataclass(frozen=True)
+class DatabricksConnectionConfig(BaseConnectionConfig):
+    dialect: str = "databricks"
+    host: str = ""            # Databricks workspace hostname
+    http_path: str = ""       # SQL warehouse HTTP path
+    catalog: str = "main"     # Unity Catalog catalog name
+    schema: str = "default"   # Default schema
+    access_token: str | None = None  # PAT or ${ENV_VAR}
+
+@dataclass(frozen=True)
+class GenericConnectionConfig(BaseConnectionConfig):
+    dialect: str = "generic"
+    sqlalchemy_url: str = ""  # Full SQLAlchemy URL
+    connect_args: dict | None = None
+
+# Type alias for the union
+DialectConnectionConfig = MssqlConnectionConfig | DatabricksConnectionConfig | GenericConnectionConfig
+```
+
+**TOML format:**
 ```toml
-[server]
-log_file = "dbmcp.log"
-log_level = "INFO"
-
-[pool]
-pool_size = 5
-max_overflow = 10
-pool_timeout = 30
-pool_recycle = 3600
-query_timeout = 30
-
-[validation]
-# Additional safe stored procedures beyond the built-in 22
-safe_procedures = ["my_custom_sp", "another_safe_sp"]
-
-[connections.mydb]
-server = "myserver.example.com"
+[connections.my_mssql]
+dialect = "mssql"
+server = "myserver"
 database = "mydb"
 authentication_method = "windows"
-trust_server_cert = true
+
+[connections.my_databricks]
+dialect = "databricks"
+host = "adb-1234567890.azuredatabricks.net"
+http_path = "/sql/1.0/warehouses/abc123"
+catalog = "analytics"
+access_token = "${DATABRICKS_TOKEN}"
+
+[connections.my_postgres]
+dialect = "generic"
+sqlalchemy_url = "postgresql://user:pass@host/db"
 ```
 
-**Config file discovery order:**
-1. `--config` CLI argument (if added)
-2. `./dbmcp.toml` (project-local)
-3. `~/.config/dbmcp/config.toml` (user-level)
-4. Built-in defaults (current behavior, always works)
+**Parser change:** `_parse_connections()` reads `dialect` field first, then dispatches to the appropriate config dataclass. Missing `dialect` defaults to `"mssql"` for backward compatibility.
 
-**Integration points:**
-- New: `src/config.py` -- loads and validates TOML config, returns typed config object
-- Modified: `server.py` -- calls `load_config()` at top, passes config to components
-- Modified: `connection.py` -- accepts PoolConfig from config (already does this via constructor)
-- Modified: `validation.py` -- `SAFE_PROCEDURES` becomes configurable: built-in set UNION config additions
-- The connect_database tool could optionally accept a connection preset name
+### 6. Analysis Modules (`src/analysis/`)
 
-## Recommended Architecture Changes
+**Current state:** All three modules (column_stats.py, fk_candidates.py, pk_discovery.py) use raw SQL with MSSQL-specific syntax:
+- Bracket quoting: `[{column_name}]`, `[{schema}].[{table}]`
+- INFORMATION_SCHEMA queries (actually standard SQL, mostly portable)
+- `sys.indexes` / `sys.index_columns` / `sys.tables` / `sys.schemas` (MSSQL-specific, used in fk_candidates.py)
+- `DATEDIFF()` (MSSQL-specific, in column_stats.py)
+- `LEN()` vs `LENGTH()` (MSSQL vs standard)
+- `SELECT TOP N` (MSSQL-specific, in column_stats.py)
+- `STRING_SPLIT()` (MSSQL-specific, in fk_candidates.py)
 
-### New Components
+**Recommended approach: sqlglot transpilation for Tier 2 queries**
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Config loader | `src/config.py` | TOML config loading, validation, defaults |
-| Type handler registry | `src/type_handlers.py` | Centralized type conversion registry |
+Rather than rewriting every query, use sqlglot to transpile from a "canonical" dialect to the target:
 
-### Modified Components
-
-| Component | Change Type | Scope |
-|-----------|------------|-------|
-| `server.py` | Config integration, atexit handler | Small (5-10 lines) |
-| `connection.py` | Azure AD token lifecycle, pool events | Medium (30-50 lines) |
-| `azure_auth.py` | Token expiry tracking | Small (10-15 lines) |
-| `query.py` | MetadataService integration, type registry, exception narrowing | Medium (20-30 lines) |
-| `validation.py` | Configurable SP allowlist, no broad exceptions here currently | Small (5-10 lines) |
-| `metadata.py` | Exception narrowing across ~10 catch blocks | Medium (scattered but mechanical) |
-| `serialization.py` | Delegate to type registry | Small (10 lines) |
-| `schema_tools.py` | Exception narrowing | Small (mechanical) |
-| `query_tools.py` | Exception narrowing, pass MetadataService | Small |
-| `analysis_tools.py` | Exception narrowing | Small (mechanical) |
-
-### Removed Components
-
-| Component | File | Reason |
-|-----------|------|--------|
-| Dead metrics | `src/metrics.py` | Zero imports, zero usage |
-
-## Data Flow Changes
-
-### Before (query execution path):
-```
-Tool handler -> QueryService(engine) -> _sanitize_identifier (regex) -> SQL string -> execute
+```python
+def transpile_query(sql: str, source_dialect: str = "tsql", target_dialect: str | None = None) -> str:
+    if target_dialect is None or source_dialect == target_dialect:
+        return sql
+    return sqlglot.transpile(sql, read=source_dialect, write=target_dialect)[0]
 ```
 
-### After (query execution path):
+**What this handles automatically:**
+- `LEN()` -> `LENGTH()` (most dialects)
+- `TOP N` -> `LIMIT N` (most dialects)
+- Bracket quoting -> backtick/double-quote quoting
+- `DATEDIFF()` -> dialect-appropriate equivalent
+- `ISNULL()` -> `COALESCE()` (standard)
+
+**What needs manual handling:**
+- `INFORMATION_SCHEMA` queries: Available in MSSQL, Postgres, MySQL. Databricks uses `information_schema` in Unity Catalog (similar structure but different column names in some cases). Can be kept as-is for most dialects.
+- `sys.*` DMV queries in fk_candidates.py: These are MSSQL-only. The index check query needs a dialect-specific alternative or must fall back to Inspector.
+- `STRING_SPLIT()`: MSSQL-specific. Replace with parameterized IN clause or Inspector-based approach.
+
+**Practical refactoring for analysis modules:**
+
+1. **ColumnStatsCollector**: Accept a `DialectStrategy` for quoting and function adaptation. Write queries in standard SQL, use sqlglot transpilation. The `NUMERIC_TYPES`, `DATETIME_TYPES`, `STRING_TYPES` sets need to be dialect-aware (Databricks uses different type names like `DOUBLE`, `TIMESTAMP`, `STRING`).
+
+2. **FKCandidateSearch**: The `sys.indexes` query in `get_column_metadata()` is the hardest to port. For non-MSSQL, replace with `Inspector.get_indexes()` check. The INFORMATION_SCHEMA queries are mostly portable.
+
+3. **PKDiscovery**: Similar to FKCandidateSearch -- INFORMATION_SCHEMA queries are mostly portable. Databricks Unity Catalog supports `information_schema.table_constraints` so this should work.
+
+**Build order implication:** Analysis module refactoring should come AFTER the core dialect/connection/metadata work is stable.
+
+## Data Flow: Before and After
+
+### Current Flow (MSSQL-only)
 ```
-Tool handler -> QueryService(engine, metadata_svc) -> _validate_identifiers (DB lookup) -> _sanitize_identifier (regex) -> SQL string -> execute
+MCP Tool -> ConnectionManager.get_engine(id) -> Engine
+         -> MetadataService(engine) -> Inspector / raw MSSQL SQL
+         -> QueryService(engine) -> engine.dialect.name checks
+         -> validation.validate_query(sql) -> hardcoded "tsql"
 ```
 
-### Before (serialization):
+### Proposed Flow (Multi-dialect)
 ```
-query.py: _truncate_value (isinstance chain) -> result dict
-serialization.py: _pre_serialize (isinstance chain) -> TOON
-```
-
-### After (serialization):
-```
-type_handlers.py: TypeHandlerRegistry (centralized)
-query.py: registry.convert(value) + truncation logic -> result dict
-serialization.py: registry.convert(value) -> TOON
+MCP Tool -> ConnectionManager.get_engine(id) -> Engine
+         -> ConnectionManager.get_dialect(id) -> DialectStrategy
+         -> MetadataService(engine, dialect) -> dialect.tier3_sql() || Inspector
+         -> QueryService(engine, dialect) -> dialect.quote/top_n/etc.
+         -> validation.validate_query(sql, dialect=dialect.sqlglot_dialect)
 ```
 
-## Suggested Build Order
+### Key change: Dialect flows through the system as a companion to Engine
 
-Based on dependency analysis and risk:
+The `get_metadata_service()` helper in `schema_tools.py` currently creates `MetadataService(engine)`. It will change to:
 
-| Order | Concern | Rationale |
-|-------|---------|-----------|
-| 1 | Remove metrics.py | Zero risk, zero dependencies, immediate cleanup |
-| 2 | Exception handling narrowing | Foundation for all other changes -- you need to understand error paths before modifying connection lifecycle or adding new components |
-| 3 | Type handler registry | Self-contained, tests can verify parity with existing behavior |
-| 4 | Config file support | Foundation for connection presets and SP allowlist customization |
-| 5 | Identifier sanitization | Requires MetadataService wiring into QueryService (moderate coupling change) |
-| 6 | Connection lifecycle (Azure AD + cleanup) | Highest risk, most complex, benefits from exception handling being clean first |
+```python
+def _get_metadata_service(connection_id: str) -> MetadataService:
+    conn_manager = get_connection_manager()
+    engine = conn_manager.get_engine(connection_id)
+    dialect = conn_manager.get_dialect(connection_id)
+    return MetadataService(engine, dialect)
+```
 
-**Rationale for this order:**
-- Items 1-2 are pure cleanup with no new features -- they reduce noise and clarify the codebase
-- Item 3 is additive and testable in isolation
-- Item 4 provides infrastructure that items 5-6 can optionally consume
-- Item 5 introduces cross-service coupling (QueryService -> MetadataService) which is easier to reason about after exceptions are clean
-- Item 6 is the riskiest change (connection pooling behavior, token lifecycle, async pool events) and benefits from a clean foundation
+Similarly, QueryService and analysis tool constructors gain a `dialect` parameter.
+
+## Patterns to Follow
+
+### Pattern 1: Tier Fallback Chain
+**What:** Every metadata/query operation tries Tier 3 (dialect-specific), then Tier 2 (standard SQL), then Tier 1 (Inspector).
+**When:** Any operation that has both fast and slow paths.
+**Example:**
+```python
+def list_schemas(self, connection_id: str = "") -> list[Schema]:
+    # Tier 3: Dialect-optimized
+    if self._dialect:
+        sql = self._dialect.list_schemas_sql()
+        if sql is not None:
+            return self._run_schema_sql(sql, connection_id)
+    # Tier 1: Inspector fallback
+    return self._list_schemas_inspector(connection_id)
+```
+
+### Pattern 2: Dialect Registry with Auto-Detection
+**What:** Map dialect names to strategy classes, with fallback to GenericDialect.
+**When:** At connection time, resolving config `dialect` field to implementation.
+**Example:**
+```python
+_DIALECT_REGISTRY: dict[str, type[DialectStrategy]] = {}
+
+def register_dialect(name: str, cls: type[DialectStrategy]) -> None:
+    _DIALECT_REGISTRY[name] = cls
+
+def get_dialect_strategy(name: str) -> DialectStrategy:
+    cls = _DIALECT_REGISTRY.get(name, GenericDialect)
+    return cls()
+```
+
+### Pattern 3: Backward-Compatible Defaults
+**What:** Every new parameter defaults to MSSQL behavior so existing configs work unchanged.
+**When:** config.py parsing, validation.py dialect parameter, ConnectionManager.connect().
+**Example:** Config files without `dialect` field default to `"mssql"`. `validate_query()` defaults `dialect="tsql"`.
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Catching Exception Where You Mean OperationalError
-**What:** Using `except Exception` as shorthand for "database errors"
-**Why bad:** Swallows TypeError, KeyError, AttributeError -- real bugs become silent empty results
-**Instead:** Catch `(sqlalchemy.exc.OperationalError, sqlalchemy.exc.ProgrammingError, pyodbc.Error)` for database errors. Keep `Exception` only at the outermost MCP tool boundary.
+### Anti-Pattern 1: Dialect Checks in MCP Tools
+**What:** Putting `if dialect == "databricks":` in schema_tools.py, analysis_tools.py, etc.
+**Why bad:** Scatters dialect knowledge across the codebase. Every new dialect requires changes in multiple tool files.
+**Instead:** All dialect-specific behavior lives in `src/db/dialects/*.py`. Tools are dialect-agnostic.
 
-### Anti-Pattern 2: Duplicating Type Conversion Logic
-**What:** Both query.py and serialization.py have isinstance chains for the same types
-**Why bad:** Divergent behavior (one handles `time`, the other handles `StrEnum`), maintenance burden
-**Instead:** Single TypeHandlerRegistry used by both paths
+### Anti-Pattern 2: Separate MetadataService Per Dialect
+**What:** Creating `MssqlMetadataService`, `DatabricksMetadataService`, etc.
+**Why bad:** The existing MetadataService already handles the dual-path pattern well. Most methods (get_columns, get_indexes, get_foreign_keys) use Inspector and are already universal. Creating subclasses would duplicate the shared logic.
+**Instead:** Single MetadataService with dialect delegation for the 2-3 methods that need Tier 3 optimization.
 
-### Anti-Pattern 3: Validating Identifiers After Building SQL
-**What:** Current code brackets identifiers then hopes they are valid
-**Why bad:** Invalid identifiers produce SQL errors that are hard to distinguish from other failures
-**Instead:** Validate against metadata BEFORE building SQL, fail with clear ValueError
+### Anti-Pattern 3: Putting Engine Construction Logic in ConnectionManager
+**What:** Adding Databricks/generic engine construction as more conditionals in `_create_engine()`.
+**Why bad:** ConnectionManager becomes a god class that knows about every database driver.
+**Instead:** Each DialectStrategy owns its `create_engine()` method. ConnectionManager just calls it.
 
-### Anti-Pattern 4: Config via Code Changes
-**What:** Modifying `SAFE_PROCEDURES` frozenset or `PoolConfig` defaults requires code changes
-**Why bad:** Operators cannot customize without forking
-**Instead:** TOML config file with sane defaults, config augments (not replaces) built-in values
+### Anti-Pattern 4: Transpiling Everything Through sqlglot
+**What:** Writing all queries in one dialect and transpiling to the target.
+**Why bad:** sqlglot transpilation is imperfect -- it handles common patterns well but can break on complex DMV queries or dialect-specific features. Over-reliance leads to subtle bugs.
+**Instead:** Use transpilation for Tier 2 standard SQL queries. Tier 3 queries are written natively per dialect. Inspector (Tier 1) needs no SQL at all.
+
+## Suggested Build Order
+
+The ordering is designed to minimize MSSQL regression risk by establishing the abstraction layer first, then migrating existing code behind it, then adding new dialects.
+
+### Phase 1: Dialect Protocol + MSSQL Extraction (Foundation)
+**Goal:** Introduce the abstraction without changing behavior.
+
+1. Create `src/db/dialect.py` with `DialectStrategy` protocol
+2. Create `src/db/dialects/__init__.py` with registry
+3. Create `src/db/dialects/mssql.py` -- extract existing MSSQL code from:
+   - `ConnectionManager._build_odbc_connection_string()` -> `MssqlDialect.create_engine()`
+   - `ConnectionManager._create_engine()` -> `MssqlDialect.create_engine()`
+   - `ConnectionManager._test_connection()` SQL -> `MssqlDialect.test_connection_sql()`
+   - `MetadataService._list_schemas_mssql()` SQL -> `MssqlDialect.list_schemas_sql()`
+   - `MetadataService._list_tables_mssql()` SQL -> `MssqlDialect.list_tables_sql()`
+4. Modify `ConnectionManager` to store and provide dialect
+5. Modify `MetadataService.__init__()` to accept dialect
+6. **All existing tests must pass unchanged** -- this phase is pure refactoring
+
+**Risk:** LOW. Extract-and-delegate refactoring with existing test coverage as safety net.
+
+### Phase 2: Config Discrimination + Validation Dialect
+**Goal:** Config supports multiple dialect types; validation uses dialect-aware parsing.
+
+1. Add `dialect` field to `ConnectionConfig` (default: `"mssql"`)
+2. Create discriminated config dataclasses (`MssqlConnectionConfig`, etc.)
+3. Update `_parse_connections()` to dispatch on `dialect` field
+4. Add `dialect` parameter to `validate_query()` (default: `"tsql"`)
+5. Wire `dialect.sqlglot_dialect` through `QueryService.execute_query()`
+
+**Risk:** LOW. Backward-compatible defaults mean existing configs work unchanged.
+
+### Phase 3: GenericDialect + QueryService Refactoring
+**Goal:** Any SQLAlchemy database works with Inspector-only (Tier 1) metadata.
+
+1. Create `src/db/dialects/generic.py` -- GenericDialect implementation
+2. Refactor QueryService to delegate SQL generation to dialect
+3. Add `GenericConnectionConfig` with `sqlalchemy_url` field
+4. Wire `connect_database` tool to support `sqlalchemy_url` parameter
+5. Test with SQLite (already partially supported in current codebase)
+
+**Risk:** MEDIUM. The `connect_database` tool interface changes. Need to ensure backward compatibility.
+
+### Phase 4: DatabricksDialect
+**Goal:** Full Databricks support with optimized paths.
+
+1. Create `src/db/dialects/databricks.py`
+2. Add `databricks-sql-connector` and `sqlalchemy-databricks` as optional deps
+3. Implement Databricks-specific engine construction (HTTP path, token auth, Unity Catalog)
+4. Add Databricks Tier 3 optimizations (if any provide meaningful speedup over Inspector)
+5. Test Databricks-specific type mappings for analysis modules
+
+**Risk:** MEDIUM. New external dependency; Databricks SQL connector has its own quirks.
+
+### Phase 5: Analysis Module Adaptation
+**Goal:** Column stats, PK discovery, FK candidates work across dialects.
+
+1. Add `DialectStrategy` parameter to analysis constructors
+2. Replace bracket quoting with `dialect.quote_identifier()`
+3. Replace `sys.*` queries with Inspector fallbacks for non-MSSQL
+4. Add type category mappings per dialect (NUMERIC_TYPES, etc.)
+5. Use sqlglot transpilation for standard SQL queries where appropriate
+6. Test analysis tools against Databricks
+
+**Risk:** MEDIUM-HIGH. The analysis modules have the most MSSQL-specific SQL. Need careful testing.
+
+### Phase 6: connect_database Simplification
+**Goal:** Simplified tool interface (connection_name or sqlalchemy_url).
+
+1. Simplify `connect_database` tool signature
+2. Remove per-field MSSQL params from tool interface (they stay in config)
+3. Add `sqlalchemy_url` parameter for ad-hoc generic connections
+4. Update tool docstrings
+
+**Risk:** HIGH (breaking change). This is the v2.0 interface change noted in PROJECT.md. Must be the last step.
 
 ## Scalability Considerations
 
-Not applicable for this milestone -- these are internal quality improvements, not scaling changes. The connection pool configuration becoming configurable (via config file) does enable future scaling tuning without code changes.
+| Concern | Current (MSSQL only) | At 3-5 dialects | At 10+ dialects |
+|---------|----------------------|------------------|-----------------|
+| Code per dialect | N/A | ~150-200 lines per dialect file | Same -- protocol keeps it bounded |
+| Test matrix | 682 tests, MSSQL + SQLite | ~800 tests, parameterized per dialect | Parameterized fixtures scale linearly |
+| Config complexity | Flat TOML | Discriminated union, still readable | May need config validation tool |
+| sqlglot coverage | Good for TSQL | Good for major dialects | Some obscure dialects may need custom parsing |
 
 ## Sources
 
-- Direct codebase analysis (all findings are HIGH confidence)
-- SQLAlchemy 2.0 pool event documentation (for checkout listener pattern)
-- Python 3.11 tomllib documentation (for config file loading)
-- azure-identity AccessToken.expires_on field (for token lifecycle tracking)
+- Direct codebase analysis of all `src/` modules (PRIMARY source, HIGH confidence)
+- SQLAlchemy Inspector API documentation (HIGH confidence -- well-established, stable API)
+- sqlglot transpilation capabilities (MEDIUM confidence -- version-dependent, known edge cases with complex queries)
+- Databricks SQL Connector documentation (MEDIUM confidence -- based on training data, needs verification at implementation time)
