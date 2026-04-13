@@ -47,7 +47,7 @@
 **Success Criteria** (what must be TRUE):
   1. DialectStrategy protocol exists with name, sqlglot_dialect, create_engine, fast_row_counts, quote_identifier, and capability flags
   2. MssqlDialect implements the protocol with all existing MSSQL-specific code (ODBC strings, Azure AD, DMV queries, bracket quoting)
-  3. Dialect registry resolves dialect names to strategy implementations with a fallback path
+  3. Dialect registry resolves dialect names to strategy implementations with fail-fast error on unknown names (GenericDialect fallback deferred to Phase 10)
   4. All existing tests pass unchanged (zero behavior regression)
 **Plans:** 3 plans
 Plans:
