@@ -81,39 +81,39 @@ Requirements for multi-dialect support milestone. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DIAL-01 | — | Pending |
-| DIAL-02 | — | Pending |
-| DIAL-03 | — | Pending |
-| DIAL-04 | — | Pending |
-| DIAL-05 | — | Pending |
-| CONF-01 | — | Pending |
-| CONF-02 | — | Pending |
-| CONF-03 | — | Pending |
-| CONF-04 | — | Pending |
-| CONF-05 | — | Pending |
-| VALID-01 | — | Pending |
-| VALID-02 | — | Pending |
-| VALID-03 | — | Pending |
-| META-01 | — | Pending |
-| META-02 | — | Pending |
-| META-03 | — | Pending |
-| META-04 | — | Pending |
-| META-05 | — | Pending |
-| ANLYS-01 | — | Pending |
-| ANLYS-02 | — | Pending |
-| ANLYS-03 | — | Pending |
-| ANLYS-04 | — | Pending |
-| ANLYS-05 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
+| DIAL-01 | Phase 8 | Pending |
+| DIAL-02 | Phase 8 | Pending |
+| DIAL-03 | Phase 11 | Pending |
+| DIAL-04 | Phase 10 | Pending |
+| DIAL-05 | Phase 8 | Pending |
+| CONF-01 | Phase 9 | Pending |
+| CONF-02 | Phase 9 | Pending |
+| CONF-03 | Phase 10 | Pending |
+| CONF-04 | Phase 10 | Pending |
+| CONF-05 | Phase 10 | Pending |
+| VALID-01 | Phase 9 | Pending |
+| VALID-02 | Phase 9 | Pending |
+| VALID-03 | Phase 9 | Pending |
+| META-01 | Phase 11 | Pending |
+| META-02 | Phase 11 | Pending |
+| META-03 | Phase 11 | Pending |
+| META-04 | Phase 11 | Pending |
+| META-05 | Phase 8 | Pending |
+| ANLYS-01 | Phase 12 | Pending |
+| ANLYS-02 | Phase 12 | Pending |
+| ANLYS-03 | Phase 12 | Pending |
+| ANLYS-04 | Phase 12 | Pending |
+| ANLYS-05 | Phase 12 | Pending |
+| TEST-01 | Phase 8 | Pending |
+| TEST-02 | Phase 13 | Pending |
+| TEST-03 | Phase 13 | Pending |
 
 **Coverage:**
 
 - v2.0 requirements: 26 total
-- Mapped to phases: 0
-- Unmapped: 26
+- Mapped to phases: 26
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-13*
-*Last updated: 2026-04-13 after initial definition*
+*Last updated: 2026-04-13 after roadmap creation*
