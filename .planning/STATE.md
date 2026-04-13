@@ -1,35 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Concern Handling
-status: completed
-stopped_at: Completed 07-02 (wire _classify_db_error into safety nets)
-last_updated: "2026-03-10T21:39:46.251Z"
-last_activity: 2026-03-11 — Completed quick task 5 (refactor connect_database complexity)
+milestone: v2.0
+milestone_name: Multi-Dialect Support
+status: planning
+stopped_at: null
+last_updated: "2026-04-13"
+last_activity: 2026-04-13 — Milestone v2.0 started
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 11
-  completed_plans: 11
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-10)
+See: .planning/PROJECT.md (updated 2026-04-13)
 
-**Core value:** LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
-**Current focus:** Planning next milestone
+**Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
+**Current focus:** Defining requirements for v2.0
 
 ## Current Position
 
-Milestone: v1.1 Concern Handling — SHIPPED 2026-03-10
-Status: Milestone complete, awaiting `/gsd:new-milestone` for next cycle
-Last activity: 2026-03-10 — Milestone v1.1 archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-13 — Milestone v2.0 started
 
-Progress: [██████████] 100% (v1.0 + v1.1 shipped)
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
