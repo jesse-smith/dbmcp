@@ -1,9 +1,9 @@
 ---
 phase: 11
 slug: databricksdialect
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: active
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-14
 ---
 
@@ -50,10 +50,10 @@ created: 2026-04-14
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_databricks_dialect.py` — stubs for DIAL-03 (DatabricksDialect unit tests)
-- [ ] `tests/conftest.py` — Databricks mock fixtures (mock databricks-sqlalchemy, mock Inspector)
+- [x] `tests/test_databricks_dialect.py` — created by Plan 11-01 Task 1 (TDD: tests written before implementation)
+- [x] `tests/conftest.py` — Databricks mock fixtures added by Plan 11-01 Task 1
 
-*Existing infrastructure covers most phase requirements. Wave 0 adds Databricks-specific test scaffolding.*
+*Wave 0 is satisfied by Plan 11-01's TDD approach — test stubs are created as the first step of Task 1 execution.*
 
 ---
 
@@ -67,11 +67,11 @@ created: 2026-04-14
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-04-14
