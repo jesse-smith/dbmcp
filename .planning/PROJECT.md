@@ -123,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 after Phase 8 complete — DialectStrategy protocol defined, MssqlDialect extracted, services wired*
+*Last updated: 2026-04-14 after Phase 9 complete — Per-dialect typed config models (MssqlConnectionConfig, DatabricksConnectionConfig, GenericConnectionConfig) with dict-dispatch parsing; validate_query() now dialect-aware with explicit dialect and safe_procedures parameters*
