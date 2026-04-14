@@ -24,16 +24,26 @@ classifiers = [
 dependencies = [
     "mcp[cli]>=1.27.0",
     "sqlalchemy>=2.0.0",
-    "pyodbc>=5.0.0",
-    "azure-identity>=1.14.0",
     "sqlglot>=30.4.2,<31.0.0",
     "toon-format @ git+https://github.com/toon-format/toon-python.git@v0.9.0-beta.1",
 ]
 
 [project.optional-dependencies]
+mssql = [
+    "pyodbc>=5.0.0",
+    "azure-identity>=1.14.0",
+]
+databricks = [
+    # Phase 11 will populate with databricks-sqlalchemy and databricks-sql-connector
+]
 examples = [
     "jupyter>=1.0.0",
     "notebook>=7.0.0",
+]
+all = [
+    "dbmcp[mssql]",
+    "dbmcp[databricks]",
+    "dbmcp[examples]",
 ]
 
 [project.scripts]
