@@ -529,7 +529,16 @@ class QueryService:
             raise ValueError("row_limit must be between 1 and 10000")
 
         query_id = str(uuid.uuid4())
-        validation = validate_query(query_text, allow_write=allow_write)
+        dialect_str = self._dialect.sqlglot_dialect if self._dialect else "tsql"
+        safe_procs = (
+            self._dialect.safe_procedures if self._dialect else frozenset()
+        ) | get_config().allowed_stored_procedures
+        validation = validate_query(
+            query_text,
+            dialect=dialect_str,
+            safe_procedures=safe_procs,
+            allow_write=allow_write,
+        )
         query_type = self.parse_query_type(query_text)
 
         if not validation.is_safe:
