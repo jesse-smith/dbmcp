@@ -33,7 +33,7 @@
 
 - [ ] **Phase 8: Dialect Protocol & MSSQL Extraction** - Define DialectStrategy protocol and extract all MSSQL-specific code behind it
 - [ ] **Phase 9: Config Discrimination & Validation Dialect** - Discriminated TOML config and dialect-aware query validation
-- [ ] **Phase 10: GenericDialect & Tool Interface** - Generic dialect fallback, simplified connect_database, optional dependency groups
+- [x] **Phase 10: GenericDialect & Tool Interface** - Generic dialect fallback, simplified connect_database, optional dependency groups (completed 2026-04-14)
 - [ ] **Phase 11: DatabricksDialect** - Databricks dialect with catalog awareness, token auth, and optimized metadata
 - [ ] **Phase 12: Analysis Module Adaptation** - Dialect-aware analysis tools across all three dialects
 - [ ] **Phase 13: Test Infrastructure & Coverage** - Parameterized dialect test fixtures and coverage enforcement
@@ -79,11 +79,11 @@ Plans:
   2. connect_database tool accepts connection_name or sqlalchemy_url (old SQL Server-specific params removed)
   3. pyodbc and azure-identity are in `mssql` optional extra; databricks packages in `databricks` extra; core install has neither
   4. Missing dialect-specific dependencies produce clear error messages at import time (not cryptic ImportErrors)
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 Plans:
-- [ ] 10-01-PLAN.md — GenericDialect implementation, URL routing, and lazy imports
-- [ ] 10-02-PLAN.md — connect_database tool rewrite and ConnectionManager generalization
-- [ ] 10-03-PLAN.md — pyproject.toml dependency restructuring with optional extras
+- [x] 10-01-PLAN.md — GenericDialect implementation, URL routing, and lazy imports
+- [x] 10-02-PLAN.md — connect_database tool rewrite and ConnectionManager generalization
+- [x] 10-03-PLAN.md — pyproject.toml dependency restructuring with optional extras
 
 ### Phase 11: DatabricksDialect
 **Goal**: Users can connect to Databricks with full metadata support including catalog awareness, table properties, and partition info
@@ -136,7 +136,7 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 7. Wire Orphaned Exports | v1.1 | 2/2 | Complete | 2026-03-10 |
 | 8. Dialect Protocol & MSSQL Extraction | v2.0 | 3/3 | Complete | 2026-04-14 |
 | 9. Config Discrimination & Validation Dialect | v2.0 | 2/2 | Complete | - |
-| 10. GenericDialect & Tool Interface | v2.0 | 0/3 | Planning | - |
+| 10. GenericDialect & Tool Interface | v2.0 | 3/3 | Complete    | 2026-04-14 |
 | 11. DatabricksDialect | v2.0 | 0/0 | Not started | - |
 | 12. Analysis Module Adaptation | v2.0 | 0/0 | Not started | - |
 | 13. Test Infrastructure & Coverage | v2.0 | 0/0 | Not started | - |
