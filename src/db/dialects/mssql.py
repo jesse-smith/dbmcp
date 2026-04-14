@@ -12,8 +12,10 @@ from urllib.parse import quote_plus
 
 try:
     import pyodbc
-except ImportError:
+    _pyodbc_import_error = None
+except ImportError as e:
     pyodbc = None  # type: ignore[assignment]
+    _pyodbc_import_error = e
 
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import event, text
@@ -112,9 +114,15 @@ class MssqlDialect:
             Configured SQLAlchemy Engine.
         """
         if pyodbc is None:
-            raise ImportError(
-                "MSSQL support requires pyodbc. Install with: pip install dbmcp[mssql]"
-            )
+            if _pyodbc_import_error and "driver" in str(_pyodbc_import_error).lower():
+                raise ImportError(
+                    "MSSQL support requires ODBC Driver 18 for SQL Server. "
+                    "Install from: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server"
+                ) from _pyodbc_import_error
+            else:
+                raise ImportError(
+                    "MSSQL support requires pyodbc. Install with: pip install dbmcp[mssql]"
+                ) from _pyodbc_import_error
 
         server: str = kwargs["server"]
         database: str = kwargs["database"]
