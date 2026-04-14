@@ -52,7 +52,7 @@ class MssqlDialect:
 
     @property
     def safe_procedures(self) -> frozenset[str]:
-        """22 known-safe SQL Server system stored procedures."""
+        """21 known-safe SQL Server system stored procedures."""
         return frozenset({
             # Catalog/ODBC (12)
             "sp_column_privileges",
