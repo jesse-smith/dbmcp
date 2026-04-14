@@ -104,7 +104,7 @@ class MssqlDialect:
 
     def quote_identifier(self, identifier: str) -> str:
         """Quote using SQL Server square brackets."""
-        return f"[{identifier}]"
+        return f"[{identifier.replace(']', ']]')}]"
 
     def create_engine(self, **kwargs) -> Engine:
         """Create a SQLAlchemy Engine with MSSQL-specific ODBC configuration.
