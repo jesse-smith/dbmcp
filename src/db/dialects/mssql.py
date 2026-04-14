@@ -14,7 +14,6 @@ import pyodbc
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import QueuePool
 
 from src.db.dialects.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
@@ -22,57 +21,6 @@ from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod
 
 logger = get_logger(__name__)
-
-
-def _classify_db_error(exc: SQLAlchemyError) -> tuple[str, str]:
-    """Classify a database error and return (category, user_guidance).
-
-    Examines SQLSTATE codes and message content to produce actionable
-    error categories for user-facing messages.
-
-    Args:
-        exc: The SQLAlchemy exception to classify.
-
-    Returns:
-        A tuple of (category, guidance) where category is one of:
-        'auth_failure', 'connection_lost', 'token_expired', 'unknown'.
-    """
-    sqlstate = None
-    message = str(exc)
-
-    # Extract SQLSTATE from the underlying driver error if available
-    if hasattr(exc, "orig") and exc.orig is not None and hasattr(exc.orig, "args"):
-        args = exc.orig.args
-        if args and isinstance(args[0], str) and len(args[0]) == 5:
-            sqlstate = args[0]
-        # Combine all args into the message for pattern matching
-        message = " ".join(str(a) for a in args)
-
-    # Check SQLSTATE-based categories
-    if sqlstate and sqlstate.startswith("28"):
-        return (
-            "auth_failure",
-            "Check your credentials (username/password) and verify the account has access to the database.",
-        )
-
-    if sqlstate and sqlstate.startswith("08"):
-        return (
-            "connection_lost",
-            "The database server is unreachable. Check the server address, port, and network connectivity.",
-        )
-
-    # Check message-based patterns for Azure AD token issues
-    msg_lower = message.lower()
-    if "token" in msg_lower and "expired" in msg_lower:
-        return (
-            "token_expired",
-            "The Azure AD token has expired. Run 'az login' to re-authenticate.",
-        )
-
-    return (
-        "unknown",
-        "An unexpected database error occurred. Check the server logs for details.",
-    )
 
 
 class MssqlDialect:
