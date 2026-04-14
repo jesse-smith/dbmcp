@@ -1,13 +1,11 @@
 """Tests for TOML configuration loading, validation, and singleton pattern."""
 
-import logging
 import textwrap
 
 import pytest
 
 from src.config import (
     AppConfig,
-    ConnectionConfig,
     DatabricksConnectionConfig,
     DefaultsConfig,
     GenericConnectionConfig,
@@ -252,13 +250,22 @@ class TestDialectDispatch:
         with pytest.raises(ValueError, match="Supported:"):
             _parse_connections(raw)
 
-    def test_unrecognized_field_logs_warning(self, caplog):
+    def test_unrecognized_field_logs_warning(self, monkeypatch):
+        import src.config as config_mod
+
+        warnings: list[str] = []
+        original_warning = config_mod.logger.warning
+
+        def capture_warning(msg, *args):
+            warnings.append(msg % args)
+            original_warning(msg, *args)
+
+        monkeypatch.setattr(config_mod.logger, "warning", capture_warning)
         raw = {"dev": {"dialect": "mssql", "server": "srv", "bogus_field": "ignored"}}
-        with caplog.at_level(logging.WARNING):
-            result = _parse_connections(raw)
+        result = _parse_connections(raw)
         assert isinstance(result["dev"], MssqlConnectionConfig)
         assert result["dev"].server == "srv"
-        assert "unrecognized field 'bogus_field'" in caplog.text
+        assert any("unrecognized field 'bogus_field'" in w for w in warnings)
 
     def test_non_table_connection_skipped(self):
         raw = {"bad": "not-a-dict", "good": {"dialect": "mssql", "server": "s"}}

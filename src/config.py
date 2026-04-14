@@ -12,8 +12,10 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeAlias
 
 from src.logging_config import get_logger
 
@@ -50,9 +52,10 @@ class DefaultsConfig:
 
 
 @dataclass(frozen=True)
-class ConnectionConfig:
-    """A named database connection configuration."""
+class MssqlConnectionConfig:
+    """SQL Server connection configuration."""
 
+    dialect: str = "mssql"
     server: str = ""
     database: str = ""
     port: int = 1433
@@ -62,6 +65,32 @@ class ConnectionConfig:
     trust_server_cert: bool = False
     connection_timeout: int = 30
     tenant_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DatabricksConnectionConfig:
+    """Databricks connection configuration."""
+
+    dialect: str = "databricks"
+    host: str = ""
+    http_path: str = ""
+    catalog: str = "main"
+    schema_name: str = "default"
+    token: str | None = None
+
+
+@dataclass(frozen=True)
+class GenericConnectionConfig:
+    """Generic SQLAlchemy URL connection configuration."""
+
+    dialect: str = "generic"
+    sqlalchemy_url: str = ""
+
+
+# Type alias for all connection config types
+ConnectionConfig: TypeAlias = (
+    MssqlConnectionConfig | DatabricksConnectionConfig | GenericConnectionConfig
+)
 
 
 @dataclass(frozen=True)
@@ -158,31 +187,105 @@ def _validate_defaults(raw_defaults: dict) -> DefaultsConfig:
     return DefaultsConfig(**validated)
 
 
+def _warn_unknown_fields(name: str, params: dict, known_fields: set[str]) -> None:
+    """Log warnings for unrecognized fields in a connection config.
+
+    Args:
+        name: Connection name (for log messages).
+        params: Raw parameter dict from TOML.
+        known_fields: Set of recognized field names for this dialect.
+    """
+    unknown = set(params.keys()) - known_fields
+    for field_name in sorted(unknown):
+        logger.warning(
+            "Config: connection '%s' has unrecognized field '%s', ignoring",
+            name,
+            field_name,
+        )
+
+
+def _parse_mssql_connection(name: str, params: dict) -> MssqlConnectionConfig:
+    """Parse an MSSQL connection config from raw TOML params."""
+    known_fields = {
+        "dialect", "server", "database", "port", "authentication_method",
+        "username", "password", "trust_server_cert", "connection_timeout", "tenant_id",
+    }
+    _warn_unknown_fields(name, params, known_fields)
+    return MssqlConnectionConfig(
+        server=params.get("server", ""),
+        database=params.get("database", ""),
+        port=params.get("port", 1433),
+        authentication_method=params.get("authentication_method", "sql"),
+        username=params.get("username"),
+        password=params.get("password"),
+        trust_server_cert=params.get("trust_server_cert", False),
+        connection_timeout=params.get("connection_timeout", 30),
+        tenant_id=params.get("tenant_id"),
+    )
+
+
+def _parse_databricks_connection(name: str, params: dict) -> DatabricksConnectionConfig:
+    """Parse a Databricks connection config from raw TOML params."""
+    known_fields = {"dialect", "host", "http_path", "catalog", "schema_name", "token"}
+    _warn_unknown_fields(name, params, known_fields)
+    return DatabricksConnectionConfig(
+        host=params.get("host", ""),
+        http_path=params.get("http_path", ""),
+        catalog=params.get("catalog", "main"),
+        schema_name=params.get("schema_name", "default"),
+        token=params.get("token"),
+    )
+
+
+def _parse_generic_connection(name: str, params: dict) -> GenericConnectionConfig:
+    """Parse a generic SQLAlchemy URL connection config from raw TOML params."""
+    known_fields = {"dialect", "sqlalchemy_url"}
+    _warn_unknown_fields(name, params, known_fields)
+    return GenericConnectionConfig(
+        sqlalchemy_url=params.get("sqlalchemy_url", ""),
+    )
+
+
+_DIALECT_PARSERS: dict[str, Callable[[str, dict], ConnectionConfig]] = {
+    "mssql": _parse_mssql_connection,
+    "databricks": _parse_databricks_connection,
+    "generic": _parse_generic_connection,
+}
+
+
 def _parse_connections(raw_connections: dict) -> dict[str, ConnectionConfig]:
-    """Parse connection definitions from TOML config.
+    """Parse connection definitions from TOML config with dialect-based dispatch.
+
+    Each connection must have a 'dialect' field that determines which config
+    dataclass is used. Supported dialects: mssql, databricks, generic.
 
     Args:
         raw_connections: Dict of connection name -> connection params.
 
     Returns:
-        Dict of connection name -> ConnectionConfig.
+        Dict of connection name -> typed ConnectionConfig.
+
+    Raises:
+        ValueError: If dialect is missing or unknown.
     """
     connections: dict[str, ConnectionConfig] = {}
     for name, params in raw_connections.items():
         if not isinstance(params, dict):
             logger.warning("Config: connection '%s' is not a table, skipping", name)
             continue
-        connections[name] = ConnectionConfig(
-            server=params.get("server", ""),
-            database=params.get("database", ""),
-            port=params.get("port", 1433),
-            authentication_method=params.get("authentication_method", "sql"),
-            username=params.get("username"),
-            password=params.get("password"),
-            trust_server_cert=params.get("trust_server_cert", False),
-            connection_timeout=params.get("connection_timeout", 30),
-            tenant_id=params.get("tenant_id"),
-        )
+        dialect = params.get("dialect")
+        if dialect is None:
+            raise ValueError(
+                f"Connection '{name}' missing required 'dialect' field. "
+                f"Add dialect = \"mssql\" for SQL Server connections."
+            )
+        parser = _DIALECT_PARSERS.get(dialect)
+        if parser is None:
+            raise ValueError(
+                f"Connection '{name}' has unknown dialect '{dialect}'. "
+                f"Supported: {', '.join(sorted(_DIALECT_PARSERS))}"
+            )
+        connections[name] = parser(name, params)
     return connections
 
 
