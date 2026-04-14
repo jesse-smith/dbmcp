@@ -14,6 +14,8 @@ try:
     import pyodbc
     _pyodbc_import_error = None
 except ImportError as e:
+    # Set to None to allow import of this module even when pyodbc is unavailable.
+    # create_engine() will raise a helpful error if pyodbc is actually needed.
     pyodbc = None  # type: ignore[assignment]
     _pyodbc_import_error = e
 
