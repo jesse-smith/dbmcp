@@ -27,7 +27,7 @@
 
 </details>
 
-### 🚧 v2.0 Multi-Dialect Support (In Progress)
+### v2.0 Multi-Dialect Support (In Progress)
 
 **Milestone Goal:** Extend dbmcp from SQL Server-only to support Databricks and arbitrary SQLAlchemy databases via a dialect strategy pattern, with minimal per-dialect code.
 
@@ -79,7 +79,11 @@ Plans:
   2. connect_database tool accepts connection_name or sqlalchemy_url (old SQL Server-specific params removed)
   3. pyodbc and azure-identity are in `mssql` optional extra; databricks packages in `databricks` extra; core install has neither
   4. Missing dialect-specific dependencies produce clear error messages at import time (not cryptic ImportErrors)
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 10-01-PLAN.md — GenericDialect implementation, URL routing, and lazy imports
+- [ ] 10-02-PLAN.md — connect_database tool rewrite and ConnectionManager generalization
+- [ ] 10-03-PLAN.md — pyproject.toml dependency restructuring with optional extras
 
 ### Phase 11: DatabricksDialect
 **Goal**: Users can connect to Databricks with full metadata support including catalog awareness, table properties, and partition info
@@ -131,8 +135,8 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 6. Serialization & Configuration | v1.1 | 2/2 | Complete | 2026-03-10 |
 | 7. Wire Orphaned Exports | v1.1 | 2/2 | Complete | 2026-03-10 |
 | 8. Dialect Protocol & MSSQL Extraction | v2.0 | 3/3 | Complete | 2026-04-14 |
-| 9. Config Discrimination & Validation Dialect | v2.0 | 0/2 | Planning | - |
-| 10. GenericDialect & Tool Interface | v2.0 | 0/0 | Not started | - |
+| 9. Config Discrimination & Validation Dialect | v2.0 | 2/2 | Complete | - |
+| 10. GenericDialect & Tool Interface | v2.0 | 0/3 | Planning | - |
 | 11. DatabricksDialect | v2.0 | 0/0 | Not started | - |
 | 12. Analysis Module Adaptation | v2.0 | 0/0 | Not started | - |
 | 13. Test Infrastructure & Coverage | v2.0 | 0/0 | Not started | - |
