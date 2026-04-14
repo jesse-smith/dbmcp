@@ -64,13 +64,16 @@ class QueryService:
         self.engine = engine
         self._metadata_service = metadata_service
 
+        self._dialect: DialectStrategy | None
         if dialect is not None:
             self._dialect = dialect
-        elif engine.dialect.name == "mssql":
-            from src.db.dialects.mssql import MssqlDialect
-            self._dialect: DialectStrategy | None = MssqlDialect()
         else:
-            self._dialect = None
+            from src.db.dialects.registry import get_dialect
+            try:
+                dialect_cls = get_dialect(engine.dialect.name)
+                self._dialect = dialect_cls()
+            except ValueError:
+                self._dialect = None
 
     def get_sample_data(
         self,

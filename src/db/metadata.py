@@ -53,13 +53,16 @@ class MetadataService:
         self._inspector = None
         self.dialect_name = engine.dialect.name
 
+        self._dialect: DialectStrategy | None
         if dialect is not None:
             self._dialect = dialect
-        elif self.dialect_name == "mssql":
-            from src.db.dialects.mssql import MssqlDialect
-            self._dialect: DialectStrategy | None = MssqlDialect()
         else:
-            self._dialect = None
+            from src.db.dialects.registry import get_dialect
+            try:
+                dialect_cls = get_dialect(self.dialect_name)
+                self._dialect = dialect_cls()
+            except ValueError:
+                self._dialect = None
 
     @property
     def inspector(self):
