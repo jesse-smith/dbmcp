@@ -27,6 +27,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+CONNECTION_ID_LENGTH = 12
+"""Length of connection ID hex prefix.
+
+12 characters provides 2^48 possible IDs (collision probability ~1e-14 for
+1000 connections) while keeping IDs compact for logging and display.
+"""
+
 
 @dataclass
 class PoolConfig:
@@ -294,7 +301,7 @@ class ConnectionManager:
         else:
             user_component = username or "windows"
         conn_str_hash = f"{server}:{port}/{database}/{user_component}"
-        return hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
+        return hashlib.sha256(conn_str_hash.encode()).hexdigest()[:CONNECTION_ID_LENGTH]
 
     def get_dialect(self, connection_id: str) -> DialectStrategy:
         """Get the dialect strategy for a connection.
@@ -418,7 +425,7 @@ class ConnectionManager:
         """
         parsed = make_url(sqlalchemy_url)
         safe_key = f"{parsed.get_backend_name()}://{parsed.host or ''}:{parsed.port or 0}/{parsed.database or ''}"
-        return hashlib.sha256(safe_key.encode()).hexdigest()[:12]
+        return hashlib.sha256(safe_key.encode()).hexdigest()[:CONNECTION_ID_LENGTH]
 
     def _test_connection(
         self,
