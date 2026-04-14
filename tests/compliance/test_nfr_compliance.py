@@ -267,8 +267,9 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_SecretPassword!@#$"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = SQLAlchemyError("Connection refused")
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.side_effect = SQLAlchemyError("Connection refused")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -286,10 +287,8 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_SuccessPass!456"
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -300,7 +299,7 @@ class TestNFR005CredentialSecurity:
 
             mock_engine_instance = MagicMock()
             mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+            mock_dialect.create_engine.return_value = mock_engine_instance
 
             manager.connect(
                 server="localhost",
@@ -317,8 +316,9 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_ODBCPass#789"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = SQLAlchemyError("Test error")
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.side_effect = SQLAlchemyError("Test error")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -339,10 +339,8 @@ class TestNFR005CredentialSecurity:
         """NFR-005: Connection ID must not include password in hash."""
         manager = ConnectionManager()
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -353,7 +351,7 @@ class TestNFR005CredentialSecurity:
 
             mock_engine_instance = MagicMock()
             mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+            mock_dialect.create_engine.return_value = mock_engine_instance
 
             # Same credentials, different passwords should produce same ID
             conn1 = manager.connect(
@@ -365,6 +363,7 @@ class TestNFR005CredentialSecurity:
 
             manager._engines.clear()
             manager._connections.clear()
+            manager._dialects.clear()
 
             conn2 = manager.connect(
                 server="localhost",
