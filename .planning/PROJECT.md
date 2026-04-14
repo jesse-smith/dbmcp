@@ -2,11 +2,27 @@
 
 ## What This Is
 
-A Model Context Protocol (MCP) server that gives LLM agents safe, read-only access to SQL Server databases. 9 MCP tools for schema exploration, query execution, and data analysis — all returning token-efficient TOON-encoded responses. Hardened with metadata-based query validation, unified type serialization, and external TOML configuration.
+A Model Context Protocol (MCP) server that gives LLM agents safe, read-only access to SQL Server, Databricks, and other SQLAlchemy-supported databases. MCP tools for schema exploration, query execution, and data analysis — all returning token-efficient TOON-encoded responses. Hardened with metadata-based query validation, unified type serialization, and external TOML configuration. Dialect-aware architecture minimizes per-database code via a three-tier query strategy.
 
 ## Core Value
 
-LLM agents can explore and query SQL Server databases safely, with validated read-only access and clear error reporting.
+LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
+
+## Current Milestone: v2.0 Multi-Dialect Support
+
+**Goal:** Extend dbmcp from SQL Server-only to support Databricks (priority) and arbitrary SQLAlchemy+sqlglot databases via a dialect strategy pattern, with minimal per-dialect code.
+
+**Target features:**
+
+- DialectStrategy protocol with MssqlDialect, DatabricksDialect, GenericDialect implementations
+- Discriminated connection config (TOML `dialect` field, typed config models per dialect)
+- Simplified connect_database tool interface (connection_name / sqlalchemy_url)
+- Tier 1 metadata via SQLAlchemy Inspector (with MSSQL optimized overrides preserved)
+- Tier 2 standard SQL analysis queries (transpiled via sqlglot where needed)
+- Tier 3 dialect-specific optimizations (fast row counts, engine construction)
+- Databricks-optimized stats and reflections (column info, PK/FK analysis)
+- Explicit sqlglot dialect passing for query validation
+- Optional dependency groups (mssql, databricks extras)
 
 ## Requirements
 
@@ -30,7 +46,15 @@ LLM agents can explore and query SQL Server databases safely, with validated rea
 
 ### Active
 
-(None — next milestone not yet defined)
+- [ ] Multi-dialect support via DialectStrategy protocol
+- [ ] Databricks dialect with optimized stats/reflections
+- [ ] Generic dialect fallback for arbitrary SQLAlchemy databases
+- [ ] Simplified connect_database tool interface
+- [ ] Discriminated TOML config with dialect field
+- [ ] SQLAlchemy Inspector-based metadata (Tier 1)
+- [ ] Standard SQL analysis queries with sqlglot transpilation (Tier 2)
+- [ ] Dialect-specific optimizations (Tier 3)
+- [ ] Optional dependency groups (mssql, databricks extras)
 
 ### Out of Scope
 
@@ -52,6 +76,7 @@ LLM agents can explore and query SQL Server databases safely, with validated rea
 - **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`)
 - **Key modules:** `src/db/` (connection, query, validation, metadata, config), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates), `src/serialization/` (type handlers, TOON)
 - **Milestones shipped:** v1.0 (TOON migration), v1.1 (concern handling)
+- **Breaking change planned:** connect_database tool signature simplification (v2.0)
 
 ## Constraints
 
@@ -80,5 +105,22 @@ LLM agents can explore and query SQL Server databases safely, with validated rea
 | Env vars resolved at connection time | Credential security; not cached at load time | ✓ Good |
 | Tool arg precedence: explicit > config > defaults | Clear override semantics | ✓ Good |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-03-10 after v1.1 milestone*
+*Last updated: 2026-04-14 after Phase 8 complete — DialectStrategy protocol defined, MssqlDialect extracted, services wired*

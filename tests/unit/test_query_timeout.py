@@ -9,7 +9,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.db.connection import ConnectionManager, PoolConfig
+from src.db.dialects.mssql import MssqlDialect
 from src.models.schema import AuthenticationMethod
+
+
+def _make_mock_engine():
+    """Create a mock engine that passes _test_connection probe."""
+    mock_connection = MagicMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = MagicMock(
+        version="SQL Server 2019",
+        database_name="testdb",
+    )
+    mock_connection.execute.return_value = mock_result
+
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_connection
+    return mock_engine
 
 
 class TestPoolConfigQueryTimeout:
@@ -33,20 +49,9 @@ class TestConnectQueryTimeoutParam:
         """connect() accepts query_timeout parameter."""
         manager = ConnectionManager()
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
-            mock_connection = MagicMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = MagicMock(
-                version="SQL Server 2019",
-                database_name="testdb",
-            )
-            mock_connection.execute.return_value = mock_result
-            mock_engine_instance = MagicMock()
-            mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.return_value = _make_mock_engine()
 
             conn = manager.connect(
                 server="localhost",
@@ -97,20 +102,9 @@ class TestConnectQueryTimeoutParam:
         """query_timeout=0 means no timeout (valid)."""
         manager = ConnectionManager()
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
-            mock_connection = MagicMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = MagicMock(
-                version="SQL Server 2019",
-                database_name="testdb",
-            )
-            mock_connection.execute.return_value = mock_result
-            mock_engine_instance = MagicMock()
-            mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.return_value = _make_mock_engine()
 
             conn = manager.connect(
                 server="localhost",
@@ -125,91 +119,69 @@ class TestConnectQueryTimeoutParam:
 class TestEngineQueryTimeoutEventListener:
     """Tests that query timeout is set via SQLAlchemy pool event on the raw pyodbc connection."""
 
-    @patch("src.db.connection.create_engine")
-    def test_standard_auth_registers_connect_event_for_timeout(self, mock_create_engine):
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_standard_auth_registers_connect_event_for_timeout(self, mock_sa_create_engine, mock_event):
         """Standard auth registers a 'connect' event listener when query_timeout > 0."""
-        mock_connection = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = MagicMock(
-            version="SQL Server 2019",
-            database_name="testdb",
+        mock_engine_instance = _make_mock_engine()
+        mock_sa_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            username="user",
+            password="pass",
+            query_timeout=45,
         )
-        mock_connection.execute.return_value = mock_result
-        mock_engine_instance = MagicMock()
-        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-        mock_create_engine.return_value = mock_engine_instance
 
-        with patch("src.db.connection.event") as mock_event:
-            manager = ConnectionManager()
-            manager.connect(
-                server="localhost",
-                database="testdb",
-                username="user",
-                password="pass",
-                query_timeout=45,
-            )
+        # Verify event.listens_for was used on the engine for "connect"
+        mock_event.listens_for.assert_called_once_with(mock_engine_instance, "connect")
 
-            # Verify event.listens_for was used on the engine for "connect"
-            mock_event.listens_for.assert_called_once_with(mock_engine_instance, "connect")
-
-    @patch("src.db.connection.create_engine")
-    def test_no_event_listener_when_timeout_zero(self, mock_create_engine):
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_no_event_listener_when_timeout_zero(self, mock_sa_create_engine, mock_event):
         """No connect event registered when query_timeout=0."""
-        mock_connection = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = MagicMock(
-            version="SQL Server 2019",
-            database_name="testdb",
+        mock_engine_instance = _make_mock_engine()
+        mock_sa_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            username="user",
+            password="pass",
+            query_timeout=0,
         )
-        mock_connection.execute.return_value = mock_result
-        mock_engine_instance = MagicMock()
-        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-        mock_create_engine.return_value = mock_engine_instance
 
-        with patch("src.db.connection.event") as mock_event:
-            manager = ConnectionManager()
-            manager.connect(
-                server="localhost",
-                database="testdb",
-                username="user",
-                password="pass",
-                query_timeout=0,
-            )
+        mock_event.listens_for.assert_not_called()
 
-            mock_event.listens_for.assert_not_called()
-
-    @patch("src.db.connection.create_engine")
-    def test_standard_auth_no_connect_args_for_timeout(self, mock_create_engine):
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_standard_auth_no_connect_args_for_timeout(self, mock_sa_create_engine, mock_event):
         """Standard auth does NOT pass query timeout via connect_args attrs_before."""
-        mock_connection = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = MagicMock(
-            version="SQL Server 2019",
-            database_name="testdb",
+        mock_engine_instance = _make_mock_engine()
+        mock_sa_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="localhost",
+            database="testdb",
+            username="user",
+            password="pass",
+            query_timeout=30,
         )
-        mock_connection.execute.return_value = mock_result
-        mock_engine_instance = MagicMock()
-        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-        mock_create_engine.return_value = mock_engine_instance
 
-        with patch("src.db.connection.event"):
-            manager = ConnectionManager()
-            manager.connect(
-                server="localhost",
-                database="testdb",
-                username="user",
-                password="pass",
-                query_timeout=30,
-            )
+        call_kwargs = mock_sa_create_engine.call_args.kwargs
+        # No connect_args should be passed -- timeout is via event listener
+        assert "connect_args" not in call_kwargs
 
-            call_kwargs = mock_create_engine.call_args.kwargs
-            # No connect_args should be passed — timeout is via event listener
-            assert "connect_args" not in call_kwargs
-
-    @patch("src.db.connection.AzureTokenProvider")
-    @patch("src.db.connection.create_engine")
+    @patch("src.db.dialects.mssql.pyodbc")
+    @patch("src.db.dialects.mssql.AzureTokenProvider")
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
     def test_azure_ad_no_query_timeout_in_attrs_before(
-        self, mock_create_engine, mock_provider_cls
+        self, mock_sa_create_engine, mock_event, mock_provider_cls, mock_pyodbc
     ):
         """Azure AD Integrated does NOT put query timeout in attrs_before (only token)."""
         mock_provider = MagicMock()
@@ -217,39 +189,29 @@ class TestEngineQueryTimeoutEventListener:
         mock_provider.pack_token_for_pyodbc.return_value = b"\x00\x00\x00\x00"
         mock_provider_cls.return_value = mock_provider
 
-        mock_connection = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = MagicMock(
-            version="SQL Server 2019",
-            database_name="testdb",
+        mock_engine_instance = _make_mock_engine()
+        mock_sa_create_engine.return_value = mock_engine_instance
+
+        manager = ConnectionManager()
+        manager.connect(
+            server="myserver.database.windows.net",
+            database="testdb",
+            authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
+            query_timeout=60,
         )
-        mock_connection.execute.return_value = mock_result
-        mock_engine_instance = MagicMock()
-        mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-        mock_create_engine.return_value = mock_engine_instance
 
-        with patch("src.db.connection.event"):
-            manager = ConnectionManager()
-            manager.connect(
-                server="myserver.database.windows.net",
-                database="testdb",
-                authentication_method=AuthenticationMethod.AZURE_AD_INTEGRATED,
-                query_timeout=60,
-            )
+        # Extract the creator callable and invoke it
+        creator = mock_sa_create_engine.call_args.kwargs["creator"]
+        mock_pyodbc.connect.return_value = MagicMock()
+        creator()
 
-            # Extract the creator callable and invoke it
-            creator = mock_create_engine.call_args.kwargs["creator"]
-            with patch("src.db.connection.pyodbc") as mock_pyodbc:
-                mock_pyodbc.connect.return_value = MagicMock()
-                creator()
-
-                # attrs_before should only contain the access token, not query timeout
-                call_kwargs = mock_pyodbc.connect.call_args
-                attrs_before = call_kwargs.kwargs.get("attrs_before") or call_kwargs[1].get("attrs_before")
-                from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN
-                assert SQL_COPT_SS_ACCESS_TOKEN in attrs_before
-                # SQL_ATTR_QUERY_TIMEOUT should NOT be in attrs_before anymore
-                assert 1005 not in attrs_before
+        # attrs_before should only contain the access token, not query timeout
+        call_kwargs = mock_pyodbc.connect.call_args
+        attrs_before = call_kwargs.kwargs.get("attrs_before") or call_kwargs[1].get("attrs_before")
+        from src.db.dialects.azure_auth import SQL_COPT_SS_ACCESS_TOKEN
+        assert SQL_COPT_SS_ACCESS_TOKEN in attrs_before
+        # SQL_ATTR_QUERY_TIMEOUT should NOT be in attrs_before anymore
+        assert 1005 not in attrs_before
 
 
 class TestTimeoutEventCallbackBehavior:
@@ -257,12 +219,9 @@ class TestTimeoutEventCallbackBehavior:
 
     def test_event_callback_sets_timeout_on_dbapi_connection(self):
         """The connect event callback sets .timeout on the raw pyodbc connection."""
-        from src.db.connection import ConnectionManager
-
-        manager = ConnectionManager()
         query_timeout = 45
 
-        # Directly test _create_engine and capture the event listener
+        # Directly test MssqlDialect.create_engine and capture the event listener
         captured_listeners = []
 
         def capture_listens_for(target, identifier):
@@ -272,18 +231,22 @@ class TestTimeoutEventCallbackBehavior:
             return decorator
 
         with (
-            patch("src.db.connection.create_engine") as mock_create_engine,
-            patch("src.db.connection.event") as mock_event,
+            patch("src.db.dialects.mssql.sa_create_engine") as mock_sa_create_engine,
+            patch("src.db.dialects.mssql.event") as mock_event,
         ):
             mock_engine_instance = MagicMock()
-            mock_create_engine.return_value = mock_engine_instance
+            mock_sa_create_engine.return_value = mock_engine_instance
             mock_event.listens_for.side_effect = capture_listens_for
 
-            manager._create_engine(
-                "DRIVER={ODBC Driver 18 for SQL Server};Server=localhost;Database=testdb",
-                AuthenticationMethod.SQL,
-                None,
-                query_timeout,
+            dialect = MssqlDialect()
+            dialect.create_engine(
+                server="localhost",
+                database="testdb",
+                port=1433,
+                username="user",
+                password="pass",
+                authentication_method=AuthenticationMethod.SQL,
+                query_timeout=query_timeout,
             )
 
         # There should be one captured listener for "connect"

@@ -10,12 +10,18 @@ Performance logging (T105) tracks query times against NFR-001 (<30s for 1000 tab
 import time
 from datetime import datetime
 
+# Avoid circular import at module level; use TYPE_CHECKING for annotations only.
+from typing import TYPE_CHECKING
+
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.logging_config import get_logger
 from src.models.schema import Column, Index, Schema, Table, TableType
+
+if TYPE_CHECKING:
+    from src.db.dialects.protocol import DialectStrategy
 
 logger = get_logger(__name__)
 
@@ -36,15 +42,27 @@ class MetadataService:
         dialect_name: Database dialect (e.g., 'mssql', 'sqlite', 'postgresql')
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, dialect: "DialectStrategy | None" = None):
         """Initialize metadata service.
 
         Args:
             engine: SQLAlchemy engine
+            dialect: Optional dialect strategy. Auto-inferred from engine if None.
         """
         self.engine = engine
         self._inspector = None
         self.dialect_name = engine.dialect.name
+
+        self._dialect: DialectStrategy | None
+        if dialect is not None:
+            self._dialect = dialect
+        else:
+            from src.db.dialects.registry import get_dialect
+            try:
+                dialect_cls = get_dialect(self.dialect_name)
+                self._dialect = dialect_cls()
+            except ValueError:
+                self._dialect = None
 
     @property
     def inspector(self):
@@ -72,7 +90,7 @@ class MetadataService:
         """
         start_time = time.time()
 
-        if self.is_mssql:
+        if self._dialect and self._dialect.has_fast_row_counts:
             result = self._list_schemas_mssql(connection_id)
         else:
             result = self._list_schemas_generic(connection_id)
@@ -203,7 +221,7 @@ class MetadataService:
         """
         start_time = time.time()
 
-        if self.is_mssql:
+        if self._dialect and self._dialect.has_fast_row_counts:
             result, pagination = self._list_tables_mssql(
                 schema_name, name_pattern, min_row_count,
                 sort_by, sort_order, limit, offset, object_type, connection_id
