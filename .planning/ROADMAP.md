@@ -67,8 +67,8 @@ Plans:
   5. Denylist validation (INSERT/UPDATE/DELETE/CREATE/DROP) works identically across all sqlglot dialects
 **Plans:** 2 plans
 Plans:
-- [ ] 09-01-PLAN.md — Per-dialect config dataclasses and dispatch parser
-- [ ] 09-02-PLAN.md — Dialect-aware validate_query and test call site updates
+- [x] 09-01-PLAN.md — Per-dialect config dataclasses and dispatch parser
+- [x] 09-02-PLAN.md — Dialect-aware validate_query and test call site updates
 
 ### Phase 10: GenericDialect & Tool Interface
 **Goal**: Users can connect to any SQLAlchemy-supported database via URL, with clean dependency separation
