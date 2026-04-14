@@ -70,6 +70,15 @@ class DialectStrategy(Protocol):
         """
         ...
 
+    @property
+    def safe_procedures(self) -> frozenset[str]:
+        """Known-safe stored procedures for this dialect.
+
+        Returns frozenset of procedure names (lowercase, unqualified).
+        Dialects without stored procedure support return empty frozenset.
+        """
+        ...
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote an identifier using dialect-appropriate quoting.
 

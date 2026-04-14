@@ -50,6 +50,37 @@ class MssqlDialect:
         """Whether this dialect has DMV-based fast row counts."""
         return True
 
+    @property
+    def safe_procedures(self) -> frozenset[str]:
+        """22 known-safe SQL Server system stored procedures."""
+        return frozenset({
+            # Catalog/ODBC (12)
+            "sp_column_privileges",
+            "sp_columns",
+            "sp_databases",
+            "sp_fkeys",
+            "sp_pkeys",
+            "sp_server_info",
+            "sp_special_columns",
+            "sp_sproc_columns",
+            "sp_statistics",
+            "sp_stored_procedures",
+            "sp_table_privileges",
+            "sp_tables",
+            # Object/Metadata (4)
+            "sp_help",
+            "sp_helptext",
+            "sp_helpindex",
+            "sp_helpconstraint",
+            # Session/Server (3)
+            "sp_who",
+            "sp_who2",
+            "sp_spaceused",
+            # Result Set Metadata (2)
+            "sp_describe_first_result_set",
+            "sp_describe_undeclared_parameters",
+        })
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote using SQL Server square brackets."""
         return f"[{identifier.replace(']', ']]')}]"

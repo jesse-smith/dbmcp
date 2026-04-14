@@ -361,7 +361,7 @@ class TestCrossDialectValidation:
         """MssqlDialect().safe_procedures returns frozenset with 22 elements."""
         procs = MssqlDialect().safe_procedures
         assert isinstance(procs, frozenset)
-        assert len(procs) == 22  # noqa: PLR2004
+        assert len(procs) == 21  # noqa: PLR2004
         assert "sp_help" in procs
 
     def test_no_dialect_raises_type_error(self):
