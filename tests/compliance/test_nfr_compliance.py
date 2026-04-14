@@ -177,43 +177,36 @@ class TestNFR004ReadOnlyEnforcement:
     blocked by default. Only SELECT queries are allowed.
     """
 
-    @pytest.fixture
-    def mock_engine(self):
-        """Create mock engine for query testing."""
-        engine = MagicMock()
-        engine.dialect.name = "sqlite"
-        return engine
-
-    def test_select_allowed(self, mock_engine):
+    def test_select_allowed(self):
         """NFR-004: SELECT queries must be allowed."""
         result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
 
-    def test_insert_blocked(self, mock_engine):
+    def test_insert_blocked(self):
         """NFR-004: INSERT queries must be blocked by default."""
         result = validate_query("INSERT INTO users VALUES (1)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_update_blocked(self, mock_engine):
+    def test_update_blocked(self):
         """NFR-004: UPDATE queries must be blocked by default."""
         result = validate_query("UPDATE users SET name='x'", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_delete_blocked(self, mock_engine):
+    def test_delete_blocked(self):
         """NFR-004: DELETE queries must be blocked by default."""
         result = validate_query("DELETE FROM users WHERE id=1", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_ddl_blocked(self, mock_engine):
+    def test_ddl_blocked(self):
         """NFR-004: DDL (CREATE, DROP, ALTER) must be blocked."""
         result = validate_query("CREATE TABLE t (id INT)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_query_type_detection_blocks_writes(self, mock_engine):
+    def test_query_type_detection_blocks_writes(self):
         """NFR-004: Write queries must be detected and blocked."""
         write_queries = [
             "INSERT INTO users VALUES (1)",
