@@ -186,30 +186,30 @@ class TestNFR004ReadOnlyEnforcement:
 
     def test_select_allowed(self, mock_engine):
         """NFR-004: SELECT queries must be allowed."""
-        result = validate_query("SELECT * FROM users")
+        result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
 
     def test_insert_blocked(self, mock_engine):
         """NFR-004: INSERT queries must be blocked by default."""
-        result = validate_query("INSERT INTO users VALUES (1)")
+        result = validate_query("INSERT INTO users VALUES (1)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
     def test_update_blocked(self, mock_engine):
         """NFR-004: UPDATE queries must be blocked by default."""
-        result = validate_query("UPDATE users SET name='x'")
+        result = validate_query("UPDATE users SET name='x'", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
     def test_delete_blocked(self, mock_engine):
         """NFR-004: DELETE queries must be blocked by default."""
-        result = validate_query("DELETE FROM users WHERE id=1")
+        result = validate_query("DELETE FROM users WHERE id=1", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
     def test_ddl_blocked(self, mock_engine):
         """NFR-004: DDL (CREATE, DROP, ALTER) must be blocked."""
-        result = validate_query("CREATE TABLE t (id INT)")
+        result = validate_query("CREATE TABLE t (id INT)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DDL
 
@@ -224,7 +224,7 @@ class TestNFR004ReadOnlyEnforcement:
         ]
 
         for query in write_queries:
-            result = validate_query(query)
+            result = validate_query(query, dialect="tsql")
             assert result.is_safe is False, f"Write query should be blocked: {query}"
 
 

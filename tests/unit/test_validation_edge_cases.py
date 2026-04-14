@@ -37,7 +37,7 @@ class TestCommentInjection:
     )
     def test_comment_injection(self, sql, expected_safe):
         """Comments strip dangerous text -- commented-out SQL is not executable."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is expected_safe
 
 
@@ -65,7 +65,7 @@ class TestSemicolonBatching:
     )
     def test_batch_injection_denied(self, sql):
         """Batches containing dangerous statements are denied."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         ddl_reasons = [r for r in result.reasons if r.category == DenialCategory.DDL]
         assert len(ddl_reasons) >= 1
@@ -92,7 +92,7 @@ class TestUnionInjection:
     )
     def test_union_queries_pass(self, sql):
         """UNION SELECT is a valid read-only pattern and must pass."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is True
 
 
@@ -117,7 +117,7 @@ class TestStringEscaping:
     )
     def test_string_escaping(self, sql, expected_safe):
         """String escaping and identifier quoting must not cause false positives."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is expected_safe
 
 
@@ -145,12 +145,12 @@ class TestTSQLSpecific:
     )
     def test_tsql_dangerous_denied(self, sql):
         """T-SQL specific dangerous operations must be denied."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
 
     def test_xp_cmdshell_category(self):
         """xp_cmdshell is denied as a stored procedure not in the allowlist."""
-        result = validate_query("EXEC xp_cmdshell 'dir'")
+        result = validate_query("EXEC xp_cmdshell 'dir'", dialect="tsql")
         assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
 
 
@@ -178,7 +178,7 @@ class TestEvasionTechniques:
     )
     def test_evasion_denied(self, sql, category):
         """Evasion techniques (casing, whitespace, control flow) must be denied."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -215,5 +215,5 @@ class TestValidQueriesPassthrough:
     )
     def test_valid_queries_pass(self, sql):
         """Valid read-only queries must pass without false positives."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is True

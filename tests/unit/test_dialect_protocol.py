@@ -34,6 +34,10 @@ class _StubDialect:
     ) -> dict[str, int]:
         return {}
 
+    @property
+    def safe_procedures(self) -> frozenset[str]:
+        return frozenset()
+
     def quote_identifier(self, identifier: str) -> str:
         return f'"{identifier}"'
 

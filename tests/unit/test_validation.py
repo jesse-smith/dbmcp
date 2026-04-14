@@ -43,12 +43,12 @@ class TestValidateQuerySafe:
     )
     def test_safe_query_passes(self, sql):
         """Safe queries pass validation."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is True
 
     def test_simple_select_no_reasons(self):
         """Plain SELECT passes with empty reasons list."""
-        result = validate_query("SELECT * FROM users")
+        result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
         assert result.reasons == []
 
@@ -126,7 +126,7 @@ class TestValidateQueryDenied:
     )
     def test_denied_with_category(self, sql, category):
         """Denied queries report the correct denial category."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert len(result.reasons) >= 1
         assert result.reasons[0].category == category
@@ -143,7 +143,7 @@ class TestValidateQueryDenied:
     )
     def test_unparseable_denied(self, sql):
         """Operations that sqlglot cannot parse are still denied."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
 
 
@@ -165,7 +165,7 @@ class TestValidateQueryAllowWrite:
     )
     def test_dml_allowed_with_write(self, sql):
         """DML operations pass when allow_write=True."""
-        result = validate_query(sql, allow_write=True)
+        result = validate_query(sql, dialect="tsql", allow_write=True)
         assert result.is_safe is True
 
     @pytest.mark.parametrize(
@@ -180,7 +180,7 @@ class TestValidateQueryAllowWrite:
     )
     def test_non_dml_still_denied_with_write(self, sql, category):
         """Non-DML categories are NOT bypassed by allow_write."""
-        result = validate_query(sql, allow_write=True)
+        result = validate_query(sql, dialect="tsql", allow_write=True)
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -197,51 +197,51 @@ class TestStoredProcedureAllowlist:
         "sp_describe_first_result_set", "sp_describe_undeclared_parameters",
     ])
     def test_safe_procedure_allowed(self, proc):
-        """Each of the 22 safe system procedures passes validation."""
-        result = validate_query(f"EXEC {proc}")
+        """Each of the 21 safe system procedures passes validation."""
+        result = validate_query(f"EXEC {proc}", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True, f"{proc} should be safe but got: {result.reasons}"
 
     def test_safe_procedure_with_schema_prefix(self):
         """Multi-part name master.dbo.sp_help resolves correctly."""
-        result = validate_query("EXEC master.dbo.sp_help")
+        result = validate_query("EXEC master.dbo.sp_help", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True
 
     def test_safe_procedure_with_dbo_prefix(self):
         """dbo.sp_columns resolves correctly."""
-        result = validate_query("EXEC dbo.sp_columns")
+        result = validate_query("EXEC dbo.sp_columns", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True
 
     def test_sp_executesql_denied(self):
         """sp_executesql is explicitly denied despite matching sp_ pattern."""
-        result = validate_query("EXEC sp_executesql")
+        result = validate_query("EXEC sp_executesql", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
         assert "sp_executesql" in result.reasons[0].detail
 
     def test_unknown_procedure_denied(self):
         """User-defined procedures are denied."""
-        result = validate_query("EXEC my_custom_proc")
+        result = validate_query("EXEC my_custom_proc", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
 
     def test_case_insensitive_sp_tables(self):
         """SP_TABLES (uppercase) matches case-insensitively."""
-        result = validate_query("EXEC SP_TABLES")
+        result = validate_query("EXEC SP_TABLES", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True
 
     def test_case_insensitive_sp_help(self):
         """Sp_Help (mixed case) matches case-insensitively."""
-        result = validate_query("EXEC Sp_Help")
+        result = validate_query("EXEC Sp_Help", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True
 
     def test_execute_keyword(self):
         """EXECUTE (not just EXEC) works for safe procedures."""
-        result = validate_query("EXECUTE sp_tables")
+        result = validate_query("EXECUTE sp_tables", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is True
 
     def test_execute_unknown_denied(self):
         """EXECUTE unknown procedure is denied."""
-        result = validate_query("EXECUTE unknown_proc")
+        result = validate_query("EXECUTE unknown_proc", dialect="tsql", safe_procedures=MSSQL_SAFE)
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
 
@@ -251,7 +251,7 @@ class TestObfuscationResistance:
 
     def test_batch_with_denied_statement(self):
         """A batch with one denied statement -> entire batch denied with statement_index."""
-        result = validate_query("SELECT 1; DROP TABLE users")
+        result = validate_query("SELECT 1; DROP TABLE users", dialect="tsql")
         assert result.is_safe is False
         drop_reasons = [r for r in result.reasons if r.category == DenialCategory.DDL]
         assert len(drop_reasons) >= 1
@@ -259,28 +259,28 @@ class TestObfuscationResistance:
 
     def test_batch_all_safe(self):
         """A batch of all safe statements passes."""
-        result = validate_query("SELECT 1; SELECT 2")
+        result = validate_query("SELECT 1; SELECT 2", dialect="tsql")
         assert result.is_safe is True
 
     def test_batch_multiple_denied(self):
         """A batch with multiple denied statements reports all denials."""
-        result = validate_query("DROP TABLE a; INSERT INTO b VALUES(1)")
+        result = validate_query("DROP TABLE a; INSERT INTO b VALUES(1)", dialect="tsql")
         assert result.is_safe is False
         assert len(result.reasons) >= 2
 
     def test_begin_end_block_with_drop(self):
         """Denied operation inside BEGIN/END block detected."""
-        result = validate_query("BEGIN DROP TABLE x END")
+        result = validate_query("BEGIN DROP TABLE x END", dialect="tsql")
         assert result.is_safe is False
 
     def test_if_else_with_denied(self):
         """Denied operation inside IF/ELSE block detected."""
-        result = validate_query("IF 1=1 DROP TABLE x")
+        result = validate_query("IF 1=1 DROP TABLE x", dialect="tsql")
         assert result.is_safe is False
 
     def test_while_with_denied(self):
         """Denied operation inside WHILE block detected."""
-        result = validate_query("WHILE 1=1 DELETE FROM users")
+        result = validate_query("WHILE 1=1 DELETE FROM users", dialect="tsql")
         assert result.is_safe is False
 
     @pytest.mark.parametrize(

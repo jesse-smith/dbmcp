@@ -399,7 +399,7 @@ class TestCTEQueryParsing:
 
     def test_cte_select_allowed(self, mock_engine):
         """Test CTE+SELECT queries pass validation."""
-        result = validate_query("WITH cte AS (SELECT 1) SELECT * FROM cte")
+        result = validate_query("WITH cte AS (SELECT 1) SELECT * FROM cte", dialect="tsql")
         assert result.is_safe is True
 
     @pytest.mark.parametrize(
@@ -430,7 +430,7 @@ class TestCTEQueryParsing:
 
     def test_cte_write_blocked_by_default(self, mock_engine):
         """Test CTE+write queries are blocked by default."""
-        result = validate_query("WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src")
+        result = validate_query("WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
 
@@ -438,6 +438,7 @@ class TestCTEQueryParsing:
         """Test CTE+write queries pass validation when allow_write=True."""
         result = validate_query(
             "WITH src AS (SELECT 1 as val) INSERT INTO t SELECT * FROM src",
+            dialect="tsql",
             allow_write=True,
         )
         assert result.is_safe is True
@@ -453,7 +454,7 @@ class TestCTEQueryParsing:
     )
     def test_existing_write_controls_unchanged(self, mock_engine, sql, category):
         """Regression test: existing write controls still work as before."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -526,7 +527,7 @@ class TestReadOnlyEnforcement:
 
     def test_select_allowed_by_default(self, mock_engine):
         """Test SELECT queries pass validation by default."""
-        result = validate_query("SELECT * FROM users")
+        result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
 
     @pytest.mark.parametrize(
@@ -541,7 +542,7 @@ class TestReadOnlyEnforcement:
     )
     def test_write_blocked_by_default(self, mock_engine, sql, category):
         """Test write and DDL queries are denied by default."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -556,7 +557,7 @@ class TestReadOnlyEnforcement:
     )
     def test_write_allowed_when_enabled(self, mock_engine, sql):
         """Test write operations pass when allow_write=True."""
-        assert validate_query(sql, allow_write=True).is_safe is True
+        assert validate_query(sql, dialect="tsql", allow_write=True).is_safe is True
 
 
 class TestRowLimitInjection:
