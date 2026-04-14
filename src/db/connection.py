@@ -11,6 +11,7 @@ from datetime import datetime
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.db.dialects.mssql import MssqlDialect
@@ -199,7 +200,7 @@ class ConnectionManager:
                 connection_id=connection_id,
                 disconnect_callback=self.disconnect,
             )
-            self._test_connection(engine, start_time, server, database, port)
+            self._test_connection(engine, start_time, dialect.name)
         except ConnectionError:
             raise
         except SQLAlchemyError as e:
@@ -305,30 +306,131 @@ class ConnectionManager:
             raise ValueError(f"Connection '{connection_id}' not found. Use connect_database first.")
         return self._dialects[connection_id]
 
+    def connect_with_url(
+        self,
+        sqlalchemy_url: str,
+        dialect: DialectStrategy,
+        query_timeout: int = 30,
+    ) -> Connection:
+        """Connect using a SQLAlchemy URL with the given dialect.
+
+        Args:
+            sqlalchemy_url: Full SQLAlchemy connection URL.
+            dialect: Instantiated dialect strategy.
+            query_timeout: Per-statement timeout (default: 30).
+
+        Returns:
+            Connection metadata object.
+
+        Raises:
+            ConnectionError: If connection fails.
+        """
+        parsed_url = make_url(sqlalchemy_url)
+        connection_id = self._generate_url_connection_id(sqlalchemy_url)
+
+        if connection_id in self._engines:
+            logger.info(f"Reusing existing connection: {connection_id}")
+            return self._connections[connection_id]
+
+        start_time = time.time()
+        try:
+            engine = dialect.create_engine(
+                sqlalchemy_url=sqlalchemy_url,
+                query_timeout=query_timeout,
+            )
+            self._test_connection(engine, start_time, dialect.name)
+        except ConnectionError:
+            raise
+        except SQLAlchemyError as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            safe_url = parsed_url.render_as_string(hide_password=True)
+            logger.error(f"Connection to {safe_url} failed after {elapsed_ms}ms: {type(e).__name__}")
+            raise ConnectionError(f"Could not connect to {safe_url}: {str(e)}") from e
+
+        self._engines[connection_id] = engine
+        self._dialects[connection_id] = dialect
+        connection = Connection(
+            connection_id=connection_id,
+            server=parsed_url.host or "",
+            database=parsed_url.database or "",
+            port=parsed_url.port or 0,
+            dialect_name=dialect.name,
+            username=parsed_url.username,
+            created_at=datetime.now(),
+        )
+        self._connections[connection_id] = connection
+        return connection
+
+    def connect_with_config(
+        self,
+        config: "ConnectionConfig",
+        dialect: DialectStrategy,
+        query_timeout: int = 30,
+    ) -> Connection:
+        """Connect using a typed config with the given dialect.
+
+        Routes MssqlConnectionConfig to the existing connect() method.
+        Routes GenericConnectionConfig to connect_with_url().
+        Routes DatabricksConnectionConfig to connect_with_url() (Phase 11).
+
+        Args:
+            config: Typed connection configuration.
+            dialect: Instantiated dialect strategy.
+            query_timeout: Per-statement timeout.
+
+        Returns:
+            Connection metadata object.
+        """
+        from src.config import GenericConnectionConfig, MssqlConnectionConfig, resolve_env_vars
+
+        if isinstance(config, MssqlConnectionConfig):
+            password = resolve_env_vars(config.password) if config.password else None
+            tenant_id = resolve_env_vars(config.tenant_id) if config.tenant_id else None
+            return self.connect(
+                server=config.server,
+                database=config.database,
+                port=config.port,
+                username=config.username,
+                password=password,
+                authentication_method=AuthenticationMethod(config.authentication_method),
+                trust_server_cert=config.trust_server_cert,
+                connection_timeout=config.connection_timeout,
+                tenant_id=tenant_id,
+                query_timeout=query_timeout,
+            )
+        elif isinstance(config, GenericConnectionConfig):
+            url = resolve_env_vars(config.sqlalchemy_url) if config.sqlalchemy_url else ""
+            return self.connect_with_url(url, dialect, query_timeout)
+        else:
+            # DatabricksConnectionConfig -- Phase 11
+            raise NotImplementedError(f"Config type {type(config).__name__} not yet supported")
+
+    def _generate_url_connection_id(self, sqlalchemy_url: str) -> str:
+        """Generate a deterministic connection ID from a SQLAlchemy URL.
+
+        Credentials are excluded by hashing only host+database+driver.
+        """
+        parsed = make_url(sqlalchemy_url)
+        safe_key = f"{parsed.get_backend_name()}://{parsed.host or ''}:{parsed.port or 0}/{parsed.database or ''}"
+        return hashlib.sha256(safe_key.encode()).hexdigest()[:12]
+
     def _test_connection(
         self,
         engine: Engine,
         start_time: float,
-        server: str,
-        database: str,
-        port: int,
+        dialect_name: str,
     ) -> None:
         """Test a newly created engine by executing a probe query.
 
         Args:
             engine: SQLAlchemy engine to test
             start_time: Timestamp when connection attempt began (for timing)
-            server: Server name (for logging)
-            database: Database name (for logging)
-            port: Port number (for logging)
+            dialect_name: Dialect identifier string (for logging)
         """
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT @@VERSION AS version, DB_NAME() AS database_name"))
-            row = result.fetchone()
-            version = row.version if row else "Unknown"
+            conn.execute(text("SELECT 1"))
             elapsed_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"Connected to {database} on {server}:{port} in {elapsed_ms}ms")
-            logger.debug(f"SQL Server version: {version[:100]}...")
+            logger.info(f"Connected via {dialect_name} dialect in {elapsed_ms}ms")
 
             if elapsed_ms > 5000:
                 logger.warning(f"Slow connection: {elapsed_ms}ms (>5s threshold)")

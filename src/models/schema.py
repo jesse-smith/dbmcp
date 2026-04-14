@@ -94,20 +94,22 @@ class Connection:
     """Represents a database connection configuration.
 
     Attributes:
-        connection_id: Unique identifier (hash of server+database+user)
-        server: SQL Server host (hostname or IP)
-        database: Database name
-        port: Port number (default: 1433)
+        connection_id: Unique identifier (hash of connection parameters)
+        server: Database host (hostname or IP, empty for file-based DBs)
+        database: Database name (empty for file-based DBs)
+        port: Port number (0 for default/unknown)
         authentication_method: Authentication method used
-        username: Username for SQL/Azure AD auth
+        dialect_name: Dialect identifier for display (e.g., 'mssql', 'generic')
+        username: Username for authenticated connections
         created_at: Connection creation timestamp
     """
 
     connection_id: str
-    server: str
-    database: str
-    port: int = 1433
+    server: str = ""
+    database: str = ""
+    port: int = 0
     authentication_method: AuthenticationMethod = AuthenticationMethod.SQL
+    dialect_name: str = "mssql"
     username: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
