@@ -95,8 +95,10 @@ Plans:
   3. Databricks connections expose three-level namespace (catalog.schema.table) with catalog stored in the data model
   4. Databricks table properties (owner, storage format, managed/external, creation time) are surfaced via DESCRIBE EXTENDED
   5. get_table_schema omits index section when the dialect's supports_indexes capability is false
-**Plans**: TBD
-**UI hint**: no
+**Plans:** 2 plans
+Plans:
+- [ ] 11-01-PLAN.md — DatabricksDialect implementation, connection routing, and pyproject extras
+- [ ] 11-02-PLAN.md — Catalog-aware metadata, DESCRIBE EXTENDED parsing, and index gating
 
 ### Phase 12: Analysis Module Adaptation
 **Goal**: All analysis tools (column stats, PK/FK discovery) work across all three dialects with optimized Databricks paths
@@ -137,6 +139,6 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 8. Dialect Protocol & MSSQL Extraction | v2.0 | 3/3 | Complete | 2026-04-14 |
 | 9. Config Discrimination & Validation Dialect | v2.0 | 2/2 | Complete | - |
 | 10. GenericDialect & Tool Interface | v2.0 | 3/3 | Complete    | 2026-04-14 |
-| 11. DatabricksDialect | v2.0 | 0/0 | Not started | - |
+| 11. DatabricksDialect | v2.0 | 0/2 | In progress | - |
 | 12. Analysis Module Adaptation | v2.0 | 0/0 | Not started | - |
 | 13. Test Infrastructure & Coverage | v2.0 | 0/0 | Not started | - |
