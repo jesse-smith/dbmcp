@@ -98,8 +98,11 @@ def _connect_database_success_mocks():
     conn = _mock_connection()
     schemas = [_mock_schema()]
 
+    mock_dialect = MagicMock()
+
     with (
-        patch.object(get_connection_manager(), "connect", return_value=conn),
+        patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=mock_dialect),
+        patch.object(get_connection_manager(), "connect_with_url", return_value=conn),
         patch.object(get_connection_manager(), "get_engine") as mock_engine,
     ):
         mock_metadata_svc = MagicMock()
@@ -120,10 +123,13 @@ def _connect_database_error_mocks():
     """Mocks for connect_database error path."""
     from src.db.connection import ConnectionError
 
-    with patch.object(
-        get_connection_manager(),
-        "connect",
-        side_effect=ConnectionError("Test connection error"),
+    with (
+        patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "connect_with_url",
+            side_effect=ConnectionError("Test connection error"),
+        ),
     ):
         yield
 
@@ -498,8 +504,8 @@ TOOL_CONFIGS = [
     {
         "name": "connect_database",
         "fn": connect_database,
-        "success_args": {"server": "testserver", "database": "testdb"},
-        "error_args": {"server": "testserver", "database": "testdb"},
+        "success_args": {"sqlalchemy_url": "sqlite:///test.db"},
+        "error_args": {"sqlalchemy_url": "sqlite:///test.db"},
         "success_mocks": _connect_database_success_mocks,
         "error_mocks": _connect_database_error_mocks,
     },

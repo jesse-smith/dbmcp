@@ -35,11 +35,12 @@ class TestSchemaToolsAsyncWrapping:
                 "status": "success",
                 "connection_id": "abc123",
                 "message": "Connected",
+                "dialect": "generic",
                 "schema_count": 1,
                 "has_cached_docs": False,
             }
 
-            await connect_database(server="localhost", database="testdb")
+            await connect_database(sqlalchemy_url="sqlite:///test.db")
             mock_to_thread.assert_called_once()
 
     async def test_list_schemas_uses_to_thread(self):
@@ -230,7 +231,7 @@ _TOOL_PARAMS = [
     pytest.param(
         connect_database,
         "src.mcp_server.schema_tools",
-        {"server": "localhost", "database": "testdb"},
+        {"sqlalchemy_url": "sqlite:///test.db"},
         id="connect_database",
     ),
     pytest.param(

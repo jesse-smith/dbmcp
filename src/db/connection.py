@@ -4,10 +4,13 @@ This module provides connection pooling and management using SQLAlchemy.
 Credentials are never logged per NFR-005.
 """
 
+from __future__ import annotations
+
 import hashlib
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -18,6 +21,9 @@ from src.db.dialects.mssql import MssqlDialect
 from src.db.dialects.protocol import DialectStrategy
 from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod, Connection
+
+if TYPE_CHECKING:
+    from src.config import ConnectionConfig
 
 logger = get_logger(__name__)
 
@@ -363,7 +369,7 @@ class ConnectionManager:
 
     def connect_with_config(
         self,
-        config: "ConnectionConfig",
+        config: ConnectionConfig,
         dialect: DialectStrategy,
         query_timeout: int = 30,
     ) -> Connection:
