@@ -51,9 +51,9 @@
   4. All existing tests pass unchanged (zero behavior regression)
 **Plans:** 3 plans
 Plans:
-- [ ] 08-01-PLAN.md — Define DialectStrategy protocol and dialect registry
-- [ ] 08-02-PLAN.md — Implement MssqlDialect and relocate azure_auth
-- [ ] 08-03-PLAN.md — Wire dialect into ConnectionManager, MetadataService, QueryService
+- [x] 08-01-PLAN.md — Define DialectStrategy protocol and dialect registry
+- [x] 08-02-PLAN.md — Implement MssqlDialect and relocate azure_auth
+- [x] 08-03-PLAN.md — Wire dialect into ConnectionManager, MetadataService, QueryService
 
 ### Phase 9: Config Discrimination & Validation Dialect
 **Goal**: Users can configure non-MSSQL connections via TOML and execute validated queries against any supported dialect
