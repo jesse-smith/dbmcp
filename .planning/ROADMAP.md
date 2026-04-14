@@ -65,7 +65,10 @@ Plans:
   3. Query validation accepts a dialect parameter and parses with the correct sqlglot dialect
   4. Safe procedure list returns MSSQL sp_ procedures for MSSQL and empty list for other dialects
   5. Denylist validation (INSERT/UPDATE/DELETE/CREATE/DROP) works identically across all sqlglot dialects
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 09-01-PLAN.md — Per-dialect config dataclasses and dispatch parser
+- [ ] 09-02-PLAN.md — Dialect-aware validate_query and test call site updates
 
 ### Phase 10: GenericDialect & Tool Interface
 **Goal**: Users can connect to any SQLAlchemy-supported database via URL, with clean dependency separation
@@ -127,8 +130,8 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 5. Security Hardening | v1.1 | 2/2 | Complete | 2026-03-09 |
 | 6. Serialization & Configuration | v1.1 | 2/2 | Complete | 2026-03-10 |
 | 7. Wire Orphaned Exports | v1.1 | 2/2 | Complete | 2026-03-10 |
-| 8. Dialect Protocol & MSSQL Extraction | v2.0 | 0/3 | Planning | - |
-| 9. Config Discrimination & Validation Dialect | v2.0 | 0/0 | Not started | - |
+| 8. Dialect Protocol & MSSQL Extraction | v2.0 | 3/3 | Complete | 2026-04-14 |
+| 9. Config Discrimination & Validation Dialect | v2.0 | 0/2 | Planning | - |
 | 10. GenericDialect & Tool Interface | v2.0 | 0/0 | Not started | - |
 | 11. DatabricksDialect | v2.0 | 0/0 | Not started | - |
 | 12. Analysis Module Adaptation | v2.0 | 0/0 | Not started | - |
