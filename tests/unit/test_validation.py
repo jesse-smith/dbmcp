@@ -6,8 +6,11 @@ to match the src/db/validation.py module boundary.
 
 import pytest
 
+from src.db.dialects.mssql import MssqlDialect
 from src.db.validation import validate_query
 from src.models.schema import DenialCategory
+
+MSSQL_SAFE = MssqlDialect().safe_procedures
 
 
 class TestValidateQuerySafe:
@@ -291,6 +294,77 @@ class TestObfuscationResistance:
     )
     def test_parse_failure_denied(self, sql):
         """Malformed, empty, and whitespace-only SQL is denied as PARSE_FAILURE."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.PARSE_FAILURE
+
+
+class TestCrossDialectValidation:
+    """Tests for dialect-aware validation (VALID-01, VALID-02, VALID-03)."""
+
+    def test_select_tsql(self):
+        """SELECT passes with tsql dialect."""
+        result = validate_query("SELECT 1", dialect="tsql")
+        assert result.is_safe is True
+
+    def test_select_databricks(self):
+        """SELECT passes with databricks dialect."""
+        result = validate_query("SELECT 1", dialect="databricks")
+        assert result.is_safe is True
+
+    @pytest.mark.parametrize(
+        "sql,category",
+        [
+            ("INSERT INTO t VALUES(1)", DenialCategory.DML),
+            ("DROP TABLE t", DenialCategory.DDL),
+        ],
+        ids=["dml_insert", "ddl_drop"],
+    )
+    def test_denylist_identical_tsql(self, sql, category):
+        """Denylist produces correct denial for tsql dialect."""
+        result = validate_query(sql, dialect="tsql")
+        assert result.is_safe is False
+        assert result.reasons[0].category == category
+
+    @pytest.mark.parametrize(
+        "sql,category",
+        [
+            ("INSERT INTO t VALUES(1)", DenialCategory.DML),
+            ("DROP TABLE t", DenialCategory.DDL),
+        ],
+        ids=["dml_insert", "ddl_drop"],
+    )
+    def test_denylist_identical_databricks(self, sql, category):
+        """Denylist produces identical denial categories for databricks dialect."""
+        result = validate_query(sql, dialect="databricks")
+        assert result.is_safe is False
+        assert result.reasons[0].category == category
+
+    def test_exec_sp_help_tsql_allowed(self):
+        """EXEC sp_help with tsql dialect and MSSQL safe_procedures is allowed."""
+        result = validate_query("EXEC sp_help", dialect="tsql", safe_procedures=MSSQL_SAFE)
+        assert result.is_safe is True
+
+    def test_exec_sp_help_databricks_parse_failure(self):
+        """EXEC sp_help with databricks dialect produces PARSE_FAILURE (EXEC is garbage)."""
+        result = validate_query("EXEC sp_help", dialect="databricks")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.PARSE_FAILURE
+
+    def test_exec_sp_danger_empty_safe_procs(self):
+        """EXEC sp_danger with empty safe_procedures produces STORED_PROCEDURE denial."""
+        result = validate_query("EXEC sp_danger", dialect="tsql", safe_procedures=frozenset())
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
+
+    def test_mssql_dialect_safe_procedures_count(self):
+        """MssqlDialect().safe_procedures returns frozenset with 22 elements."""
+        procs = MssqlDialect().safe_procedures
+        assert isinstance(procs, frozenset)
+        assert len(procs) == 22  # noqa: PLR2004
+        assert "sp_help" in procs
+
+    def test_no_dialect_raises_type_error(self):
+        """Calling validate_query without dialect= raises TypeError."""
+        with pytest.raises(TypeError):
+            validate_query("SELECT 1")
