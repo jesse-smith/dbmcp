@@ -31,6 +31,13 @@ class GenericDialect:
     """
 
     def __init__(self, sqlglot_dialect_name: str | None = None):
+        """Initialize GenericDialect.
+
+        Args:
+            sqlglot_dialect_name: Sqlglot dialect name (e.g., 'postgres', 'mysql').
+                Caller must ensure this is a valid sqlglot dialect name; no validation
+                is performed here. Invalid names will cause parse errors at query time.
+        """
         self._sqlglot_dialect = sqlglot_dialect_name
 
     @property
