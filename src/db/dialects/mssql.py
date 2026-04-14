@@ -10,7 +10,11 @@ import builtins
 from collections.abc import Callable
 from urllib.parse import quote_plus
 
-import pyodbc
+try:
+    import pyodbc
+except ImportError:
+    pyodbc = None  # type: ignore[assignment]
+
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
@@ -107,6 +111,11 @@ class MssqlDialect:
         Returns:
             Configured SQLAlchemy Engine.
         """
+        if pyodbc is None:
+            raise ImportError(
+                "MSSQL support requires pyodbc. Install with: pip install dbmcp[mssql]"
+            )
+
         server: str = kwargs["server"]
         database: str = kwargs["database"]
         port: int = kwargs.get("port", 1433)

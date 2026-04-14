@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from unittest.mock import patch
 
 import pytest
 
@@ -46,12 +46,14 @@ class TestGenericFallbackRouting:
         assert isinstance(dialect, GenericDialect)
         assert dialect.sqlglot_dialect is None
 
-    def test_unknown_scheme_warning(self, caplog):
+    def test_unknown_scheme_warning(self):
         """Unknown schemes emit a warning log."""
-        with caplog.at_level(logging.WARNING, logger="src.db.dialects.registry"):
+        with patch("src.db.dialects.registry.logger") as mock_logger:
             dialect = resolve_dialect_from_url("oracle+cx_oracle://host/db")
         assert isinstance(dialect, GenericDialect)
-        assert any("No optimized dialect for 'oracle'" in msg for msg in caplog.messages)
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0] % mock_logger.warning.call_args[0][1:]
+        assert "No optimized dialect for 'oracle'" in warning_msg
 
 
 class TestDatabricksSchemeMapping:

@@ -13,10 +13,11 @@ class TestLazyPyodbcImport:
 
     def test_mssql_import_error(self):
         """MssqlDialect.create_engine raises ImportError when pyodbc unavailable."""
+        from src.db.dialects import mssql
         from src.db.dialects.mssql import MssqlDialect
 
         dialect = MssqlDialect()
-        with patch.dict(sys.modules, {"pyodbc": None}):
+        with patch.object(mssql, "pyodbc", None):
             with pytest.raises(ImportError, match="pip install dbmcp\\[mssql\\]"):
                 dialect.create_engine(
                     server="test",
