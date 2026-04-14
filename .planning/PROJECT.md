@@ -123,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-13 after v2.0 milestone start*
+*Last updated: 2026-04-14 after Phase 8 complete — DialectStrategy protocol defined, MssqlDialect extracted, services wired*
