@@ -19,7 +19,7 @@ class DialectStrategy(Protocol):
 
     Properties:
         name: Dialect identifier string (e.g., 'mssql', 'databricks', 'generic').
-        sqlglot_dialect: Sqlglot dialect name for query parsing (e.g., 'tsql').
+        sqlglot_dialect: Sqlglot dialect name for query parsing (e.g., 'tsql'), or None for generic SQL.
         supports_indexes: Whether this dialect supports traditional index metadata.
         has_fast_row_counts: Whether this dialect has DMV/system-table-based fast row counts.
     """
@@ -30,8 +30,8 @@ class DialectStrategy(Protocol):
         ...
 
     @property
-    def sqlglot_dialect(self) -> str:
-        """Sqlglot dialect name for query parsing (e.g., 'tsql', 'databricks')."""
+    def sqlglot_dialect(self) -> str | None:
+        """Sqlglot dialect name for query parsing (e.g., 'tsql', 'databricks'), or None for generic SQL."""
         ...
 
     @property
