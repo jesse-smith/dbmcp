@@ -4,17 +4,20 @@ This module provides connection pooling and management using SQLAlchemy.
 Credentials are never logged per NFR-005.
 """
 
+import builtins
 import hashlib
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import quote_plus
 
-from sqlalchemy import text
+import pyodbc
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import QueuePool
 
-from src.db.dialects.mssql import MssqlDialect
-from src.db.dialects.protocol import DialectStrategy
+from src.db.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
 from src.logging_config import get_logger
 from src.models.schema import AuthenticationMethod, Connection
 
@@ -129,7 +132,6 @@ class ConnectionManager:
         """
         self._engines: dict[str, Engine] = {}
         self._connections: dict[str, Connection] = {}
-        self._dialects: dict[str, DialectStrategy] = {}
         self._pool_config = pool_config or PoolConfig()
 
     def connect(
@@ -180,24 +182,24 @@ class ConnectionManager:
             logger.info(f"Reusing existing connection: {connection_id}")
             return self._connections[connection_id]
 
-        # Create engine via dialect, test connection, and store metadata
-        dialect = MssqlDialect()
+        # Build ODBC connection string
+        odbc_conn_str = self._build_odbc_connection_string(
+            server=server,
+            database=database,
+            username=username,
+            password=password,
+            port=port,
+            authentication_method=authentication_method,
+            trust_server_cert=trust_server_cert,
+            connection_timeout=connection_timeout,
+        )
+
+        # Create engine, test connection, and store metadata
         start_time = time.time()
         try:
-            engine = dialect.create_engine(
-                server=server,
-                database=database,
-                port=port,
-                username=username,
-                password=password,
-                authentication_method=authentication_method,
-                trust_server_cert=trust_server_cert,
-                connection_timeout=connection_timeout,
-                query_timeout=query_timeout,
-                pool_config=self._pool_config,
-                tenant_id=tenant_id,
+            engine = self._create_engine(
+                odbc_conn_str, authentication_method, tenant_id, query_timeout,
                 connection_id=connection_id,
-                disconnect_callback=self.disconnect,
             )
             self._test_connection(engine, start_time, server, database, port)
         except ConnectionError:
@@ -208,7 +210,6 @@ class ConnectionManager:
             raise ConnectionError(f"Could not connect to {server}:{port}/{database}: {str(e)}") from e
 
         self._engines[connection_id] = engine
-        self._dialects[connection_id] = dialect
         connection = Connection(
             connection_id=connection_id,
             server=server,
@@ -289,21 +290,81 @@ class ConnectionManager:
         conn_str_hash = f"{server}:{port}/{database}/{user_component}"
         return hashlib.sha256(conn_str_hash.encode()).hexdigest()[:12]
 
-    def get_dialect(self, connection_id: str) -> DialectStrategy:
-        """Get the dialect strategy for a connection.
+    def _create_engine(
+        self,
+        odbc_conn_str: str,
+        authentication_method: AuthenticationMethod,
+        tenant_id: str | None,
+        query_timeout: int = 30,
+        connection_id: str | None = None,
+    ) -> Engine:
+        """Create a SQLAlchemy engine with connection pooling.
 
         Args:
-            connection_id: Connection identifier
+            odbc_conn_str: ODBC connection string
+            authentication_method: Authentication method
+            tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
+            query_timeout: Per-statement query timeout in seconds (0 = no timeout)
+            connection_id: Connection ID for auto-disconnect on token failure
 
         Returns:
-            DialectStrategy instance for the connection
-
-        Raises:
-            ValueError: If connection not found
+            Configured SQLAlchemy Engine
         """
-        if connection_id not in self._dialects:
-            raise ValueError(f"Connection '{connection_id}' not found. Use connect_database first.")
-        return self._dialects[connection_id]
+        pool_kwargs = {
+            "poolclass": QueuePool,
+            "pool_size": self._pool_config.pool_size,
+            "max_overflow": self._pool_config.max_overflow,
+            "pool_timeout": self._pool_config.pool_timeout,
+            "pool_pre_ping": self._pool_config.pool_pre_ping,
+            "pool_recycle": self._pool_config.pool_recycle,
+            "echo": False,
+        }
+
+        # Auth-aware pool_recycle: Azure AD connections use a shorter recycle
+        # interval to discard connections before token expiry (~3600s).
+        if authentication_method in (
+            AuthenticationMethod.AZURE_AD,
+            AuthenticationMethod.AZURE_AD_INTEGRATED,
+        ):
+            pool_kwargs["pool_recycle"] = self._pool_config.azure_ad_pool_recycle
+            logger.debug(
+                f"Azure AD auth: pool_recycle set to {pool_kwargs['pool_recycle']}s (token-aware)"
+            )
+
+        if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            provider = AzureTokenProvider(tenant_id=tenant_id)
+
+            def creator():
+                try:
+                    token = provider.get_token()
+                except builtins.ConnectionError:
+                    logger.debug("Azure AD token re-acquisition failed, cleaning up connection")
+                    if connection_id and connection_id in self._engines:
+                        self.disconnect(connection_id)
+                    raise
+                packed = provider.pack_token_for_pyodbc(token)
+                return pyodbc.connect(
+                    odbc_conn_str,
+                    attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed},
+                )
+
+            engine = create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
+        else:
+            engine = create_engine(
+                f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_conn_str)}",
+                **pool_kwargs,
+            )
+
+        # Set query timeout on raw pyodbc connections via pool event.
+        # connection.timeout is the pyodbc-documented way to enforce
+        # per-statement timeouts (SQL Server raises OperationalError on expiry).
+        if query_timeout > 0:
+
+            @event.listens_for(engine, "connect")
+            def _set_query_timeout(dbapi_connection, connection_record):
+                dbapi_connection.timeout = query_timeout
+
+        return engine
 
     def _test_connection(
         self,
@@ -332,6 +393,55 @@ class ConnectionManager:
 
             if elapsed_ms > 5000:
                 logger.warning(f"Slow connection: {elapsed_ms}ms (>5s threshold)")
+
+    def _build_odbc_connection_string(
+        self,
+        server: str,
+        database: str,
+        username: str | None,
+        password: str | None,
+        port: int,
+        authentication_method: AuthenticationMethod,
+        trust_server_cert: bool,
+        connection_timeout: int,
+    ) -> str:
+        """Build ODBC connection string for SQL Server.
+
+        Args:
+            server: SQL Server host
+            database: Database name
+            username: Username (optional for Windows auth)
+            password: Password (optional for Windows auth)
+            port: Port number
+            authentication_method: Auth method
+            trust_server_cert: Trust server certificate
+            connection_timeout: Timeout in seconds
+
+        Returns:
+            ODBC connection string
+        """
+        parts = [
+            "Driver={ODBC Driver 18 for SQL Server}",
+            f"Server={server},{port}",
+            f"Database={database}",
+            f"TrustServerCertificate={'yes' if trust_server_cert else 'no'}",
+            f"Connection Timeout={connection_timeout}",
+        ]
+
+        if authentication_method == AuthenticationMethod.SQL:
+            parts.extend([f"UID={username}", f"PWD={password}"])
+        elif authentication_method == AuthenticationMethod.WINDOWS:
+            parts.append("Trusted_Connection=yes")
+        elif authentication_method == AuthenticationMethod.AZURE_AD:
+            parts.extend([
+                f"UID={username}",
+                f"PWD={password}",
+                "Authentication=ActiveDirectoryPassword",
+            ])
+        elif authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
+            pass  # No UID/PWD/Authentication — token is passed via attrs_before
+
+        return ";".join(parts)
 
     def get_engine(self, connection_id: str) -> Engine:
         """Get SQLAlchemy engine for a connection ID.
@@ -379,7 +489,6 @@ class ConnectionManager:
 
         engine = self._engines.pop(connection_id)
         self._connections.pop(connection_id, None)
-        self._dialects.pop(connection_id, None)
         engine.dispose()
         logger.info(f"Disconnected: {connection_id}")
         return True
@@ -405,7 +514,6 @@ class ConnectionManager:
                 )
         self._engines.clear()
         self._connections.clear()
-        self._dialects.clear()
         logger.debug(f"Shutdown cleanup: disposed {count} connection(s)")
         return count
 

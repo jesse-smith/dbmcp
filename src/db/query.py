@@ -4,17 +4,12 @@ This module provides methods for executing queries, sampling table data,
 and handling data truncation for large or binary values.
 """
 
-from __future__ import annotations
-
 import hashlib
 import re
 import time
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from src.db.dialects.protocol import DialectStrategy
+from typing import Any
 
 import sqlglot
 from sqlalchemy import text
@@ -47,33 +42,16 @@ class QueryService:
         engine: SQLAlchemy engine for database connection
     """
 
-    def __init__(
-        self,
-        engine: Engine,
-        metadata_service: MetadataService | None = None,
-        dialect: DialectStrategy | None = None,
-    ):
+    def __init__(self, engine: Engine, metadata_service: MetadataService | None = None):
         """Initialize query service.
 
         Args:
             engine: SQLAlchemy engine
             metadata_service: Optional MetadataService for metadata-based
                 identifier validation. When None, falls back to regex validation.
-            dialect: Optional dialect strategy. Auto-inferred from engine if None.
         """
         self.engine = engine
         self._metadata_service = metadata_service
-
-        self._dialect: DialectStrategy | None
-        if dialect is not None:
-            self._dialect = dialect
-        else:
-            from src.db.dialects.registry import get_dialect
-            try:
-                dialect_cls = get_dialect(engine.dialect.name)
-                self._dialect = dialect_cls()
-            except ValueError:
-                self._dialect = None
 
     def get_sample_data(
         self,
@@ -112,11 +90,14 @@ class QueryService:
             column_sql = ", ".join(sanitized_columns)
 
         # Build query based on sampling method
-        if self._dialect is None:
-            # SQLite/test mode doesn't use schema prefixes
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
+            # SQLite doesn't use schema prefixes in the same way
             full_table_name = table_name
         else:
-            full_table_name = f"{self._dialect.quote_identifier(schema_name)}.{self._dialect.quote_identifier(table_name)}"
+            # SQL Server uses [schema].[table]
+            full_table_name = f"[{schema_name}].[{table_name}]"
 
         if sampling_method == SamplingMethod.TOP:
             query = self._build_top_query(full_table_name, column_sql, sample_size)
@@ -180,7 +161,10 @@ class QueryService:
         Returns:
             SQL query string
         """
-        if self._dialect is None:
+        # Detect database dialect
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
             # SQLite uses LIMIT
             return f"SELECT {column_sql} FROM {table_name} LIMIT {sample_size}"
         else:
@@ -198,7 +182,9 @@ class QueryService:
         Returns:
             SQL query string
         """
-        if self._dialect is None:
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
             # SQLite doesn't support TABLESAMPLE, fall back to RANDOM()
             return f"SELECT {column_sql} FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
         else:
@@ -221,7 +207,9 @@ class QueryService:
         Returns:
             SQL query string
         """
-        if self._dialect is None:
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
             # SQLite: use ROWID for deterministic evenly-spaced sampling
             return f"""
             SELECT {column_sql} FROM (
@@ -259,11 +247,14 @@ class QueryService:
         if not re.match(r'^[a-zA-Z0-9_\s]+$', identifier):
             raise ValueError(f"Invalid identifier: {identifier}")
 
-        if self._dialect is None:
-            # SQLite/test mode doesn't require quoting
+        dialect_name = self.engine.dialect.name
+
+        if dialect_name == "sqlite":
+            # SQLite doesn't require brackets, use as-is
             return identifier
         else:
-            return self._dialect.quote_identifier(identifier)
+            # SQL Server uses brackets
+            return f"[{identifier}]"
 
     def _validate_identifier(self, identifier: str, valid_names: list[str], context: str) -> str:
         """Validate an identifier against a list of known valid names.
@@ -287,9 +278,10 @@ class QueryService:
         if actual_name is None:
             raise ValueError(f"Column '{identifier}' does not exist in {context}")
 
-        if self._dialect is None:
+        dialect_name = self.engine.dialect.name
+        if dialect_name == "sqlite":
             return actual_name
-        return self._dialect.quote_identifier(actual_name)
+        return f"[{actual_name}]"
 
     def _get_validated_columns(
         self, columns: list[str], table_name: str, schema_name: str
@@ -362,8 +354,7 @@ class QueryService:
             return QueryType.OTHER
 
         try:
-            sqlglot_dialect = self._dialect.sqlglot_dialect if self._dialect else "tsql"
-            statements = sqlglot.parse(query_text, dialect=sqlglot_dialect)
+            statements = sqlglot.parse(query_text, dialect="tsql")
         except sqlglot.errors.ParseError:
             return QueryType.OTHER
 
@@ -432,8 +423,10 @@ class QueryService:
         if not is_direct_select and not is_cte_select:
             return query_text
 
-        # SQLite/test mode: Add LIMIT clause if not present
-        if self._dialect is None:
+        dialect_name = self.engine.dialect.name
+
+        # SQLite: Add LIMIT clause if not present
+        if dialect_name == "sqlite":
             if " LIMIT " not in query_text.upper():
                 return f"{query_text} LIMIT {row_limit}"
             return query_text

@@ -1,5 +1,6 @@
 """Tests for TOML configuration loading, validation, and singleton pattern."""
 
+import logging
 import textwrap
 
 import pytest
@@ -7,8 +8,12 @@ import pytest
 from src.config import (
     AppConfig,
     ConnectionConfig,
+    DatabricksConnectionConfig,
     DefaultsConfig,
+    GenericConnectionConfig,
+    MssqlConnectionConfig,
     _parse_config,
+    _parse_connections,
     _validate_defaults,
     get_config,
     init_config,
@@ -115,10 +120,10 @@ class TestValidateDefaults:
 
 
 class TestConnectionConfig:
-    """Test ConnectionConfig frozen dataclass."""
+    """Test ConnectionConfig type alias and MssqlConnectionConfig defaults."""
 
-    def test_defaults(self):
-        c = ConnectionConfig(server="localhost", database="mydb")
+    def test_mssql_defaults(self):
+        c = MssqlConnectionConfig(server="localhost", database="mydb")
         assert c.server == "localhost"
         assert c.database == "mydb"
         assert c.port == 1433
@@ -128,11 +133,165 @@ class TestConnectionConfig:
         assert c.trust_server_cert is False
         assert c.connection_timeout == 30
         assert c.tenant_id is None
+        assert c.dialect == "mssql"
 
-    def test_frozen(self):
-        c = ConnectionConfig(server="localhost", database="mydb")
+    def test_mssql_frozen(self):
+        c = MssqlConnectionConfig(server="localhost", database="mydb")
         with pytest.raises(AttributeError):
             c.server = "other"  # type: ignore[misc]
+
+    def test_connection_config_is_union_type(self):
+        """ConnectionConfig type alias covers all three dialect types."""
+        mssql = MssqlConnectionConfig(server="s", database="d")
+        dbx = DatabricksConnectionConfig(host="h", http_path="/p")
+        generic = GenericConnectionConfig(sqlalchemy_url="sqlite://")
+        assert isinstance(mssql, MssqlConnectionConfig)
+        assert isinstance(dbx, DatabricksConnectionConfig)
+        assert isinstance(generic, GenericConnectionConfig)
+
+
+# =============================================================================
+# Per-dialect config dataclasses
+# =============================================================================
+
+
+class TestDialectConfigDataclasses:
+    """Test per-dialect frozen dataclasses and their fields."""
+
+    def test_mssql_has_all_legacy_fields(self):
+        """MssqlConnectionConfig has all fields from old ConnectionConfig."""
+        c = MssqlConnectionConfig()
+        assert hasattr(c, "server")
+        assert hasattr(c, "database")
+        assert hasattr(c, "port")
+        assert hasattr(c, "authentication_method")
+        assert hasattr(c, "username")
+        assert hasattr(c, "password")
+        assert hasattr(c, "trust_server_cert")
+        assert hasattr(c, "connection_timeout")
+        assert hasattr(c, "tenant_id")
+        assert hasattr(c, "dialect")
+
+    def test_databricks_fields(self):
+        c = DatabricksConnectionConfig()
+        assert c.dialect == "databricks"
+        assert c.host == ""
+        assert c.http_path == ""
+        assert c.catalog == "main"
+        assert c.schema_name == "default"
+        assert c.token is None
+
+    def test_databricks_frozen(self):
+        c = DatabricksConnectionConfig()
+        with pytest.raises(AttributeError):
+            c.host = "other"  # type: ignore[misc]
+
+    def test_generic_fields(self):
+        c = GenericConnectionConfig()
+        assert c.dialect == "generic"
+        assert c.sqlalchemy_url == ""
+
+    def test_generic_frozen(self):
+        c = GenericConnectionConfig()
+        with pytest.raises(AttributeError):
+            c.sqlalchemy_url = "other"  # type: ignore[misc]
+
+
+# =============================================================================
+# Dialect dispatch in _parse_connections
+# =============================================================================
+
+
+class TestDialectDispatch:
+    """Test _parse_connections dialect-based dispatch."""
+
+    def test_mssql_dialect_produces_mssql_config(self):
+        raw = {"prod": {"dialect": "mssql", "server": "srv1", "database": "db1", "port": 1434}}
+        result = _parse_connections(raw)
+        assert isinstance(result["prod"], MssqlConnectionConfig)
+        assert result["prod"].server == "srv1"
+        assert result["prod"].database == "db1"
+        assert result["prod"].port == 1434
+
+    def test_databricks_dialect_produces_databricks_config(self):
+        raw = {"warehouse": {
+            "dialect": "databricks",
+            "host": "adb-123.azuredatabricks.net",
+            "http_path": "/sql/1.0/warehouses/abc",
+            "catalog": "analytics",
+        }}
+        result = _parse_connections(raw)
+        assert isinstance(result["warehouse"], DatabricksConnectionConfig)
+        assert result["warehouse"].host == "adb-123.azuredatabricks.net"
+        assert result["warehouse"].http_path == "/sql/1.0/warehouses/abc"
+        assert result["warehouse"].catalog == "analytics"
+
+    def test_generic_dialect_produces_generic_config(self):
+        raw = {"pg": {"dialect": "generic", "sqlalchemy_url": "postgresql://localhost/mydb"}}
+        result = _parse_connections(raw)
+        assert isinstance(result["pg"], GenericConnectionConfig)
+        assert result["pg"].sqlalchemy_url == "postgresql://localhost/mydb"
+
+    def test_missing_dialect_raises_valueerror(self):
+        raw = {"broken": {"server": "srv1", "database": "db1"}}
+        with pytest.raises(ValueError, match="missing required 'dialect' field"):
+            _parse_connections(raw)
+
+    def test_missing_dialect_error_contains_connection_name(self):
+        raw = {"my_conn": {"server": "srv1"}}
+        with pytest.raises(ValueError, match="my_conn"):
+            _parse_connections(raw)
+
+    def test_unknown_dialect_raises_valueerror(self):
+        raw = {"broken": {"dialect": "oracle"}}
+        with pytest.raises(ValueError, match="unknown dialect 'oracle'"):
+            _parse_connections(raw)
+
+    def test_unknown_dialect_lists_supported(self):
+        raw = {"broken": {"dialect": "oracle"}}
+        with pytest.raises(ValueError, match="Supported:"):
+            _parse_connections(raw)
+
+    def test_unrecognized_field_logs_warning(self, caplog):
+        raw = {"dev": {"dialect": "mssql", "server": "srv", "bogus_field": "ignored"}}
+        with caplog.at_level(logging.WARNING):
+            result = _parse_connections(raw)
+        assert isinstance(result["dev"], MssqlConnectionConfig)
+        assert result["dev"].server == "srv"
+        assert "unrecognized field 'bogus_field'" in caplog.text
+
+    def test_non_table_connection_skipped(self):
+        raw = {"bad": "not-a-dict", "good": {"dialect": "mssql", "server": "s"}}
+        result = _parse_connections(raw)
+        assert "bad" not in result
+        assert "good" in result
+
+    def test_empty_connections_dict(self):
+        result = _parse_connections({})
+        assert result == {}
+
+
+# =============================================================================
+# Backward compatibility
+# =============================================================================
+
+
+class TestBackwardCompat:
+    """Test that existing config patterns still work."""
+
+    def test_appconfig_with_empty_connections(self):
+        config = AppConfig()
+        assert config.connections == {}
+
+    def test_validate_defaults_unchanged(self):
+        d = _validate_defaults({"query_timeout": 60})
+        assert d.query_timeout == 60
+
+    def test_parse_config_no_connections(self):
+        config = _parse_config({})
+        assert config.connections == {}
+        assert config.defaults == DefaultsConfig()
+        assert config.allowed_stored_procedures == frozenset()
 
 
 # =============================================================================
@@ -220,6 +379,7 @@ class TestLoadConfig:
             sample_size = 10
 
             [connections.prod]
+            dialect = "mssql"
             server = "prod-server"
             database = "proddb"
             port = 1434
@@ -277,6 +437,7 @@ class TestLoadConfig:
         monkeypatch.chdir(tmp_path)
         toml_content = textwrap.dedent("""\
             [connections.dev]
+            dialect = "mssql"
             server = "dev-server"
             database = "devdb"
             password = "${DB_PASSWORD}"

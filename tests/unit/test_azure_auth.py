@@ -56,7 +56,7 @@ class TestPackTokenForPyodbc:
 class TestAzureTokenProviderInit:
     """T004: Tests for AzureTokenProvider.__init__ — credential creation."""
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_creates_credential_without_tenant(self, mock_credential_cls):
         """Creates DefaultAzureCredential when no tenant_id provided."""
         AzureTokenProvider()
@@ -66,7 +66,7 @@ class TestAzureTokenProviderInit:
             exclude_visual_studio_code_credential=True,
         )
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_creates_credential_with_tenant(self, mock_credential_cls):
         """Passes tenant_id to DefaultAzureCredential when provided."""
         AzureTokenProvider(tenant_id="12345678-1234-1234-1234-123456789012")
@@ -76,14 +76,14 @@ class TestAzureTokenProviderInit:
             exclude_visual_studio_code_credential=True,
         )
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_excludes_interactive_browser(self, mock_credential_cls):
         """exclude_interactive_browser_credential=True is always set."""
         AzureTokenProvider()
         call_kwargs = mock_credential_cls.call_args[1]
         assert call_kwargs["exclude_interactive_browser_credential"] is True
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_excludes_vscode_credential(self, mock_credential_cls):
         """exclude_visual_studio_code_credential=True is always set."""
         AzureTokenProvider()
@@ -94,7 +94,7 @@ class TestAzureTokenProviderInit:
 class TestAzureTokenProviderGetToken:
     """T005: Tests for AzureTokenProvider.get_token — token acquisition."""
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_returns_token_string(self, mock_credential_cls):
         """get_token() returns the token string from the credential."""
         mock_credential = MagicMock()
@@ -106,7 +106,7 @@ class TestAzureTokenProviderGetToken:
 
         assert token == "fake-access-token"
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_calls_with_correct_scope(self, mock_credential_cls):
         """get_token() requests the Azure SQL database scope."""
         mock_credential = MagicMock()
@@ -120,7 +120,7 @@ class TestAzureTokenProviderGetToken:
             "https://database.windows.net/.default",
         )
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_calls_with_tenant_id_when_provided(self, mock_credential_cls):
         """get_token() passes tenant_id to credential.get_token when set."""
         mock_credential = MagicMock()
@@ -140,7 +140,7 @@ class TestAzureTokenProviderGetToken:
 class TestAzureTokenProviderErrorHandling:
     """T024-T025: Tests for error handling in AzureTokenProvider."""
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_credential_unavailable_produces_actionable_message(self, mock_credential_cls):
         """T024: CredentialUnavailableError is caught and translated to actionable message."""
         mock_credential = MagicMock()
@@ -160,7 +160,7 @@ class TestAzureTokenProviderErrorHandling:
         assert "AZURE_CLIENT_SECRET" in error_msg
         assert "AZURE_TENANT_ID" in error_msg
 
-    @patch("src.db.dialects.azure_auth.DefaultAzureCredential")
+    @patch("src.db.azure_auth.DefaultAzureCredential")
     def test_client_auth_error_produces_expiry_message(self, mock_credential_cls):
         """T025: ClientAuthenticationError produces message about expired credentials."""
         mock_credential = MagicMock()
