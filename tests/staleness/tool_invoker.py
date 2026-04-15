@@ -360,13 +360,15 @@ def _get_column_info_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check
-    mock_result = MagicMock()
-    mock_result.scalar.return_value = 1
-    mock_conn.execute.return_value = mock_result
+    # Mock Inspector for dialect-agnostic table existence check
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["TestTable"]
+    mock_inspector.get_view_names.return_value = []
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.ColumnStatsCollector", return_value=mock_collector),
     ):
         yield
