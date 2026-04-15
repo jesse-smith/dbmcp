@@ -35,7 +35,7 @@
 - [ ] **Phase 9: Config Discrimination & Validation Dialect** - Discriminated TOML config and dialect-aware query validation
 - [x] **Phase 10: GenericDialect & Tool Interface** - Generic dialect fallback, simplified connect_database, optional dependency groups (completed 2026-04-14)
 - [x] **Phase 11: DatabricksDialect** - Databricks dialect with catalog awareness, token auth, and optimized metadata (completed 2026-04-15)
-- [ ] **Phase 12: Analysis Module Adaptation** - Dialect-aware analysis tools across all three dialects
+- [x] **Phase 12: Analysis Module Adaptation** - Dialect-aware analysis tools across all three dialects (completed 2026-04-15)
 - [ ] **Phase 13: Test Infrastructure & Coverage** - Parameterized dialect test fixtures and coverage enforcement
 
 ## Phase Details
@@ -110,10 +110,10 @@ Plans:
   3. find_pk_candidates works across all dialects using uniqueness/null checks, with informational-constraint awareness for Databricks
   4. find_fk_candidates works across all dialects using Inspector-based index checks and value overlap via INTERSECT
   5. Databricks partition metadata is surfaced in table schema responses
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 12-01-PLAN.md — Infrastructure, column stats adaptation, and Databricks fast path
-- [ ] 12-02-PLAN.md — PK/FK discovery adaptation and MCP tool wiring
+- [x] 12-02-PLAN.md — PK/FK discovery adaptation and MCP tool wiring
 
 ### Phase 13: Test Infrastructure & Coverage
 **Goal**: Dialect-parameterized test fixtures enable comprehensive testing of all dialect paths without live connections
@@ -143,5 +143,5 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 9. Config Discrimination & Validation Dialect | v2.0 | 2/2 | Complete | - |
 | 10. GenericDialect & Tool Interface | v2.0 | 3/3 | Complete    | 2026-04-14 |
 | 11. DatabricksDialect | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 12. Analysis Module Adaptation | v2.0 | 1/2 | In Progress|  |
+| 12. Analysis Module Adaptation | v2.0 | 2/2 | Complete   | 2026-04-15 |
 | 13. Test Infrastructure & Coverage | v2.0 | 0/0 | Not started | - |

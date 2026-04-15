@@ -41,8 +41,8 @@ Requirements for multi-dialect support milestone. Each maps to roadmap phases.
 
 - [x] **ANLYS-01**: get_column_info works across all dialects using standard SQL aggregates (Tier 2) with sqlglot transpilation
 - [x] **ANLYS-02**: Databricks get_column_info reads precomputed stats from DESCRIBE EXTENDED when available (Tier 3)
-- [ ] **ANLYS-03**: find_pk_candidates works across all dialects using uniqueness/null checks (Tier 2), with informational-constraint awareness for Databricks
-- [ ] **ANLYS-04**: find_fk_candidates works across all dialects using Inspector-based index checks and value overlap via INTERSECT (Tier 2)
+- [x] **ANLYS-03**: find_pk_candidates works across all dialects using uniqueness/null checks (Tier 2), with informational-constraint awareness for Databricks
+- [x] **ANLYS-04**: find_fk_candidates works across all dialects using Inspector-based index checks and value overlap via INTERSECT (Tier 2)
 - [x] **ANLYS-05**: Databricks partition metadata surfaced in table schema responses
 
 ### Testing
@@ -101,8 +101,8 @@ Requirements for multi-dialect support milestone. Each maps to roadmap phases.
 | META-05 | Phase 8 | Pending |
 | ANLYS-01 | Phase 12 | Complete |
 | ANLYS-02 | Phase 12 | Complete |
-| ANLYS-03 | Phase 12 | Pending |
-| ANLYS-04 | Phase 12 | Pending |
+| ANLYS-03 | Phase 12 | Complete |
+| ANLYS-04 | Phase 12 | Complete |
 | ANLYS-05 | Phase 12 | Complete |
 | TEST-01 | Phase 8 | Pending |
 | TEST-02 | Phase 13 | Pending |
