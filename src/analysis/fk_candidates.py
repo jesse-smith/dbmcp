@@ -10,11 +10,18 @@ Discovers potential FK relationships for a source column by:
 Returns FKCandidateResult with raw metadata only — no scoring or interpretation.
 """
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from src.analysis.pk_discovery import PKDiscovery
 from src.models.analysis import FKCandidateData, FKCandidateResult
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Inspector
+
+    from src.db.dialects.protocol import DialectStrategy
 
 
 class FKCandidateSearch:
@@ -35,12 +42,16 @@ class FKCandidateSearch:
         source_table: str,
         source_column: str,
         source_data_type: str,
+        dialect: "DialectStrategy | None" = None,
+        inspector: "Inspector | None" = None,
     ):
         self.connection = connection
         self.source_schema = source_schema
         self.source_table = source_table
         self.source_column = source_column
         self.source_data_type = source_data_type
+        self._dialect = dialect
+        self._inspector = inspector
 
     def get_target_tables(
         self,

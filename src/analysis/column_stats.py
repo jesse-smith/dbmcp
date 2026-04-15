@@ -7,6 +7,8 @@ Adapts SQL patterns from former src/inference/column_stats.py with key differenc
 - No interpretive logic (raw statistics only)
 """
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
@@ -16,6 +18,11 @@ from src.models.analysis import (
     NumericStats,
     StringStats,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Inspector
+
+    from src.db.dialects.protocol import DialectStrategy
 
 
 class ColumnStatsCollector:
@@ -68,6 +75,8 @@ class ColumnStatsCollector:
         connection: Connection,
         schema_name: str,
         table_name: str,
+        dialect: "DialectStrategy | None" = None,
+        inspector: "Inspector | None" = None,
     ):
         """Initialize collector for a specific table.
 
@@ -75,10 +84,15 @@ class ColumnStatsCollector:
             connection: SQLAlchemy connection
             schema_name: Schema name
             table_name: Table name
+            dialect: Target dialect strategy, or None for MSSQL default
+            inspector: SQLAlchemy Inspector, or None for INFORMATION_SCHEMA fallback
         """
         self.connection = connection
         self.schema_name = schema_name
         self.table_name = table_name
+        self._dialect = dialect
+        self._inspector = inspector
+        # Build qualified table using bracket quoting (TSQL base syntax for transpilation)
         self._qualified_table = f"[{schema_name}].[{table_name}]"
 
     def column_exists(self, column_name: str) -> bool:

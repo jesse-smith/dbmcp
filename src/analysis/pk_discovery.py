@@ -7,10 +7,17 @@ Identifies PK candidates via two approaches:
 Returns PKCandidate model instances with raw metadata only — no scoring or interpretation.
 """
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from src.models.analysis import PKCandidate
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Inspector
+
+    from src.db.dialects.protocol import DialectStrategy
 
 # Default types considered for structural PK candidacy
 DEFAULT_PK_TYPE_FILTER = [
@@ -32,10 +39,14 @@ class PKDiscovery:
         connection: Connection,
         schema_name: str,
         table_name: str,
+        dialect: "DialectStrategy | None" = None,
+        inspector: "Inspector | None" = None,
     ):
         self.connection = connection
         self.schema_name = schema_name
         self.table_name = table_name
+        self._dialect = dialect
+        self._inspector = inspector
         self._qualified_table = f"[{schema_name}].[{table_name}]"
 
     def get_constraint_candidates(

@@ -118,10 +118,11 @@ class PKCandidate:
     is_unique: bool
     is_non_null: bool
     is_pk_type: bool
+    constraint_enforced: bool | None = None  # None=unknown, True=enforced, False=informational (Databricks)
 
     def to_dict(self) -> dict:
         """Convert to JSON-safe dictionary."""
-        return {
+        result = {
             "column_name": self.column_name,
             "data_type": self.data_type,
             "is_constraint_backed": self.is_constraint_backed,
@@ -130,6 +131,9 @@ class PKCandidate:
             "is_non_null": self.is_non_null,
             "is_pk_type": self.is_pk_type,
         }
+        if self.constraint_enforced is not None:
+            result["constraint_enforced"] = self.constraint_enforced
+        return result
 
 
 @dataclass
@@ -147,14 +151,14 @@ class FKCandidateData:
     target_is_primary_key: bool
     target_is_unique: bool
     target_is_nullable: bool
-    target_has_index: bool
+    target_has_index: bool | None = None  # None when dialect doesn't support indexes
     overlap_count: int | None = None
     overlap_percentage: float | None = None
 
     def to_dict(self) -> dict:
         """Convert to JSON-safe dictionary.
 
-        Overlap fields omitted when None.
+        Overlap fields omitted when None. target_has_index omitted when None.
         """
         result = {
             "source_column": self.source_column,
@@ -168,8 +172,10 @@ class FKCandidateData:
             "target_is_primary_key": self.target_is_primary_key,
             "target_is_unique": self.target_is_unique,
             "target_is_nullable": self.target_is_nullable,
-            "target_has_index": self.target_has_index,
         }
+
+        if self.target_has_index is not None:
+            result["target_has_index"] = self.target_has_index
 
         # Only include overlap fields if present
         if self.overlap_count is not None:
