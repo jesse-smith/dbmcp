@@ -110,9 +110,9 @@ Plans:
   3. find_pk_candidates works across all dialects using uniqueness/null checks, with informational-constraint awareness for Databricks
   4. find_fk_candidates works across all dialects using Inspector-based index checks and value overlap via INTERSECT
   5. Databricks partition metadata is surfaced in table schema responses
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 12-01-PLAN.md — Infrastructure, column stats adaptation, and Databricks fast path
+- [x] 12-01-PLAN.md — Infrastructure, column stats adaptation, and Databricks fast path
 - [ ] 12-02-PLAN.md — PK/FK discovery adaptation and MCP tool wiring
 
 ### Phase 13: Test Infrastructure & Coverage
@@ -143,5 +143,5 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 9. Config Discrimination & Validation Dialect | v2.0 | 2/2 | Complete | - |
 | 10. GenericDialect & Tool Interface | v2.0 | 3/3 | Complete    | 2026-04-14 |
 | 11. DatabricksDialect | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 12. Analysis Module Adaptation | v2.0 | 0/2 | Not started | - |
+| 12. Analysis Module Adaptation | v2.0 | 1/2 | In Progress|  |
 | 13. Test Infrastructure & Coverage | v2.0 | 0/0 | Not started | - |
