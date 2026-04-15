@@ -162,6 +162,28 @@ class TestDatabricksDialect:
         finally:
             databricks_mod._databricks_import_error = original_error
 
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_create_engine_empty_token(self, mock_sa_create_engine):
+        """Empty token results in databricks://token:@host URL."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            databricks_mod._databricks_import_error = None
+            dialect = databricks_mod.DatabricksDialect()
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                host="test.databricks.com",
+                http_path="/sql/1.0/warehouses/abc",
+                token="",
+            )
+
+            url = mock_sa_create_engine.call_args[0][0]
+            assert "databricks://token:@test.databricks.com" in url
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
 
 class TestDatabricksDialectRegistration:
     """Tests for dialect registry integration."""
