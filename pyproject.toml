@@ -34,7 +34,8 @@ mssql = [
     "azure-identity>=1.14.0",
 ]
 databricks = [
-    # Phase 11 will populate with databricks-sqlalchemy and databricks-sql-connector
+    "databricks-sqlalchemy>=2.0.0",
+    "databricks-sql-connector>=4.0.0",
 ]
 examples = [
     "jupyter>=1.0.0",
