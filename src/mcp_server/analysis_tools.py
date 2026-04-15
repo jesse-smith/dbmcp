@@ -10,7 +10,7 @@ All tools expose raw statistics and structural metadata only — no interpretati
 
 import asyncio
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.analysis.column_stats import ColumnStatsCollector
@@ -89,28 +89,28 @@ async def get_column_info(
     def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
+        dialect = conn_manager.get_dialect(connection_id)
 
         with engine.connect() as connection:
-            table_exists_query = text("""
-                SELECT COUNT(*)
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-            """)
-            result = connection.execute(
-                table_exists_query,
-                {"schema_name": schema_name, "table_name": table_name}
-            )
-            if result.scalar() == 0:
-                return {
-                    "status": "error",
-                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                }
+            inspector = inspect(engine)
+
+            # Table existence check via Inspector (dialect-agnostic)
+            table_names = inspector.get_table_names(schema=schema_name)
+            if table_name not in table_names:
+                # Also check views
+                view_names = inspector.get_view_names(schema=schema_name)
+                if table_name not in view_names:
+                    return {
+                        "status": "error",
+                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                    }
 
             collector = ColumnStatsCollector(
                 connection=connection,
                 schema_name=schema_name,
                 table_name=table_name,
+                dialect=dialect,
+                inspector=inspector,
             )
 
             column_stats = collector.get_columns_info(
