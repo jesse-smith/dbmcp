@@ -67,17 +67,18 @@ class DatabricksDialect:
 
         Args:
             **kwargs: Connection parameters:
-                host (str): Databricks workspace hostname.
-                http_path (str): SQL warehouse HTTP path.
-                token (str): Personal access token or OAuth token.
-                catalog (str): Unity Catalog name (default "main").
-                schema (str): Schema name (default "default").
+                host (str): Databricks workspace hostname. (required)
+                http_path (str): SQL warehouse HTTP path. (required)
+                token (str): Personal access token or OAuth token. (optional)
+                catalog (str): Unity Catalog name (default "main"). (optional)
+                schema (str): Schema name (default "default"). (optional)
 
         Returns:
             Configured SQLAlchemy Engine.
 
         Raises:
             ImportError: If databricks-sqlalchemy is not installed.
+            ValueError: If required parameters are missing.
         """
         if _databricks_import_error is not None:
             raise ImportError(
@@ -85,8 +86,13 @@ class DatabricksDialect:
                 "Install with: pip install dbmcp[databricks]"
             ) from _databricks_import_error
 
-        host: str = kwargs["host"]
-        http_path: str = kwargs["http_path"]
+        # Validate required parameters
+        try:
+            host: str = kwargs["host"]
+            http_path: str = kwargs["http_path"]
+        except KeyError as e:
+            raise ValueError(f"Missing required parameter: {e.args[0]}") from e
+
         token: str = kwargs.get("token", "")
         catalog: str = kwargs.get("catalog", "main")
         schema: str = kwargs.get("schema", "default")
