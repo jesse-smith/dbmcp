@@ -14,7 +14,7 @@ Tests cover:
 """
 
 from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from sqlalchemy import types as sa_types
