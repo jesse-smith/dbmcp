@@ -925,7 +925,7 @@ class TestDescribeExtended:
         assert result == {}
 
     def test_returns_empty_dict_on_sql_error(self):
-        """_parse_databricks_table_properties returns empty dict on SQL failure."""
+        """_parse_databricks_table_properties returns error indicator on SQL failure."""
         service, engine = self._make_service_with_mock_engine()
         mock_conn = MagicMock()
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
@@ -934,7 +934,8 @@ class TestDescribeExtended:
         engine.connect.return_value = mock_conn
 
         result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
-        assert result == {}
+        assert "_describe_extended_error" in result
+        assert "SQLAlchemyError: connection lost" in result["_describe_extended_error"]
 
     def test_omits_partition_columns_when_not_partitioned(self):
         """_parse_databricks_table_properties omits partition_columns for non-partitioned."""
