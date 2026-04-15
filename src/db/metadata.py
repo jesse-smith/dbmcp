@@ -835,6 +835,10 @@ class MetadataService:
             dte_props = self._parse_databricks_table_properties(
                 table_name, schema_name, dte_catalog
             )
+            # Optionally log or surface error to user
+            if "_describe_extended_error" in dte_props:
+                logger.debug(f"Could not retrieve extended properties: {dte_props['_describe_extended_error']}")
+                dte_props.pop("_describe_extended_error")  # Don't include in response
             # Merge DTE properties into result (only present keys)
             result.update(dte_props)
             # Add catalog to response for Databricks (D-11)
@@ -849,7 +853,8 @@ class MetadataService:
         """Parse DESCRIBE TABLE EXTENDED for Databricks-specific properties.
 
         Returns dict with optional keys: owner, storage_format, table_type_detail,
-        created_time, location, partition_columns.
+        created_time, location, partition_columns. On failure, returns dict with
+        '_describe_extended_error' key containing error message.
 
         All identifiers are backtick-quoted via dialect.quote_identifier() to
         prevent SQL injection (T-11-04).
@@ -860,7 +865,7 @@ class MetadataService:
             catalog: Catalog name
 
         Returns:
-            Dictionary of parsed properties. Empty dict on failure.
+            Dictionary of parsed properties. Dict with '_describe_extended_error' key on failure.
         """
         try:
             quoted_catalog = self._dialect.quote_identifier(catalog)
@@ -918,11 +923,12 @@ class MetadataService:
 
         except Exception as e:
             # T-11-06: Never let DTE parsing failure break get_table_schema
+            error_msg = f"{type(e).__name__}: {e}"
             logger.warning(
-                f"Failed to parse DESCRIBE EXTENDED for {catalog}.{schema_name}.{table_name}: "
-                f"{type(e).__name__}: {e}"
+                f"Failed to parse DESCRIBE EXTENDED for {catalog}.{schema_name}.{table_name}: {error_msg}"
             )
-            return {}
+            # Return error indicator so caller can optionally surface it
+            return {"_describe_extended_error": error_msg}
 
     def table_exists(self, table_name: str, schema_name: str = "dbo") -> bool:
         """Check if a table exists.
