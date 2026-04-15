@@ -405,22 +405,22 @@ if target_tables is not None:
 | A4 | Databricks INFORMATION_SCHEMA.TABLE_CONSTRAINTS includes ENFORCED column | Constraint Semantics | MEDIUM -- documented in Databricks docs but not empirically verified against live cluster |
 | A5 | Transpilation helper in shared `src/analysis/_sql.py` is the right abstraction | Architecture Patterns | LOW -- if pattern doesn't repeat enough, can inline instead |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Databricks DESCRIBE EXTENDED column stats key names**
    - What we know: D-09 specifies "min", "max", "num_nulls", "distinct_count", "avg_col_len", "max_col_len"
    - What's unclear: Exact key casing, whether empty stats return empty rows or no rows at all
-   - Recommendation: Build parser defensively with case-insensitive matching and handle both empty-row and absent-row cases. The probe-first-column heuristic (D-08) means we only need to handle the "no stats" case once.
+   - RESOLVED: Build parser defensively with case-insensitive matching and handle both empty-row and absent-row cases. The probe-first-column heuristic (D-08) means we only need to handle the "no stats" case once.
 
 2. **Generic dialect time component detection**
    - What we know: HOUR/MINUTE/SECOND work in PostgreSQL and Databricks
    - What's unclear: Whether they work in SQLite (which has limited datetime support)
-   - Recommendation: Use HOUR/MINUTE/SECOND for Databricks and generic. SQLite is not a primary target and can fall back to "other" classification for datetime columns.
+   - RESOLVED: Use HOUR/MINUTE/SECOND for Databricks and generic. SQLite is not a primary target and can fall back to "other" classification for datetime columns.
 
 3. **catalog parameter plumbing for Databricks analysis tools**
    - What we know: MetadataService receives catalog as a parameter for Databricks cross-catalog queries
    - What's unclear: Whether analysis tools need a catalog parameter or can infer from connection default
-   - Recommendation: Databricks DESCRIBE EXTENDED needs fully-qualified `catalog.schema.table`. The catalog should come from the connection's default catalog (already set in engine URL). The MCP tool interface should not need a catalog parameter for analysis tools -- it's implicit in the connection.
+   - RESOLVED: Databricks DESCRIBE EXTENDED needs fully-qualified `catalog.schema.table`. The catalog comes from the connection's default catalog (already set in engine URL). The MCP tool interface does not need a catalog parameter for analysis tools -- it's implicit in the connection.
 
 ## Validation Architecture
 
