@@ -404,8 +404,12 @@ class ColumnStatsCollector:
             except (ValueError, TypeError):
                 return None
 
-        null_count = safe_int(desc_stats.get("num_nulls")) or 0
-        distinct_count = safe_int(desc_stats.get("distinct_count")) or 0
+        null_count = safe_int(desc_stats.get("num_nulls"))
+        if null_count is None:
+            null_count = 0
+        distinct_count = safe_int(desc_stats.get("distinct_count"))
+        if distinct_count is None:
+            distinct_count = 0
 
         numeric_stats = None
         if type_category == "numeric":
