@@ -70,7 +70,8 @@ def _get_metadata_service(connection_id: str) -> MetadataService:
     """Get a MetadataService for the given connection."""
     conn_manager = get_connection_manager()
     engine = conn_manager.get_engine(connection_id)
-    return MetadataService(engine)
+    dialect = conn_manager.get_dialect(connection_id)
+    return MetadataService(engine, dialect=dialect)
 
 
 # =============================================================================
@@ -200,7 +201,7 @@ async def connect_database(
 
 
 @mcp.tool()
-async def list_schemas(connection_id: str) -> str:
+async def list_schemas(connection_id: str, catalog: str | None = None) -> str:
     """List all schemas in the connected database.
 
     Returns schemas with table and view counts, sorted by table count descending.
@@ -208,6 +209,8 @@ async def list_schemas(connection_id: str) -> str:
 
     Args:
         connection_id: Connection ID from connect_database
+        catalog: Optional Databricks catalog name. Overrides the connection's
+            default catalog. Ignored for non-Databricks dialects.
 
     Returns:
         TOON-encoded string with schema list:
@@ -225,7 +228,7 @@ async def list_schemas(connection_id: str) -> str:
     """
     def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
-        schemas = metadata_svc.list_schemas(connection_id=connection_id)
+        schemas = metadata_svc.list_schemas(connection_id=connection_id, catalog=catalog)
         return {
             "status": "success",
             "schemas": [
@@ -266,6 +269,7 @@ async def list_tables(
     offset: int = 0,
     object_type: str | None = None,
     output_mode: str = "summary",
+    catalog: str | None = None,
 ) -> str:
     """List tables in specified schema(s) with row counts and metadata.
 
@@ -285,6 +289,8 @@ async def list_tables(
         offset: Number of results to skip for pagination (default: 0)
         object_type: Filter by type - 'table', 'view', or None for all (default: None)
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
+        catalog: Optional Databricks catalog name. Overrides the connection's
+            default catalog. Ignored for non-Databricks dialects.
 
     Returns:
         TOON-encoded string with table list and pagination metadata:
@@ -329,6 +335,7 @@ async def list_tables(
                 offset=offset,
                 object_type=object_type,
                 connection_id=connection_id,
+                catalog=catalog,
             )
             all_tables.extend(tables)
             total_count += pagination.get("total_count", len(tables))
@@ -376,6 +383,7 @@ async def get_table_schema(
     schema_name: str = "dbo",
     include_indexes: bool = True,
     include_relationships: bool = True,
+    catalog: str | None = None,
 ) -> str:
     """Get detailed schema for a specific table.
 
@@ -388,6 +396,8 @@ async def get_table_schema(
         schema_name: Schema name (default: 'dbo')
         include_indexes: Include index information (default: True)
         include_relationships: Include declared foreign keys (default: True)
+        catalog: Optional Databricks catalog name. Overrides the connection's
+            default catalog. Ignored for non-Databricks dialects.
 
     Returns:
         TOON-encoded string with table schema details:
@@ -436,6 +446,7 @@ async def get_table_schema(
             schema_name=schema_name,
             include_indexes=include_indexes,
             include_relationships=include_relationships,
+            catalog=catalog,
         )
 
         return {"status": "success", "table": schema}

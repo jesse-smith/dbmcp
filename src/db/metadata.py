@@ -76,7 +76,7 @@ class MetadataService:
         """Check if connected to SQL Server."""
         return self.dialect_name == "mssql"
 
-    def list_schemas(self, connection_id: str = "") -> list[Schema]:
+    def list_schemas(self, connection_id: str = "", catalog: str | None = None) -> list[Schema]:
         """List all schemas with table and view counts.
 
         Uses SQL Server DMVs for efficiency when available, falls back to
@@ -84,13 +84,18 @@ class MetadataService:
 
         Args:
             connection_id: Optional connection ID for schema_id generation
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. Ignored for non-Databricks dialects.
 
         Returns:
             List of Schema objects sorted by table count descending
         """
         start_time = time.time()
 
-        if self._dialect and self._dialect.has_fast_row_counts:
+        # Databricks with explicit catalog: use raw SQL for cross-catalog query
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            result = self._list_schemas_databricks(connection_id, catalog)
+        elif self._dialect and self._dialect.has_fast_row_counts:
             result = self._list_schemas_mssql(connection_id)
         else:
             result = self._list_schemas_generic(connection_id)
@@ -136,6 +141,28 @@ class MetadataService:
                 ))
 
         logger.debug(f"Found {len(schemas)} schemas (SQL Server)")
+        return schemas
+
+    def _list_schemas_databricks(self, connection_id: str, catalog: str) -> list[Schema]:
+        """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries."""
+        schemas = []
+        quoted_catalog = self._dialect.quote_identifier(catalog)
+
+        with self.engine.connect() as conn:
+            result = conn.execute(text(f"SHOW SCHEMAS IN {quoted_catalog}"))
+            for row in result.fetchall():
+                schema_name = row[0]
+                schema_id = f"{connection_id}_{schema_name}" if connection_id else schema_name
+                schemas.append(Schema(
+                    schema_id=schema_id,
+                    connection_id=connection_id,
+                    schema_name=schema_name,
+                    table_count=0,  # Not available from SHOW SCHEMAS
+                    view_count=0,
+                    last_scanned=datetime.now(),
+                ))
+
+        logger.debug(f"Found {len(schemas)} schemas (Databricks catalog={catalog})")
         return schemas
 
     def _list_schemas_generic(self, connection_id: str = "") -> list[Schema]:
@@ -198,6 +225,7 @@ class MetadataService:
         offset: int = 0,
         object_type: str | None = None,
         connection_id: str = "",
+        catalog: str | None = None,
     ) -> tuple[list[Table], dict]:
         """List tables with row counts and metadata.
 
@@ -214,6 +242,8 @@ class MetadataService:
             offset: Number of tables to skip for pagination (T132)
             object_type: Filter by type - 'table', 'view', or None for all (T133)
             connection_id: Connection ID for table_id generation
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. Ignored for non-Databricks dialects.
 
         Returns:
             Tuple of (List of Table objects, pagination metadata dict)
@@ -221,7 +251,13 @@ class MetadataService:
         """
         start_time = time.time()
 
-        if self._dialect and self._dialect.has_fast_row_counts:
+        # Databricks with explicit catalog: use raw SQL for cross-catalog query
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            result, pagination = self._list_tables_databricks(
+                schema_name or "default", catalog, name_pattern,
+                sort_by, sort_order, limit, offset, connection_id
+            )
+        elif self._dialect and self._dialect.has_fast_row_counts:
             result, pagination = self._list_tables_mssql(
                 schema_name, name_pattern, min_row_count,
                 sort_by, sort_order, limit, offset, object_type, connection_id
@@ -249,12 +285,74 @@ class MetadataService:
         pattern = name_pattern.replace("%", "*").replace("_", "?")
         return fnmatch.fnmatch(name, pattern)
 
+    def _list_tables_databricks(
+        self,
+        schema_name: str,
+        catalog: str,
+        name_pattern: str | None,
+        sort_by: str,
+        sort_order: str,
+        limit: int,
+        offset: int,
+        connection_id: str,
+    ) -> tuple[list[Table], dict]:
+        """Databricks table listing using SHOW TABLES IN for cross-catalog queries."""
+        tables: list[Table] = []
+        quoted_catalog = self._dialect.quote_identifier(catalog)
+        quoted_schema = self._dialect.quote_identifier(schema_name)
+
+        with self.engine.connect() as conn:
+            result = conn.execute(
+                text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
+            )
+            for row in result.fetchall():
+                # SHOW TABLES returns (database, tableName, isTemporary)
+                table_name = row[1] if len(row) > 1 else row[0]
+
+                if not self._matches_name_pattern(table_name, name_pattern):
+                    continue
+
+                table_id = f"{catalog}.{schema_name}.{table_name}"
+                tables.append(Table(
+                    table_id=table_id,
+                    schema_id=schema_name,
+                    table_name=table_name,
+                    table_type=TableType.TABLE,
+                    row_count=None,  # Not available from SHOW TABLES
+                    row_count_updated=datetime.now(),
+                    has_primary_key=False,
+                    last_modified=None,
+                    access_denied=False,
+                ))
+
+        # Sort
+        reverse = sort_order.lower() == "desc"
+        if sort_by == "name":
+            tables.sort(key=lambda t: t.table_name, reverse=reverse)
+
+        # Pagination
+        total_count = len(tables)
+        effective_limit = min(max(limit, 1), 1000)
+        effective_offset = max(offset, 0)
+        tables = tables[effective_offset:effective_offset + effective_limit]
+
+        pagination = {
+            "total_count": total_count,
+            "offset": effective_offset,
+            "limit": effective_limit,
+            "has_more": (effective_offset + len(tables)) < total_count,
+        }
+
+        logger.debug(f"Found {len(tables)} tables (Databricks catalog={catalog}.{schema_name})")
+        return tables, pagination
+
     def _collect_objects_from_schema(
         self,
         schema: str | None,
         table_type: TableType,
         name_pattern: str | None,
         min_row_count: int | None,
+        catalog: str | None = None,
     ) -> list[Table]:
         """Collect tables or views from a single schema.
 
@@ -263,6 +361,7 @@ class MetadataService:
             table_type: TABLE or VIEW
             name_pattern: SQL LIKE pattern for name filtering
             min_row_count: Minimum row count threshold (tables only)
+            catalog: Optional catalog for three-level Databricks table IDs (D-11)
 
         Returns:
             List of matching Table objects
@@ -274,6 +373,13 @@ class MetadataService:
             names = self.inspector.get_table_names(schema=schema)
         else:
             names = self.inspector.get_view_names(schema=schema)
+
+        # Determine table_id format: three-level for Databricks, two-level otherwise
+        use_three_level = (
+            catalog is not None
+            and self._dialect is not None
+            and self._dialect.name == "databricks"
+        )
 
         results: list[Table] = []
         for name in names:
@@ -287,8 +393,13 @@ class MetadataService:
 
             has_pk = self._has_primary_key(name, schema) if is_table else False
 
+            if use_three_level:
+                table_id = f"{catalog}.{display_schema}.{name}"
+            else:
+                table_id = f"{display_schema}.{name}"
+
             results.append(Table(
-                table_id=f"{display_schema}.{name}",
+                table_id=table_id,
                 schema_id=display_schema,
                 table_name=name,
                 table_type=table_type,
@@ -650,6 +761,7 @@ class MetadataService:
         schema_name: str = "dbo",
         include_indexes: bool = True,
         include_relationships: bool = True,
+        catalog: str | None = None,
     ) -> dict:
         """Get complete table schema including columns, indexes, and FKs.
 
@@ -660,6 +772,8 @@ class MetadataService:
             schema_name: Schema name (default: 'dbo')
             include_indexes: Include index information
             include_relationships: Include declared foreign keys
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. Ignored for non-Databricks dialects.
 
         Returns:
             Dictionary with complete table metadata

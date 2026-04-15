@@ -143,6 +143,7 @@ def _list_schemas_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -168,6 +169,7 @@ def _list_tables_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -227,6 +229,7 @@ def _get_table_schema_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -240,6 +243,7 @@ def _get_table_schema_error_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
