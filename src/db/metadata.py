@@ -354,6 +354,23 @@ class MetadataService:
         logger.debug(f"Found {len(tables)} tables (Databricks catalog={catalog}.{schema_name})")
         return tables, pagination
 
+    def _should_use_three_level_table_ids(self, catalog: str | None) -> bool:
+        """Determine if table IDs should use three-level format (catalog.schema.table).
+
+        Three-level IDs are used for Databricks when a catalog is explicitly provided.
+
+        Args:
+            catalog: Optional catalog name
+
+        Returns:
+            True if three-level IDs should be used
+        """
+        return (
+            catalog is not None
+            and self._dialect is not None
+            and self._dialect.name == "databricks"
+        )
+
     def _collect_objects_from_schema(
         self,
         schema: str | None,
@@ -382,12 +399,7 @@ class MetadataService:
         else:
             names = self.inspector.get_view_names(schema=schema)
 
-        # Determine table_id format: three-level for Databricks, two-level otherwise
-        use_three_level = (
-            catalog is not None
-            and self._dialect is not None
-            and self._dialect.name == "databricks"
-        )
+        use_three_level = self._should_use_three_level_table_ids(catalog)
 
         results: list[Table] = []
         for name in names:
