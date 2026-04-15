@@ -5,13 +5,18 @@ Adapts SQL patterns from former src/inference/column_stats.py with key differenc
 - Column filtering by name list or LIKE pattern
 - Returns ColumnStatistics model instances (no inference fields)
 - No interpretive logic (raw statistics only)
+- Dialect-aware: transpiles TSQL base queries via sqlglot
+- Databricks fast path via DESCRIBE EXTENDED precomputed stats
 """
 
+import fnmatch
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
+from sqlalchemy import types as sa_types
 from sqlalchemy.engine import Connection
 
+from src.analysis._sql import transpile_query
 from src.models.analysis import (
     ColumnStatistics,
     DateTimeStats,
@@ -34,40 +39,20 @@ class ColumnStatsCollector:
     - DateTime stats: min/max date, range in days, time component detection
     - String stats: min/max/avg length, top frequent values
     - Batch column analysis with filtering
+    - Cross-dialect support via sqlglot transpilation
+    - Databricks DESCRIBE EXTENDED fast path
     """
 
-    # SQL Server numeric types
-    NUMERIC_TYPES = {
-        "int",
-        "bigint",
-        "smallint",
-        "tinyint",
-        "decimal",
-        "numeric",
-        "float",
-        "real",
-        "money",
-        "smallmoney",
+    # SQL Server string-based type sets (fallback when Inspector unavailable)
+    _NUMERIC_TYPES_STR = {
+        "int", "bigint", "smallint", "tinyint", "decimal", "numeric",
+        "float", "real", "money", "smallmoney",
     }
-
-    # SQL Server datetime types
-    DATETIME_TYPES = {
-        "date",
-        "datetime",
-        "datetime2",
-        "smalldatetime",
-        "datetimeoffset",
-        "time",
+    _DATETIME_TYPES_STR = {
+        "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset", "time",
     }
-
-    # SQL Server string types
-    STRING_TYPES = {
-        "char",
-        "varchar",
-        "text",
-        "nchar",
-        "nvarchar",
-        "ntext",
+    _STRING_TYPES_STR = {
+        "char", "varchar", "text", "nchar", "nvarchar", "ntext",
     }
 
     def __init__(
@@ -96,14 +81,11 @@ class ColumnStatsCollector:
         self._qualified_table = f"[{schema_name}].[{table_name}]"
 
     def column_exists(self, column_name: str) -> bool:
-        """Check if a column exists in the table.
-
-        Args:
-            column_name: Column name to check
-
-        Returns:
-            True if column exists, False otherwise
-        """
+        """Check if a column exists in the table."""
+        if self._inspector is not None:
+            columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
+            return any(c["name"] == column_name for c in columns)
+        # Fallback: INFORMATION_SCHEMA (MSSQL backward compat)
         query = text("""
             SELECT COUNT(*)
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -111,7 +93,6 @@ class ColumnStatsCollector:
                 AND TABLE_NAME = :table_name
                 AND COLUMN_NAME = :column_name
         """)
-
         result = self.connection.execute(
             query,
             {
@@ -122,15 +103,28 @@ class ColumnStatsCollector:
         )
         return result.scalar() > 0
 
-    def get_columns_by_pattern(self, pattern: str) -> list[tuple[str, str]]:
+    def get_columns_by_pattern(
+        self, pattern: str
+    ) -> list[tuple[str, "sa_types.TypeEngine | str"]]:
         """Get columns matching a LIKE pattern.
 
         Args:
             pattern: SQL LIKE pattern (e.g., '%_id')
 
         Returns:
-            List of (column_name, data_type) tuples
+            List of (column_name, type_info) tuples.
+            type_info is TypeEngine when Inspector available, else data_type string.
         """
+        if self._inspector is not None:
+            columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
+            # Convert SQL LIKE pattern to fnmatch: % -> *, _ -> ?
+            glob_pattern = pattern.replace("%", "*").replace("_", "?")
+            return [
+                (c["name"], c["type"])
+                for c in columns
+                if fnmatch.fnmatch(c["name"], glob_pattern)
+            ]
+        # Fallback: INFORMATION_SCHEMA
         query = text("""
             SELECT COLUMN_NAME, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -139,7 +133,6 @@ class ColumnStatsCollector:
                 AND COLUMN_NAME LIKE :pattern
             ORDER BY ORDINAL_POSITION
         """)
-
         result = self.connection.execute(
             query,
             {
@@ -148,17 +141,22 @@ class ColumnStatsCollector:
                 "pattern": pattern,
             },
         )
-        return result.fetchall()
+        return [(row[0], row[1]) for row in result.fetchall()]
 
-    def get_column_data_type(self, column_name: str) -> str:
+    def get_column_data_type(
+        self, column_name: str
+    ) -> "sa_types.TypeEngine | str":
         """Get the data type for a column.
 
-        Args:
-            column_name: Column name
-
-        Returns:
-            SQL data type string
+        Returns TypeEngine when Inspector available, else data_type string.
         """
+        if self._inspector is not None:
+            columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
+            for c in columns:
+                if c["name"] == column_name:
+                    return c["type"]
+            return sa_types.NullType()
+        # Fallback: INFORMATION_SCHEMA
         query = text("""
             SELECT DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -166,7 +164,6 @@ class ColumnStatsCollector:
                 AND TABLE_NAME = :table_name
                 AND COLUMN_NAME = :column_name
         """)
-
         result = self.connection.execute(
             query,
             {
@@ -178,24 +175,45 @@ class ColumnStatsCollector:
         row = result.fetchone()
         return row[0] if row else "unknown"
 
-    def get_basic_stats(self, column_name: str, data_type: str) -> dict:
-        """Collect basic statistics for a column.
+    def _get_type_category(self, data_type: "sa_types.TypeEngine | str") -> str:
+        """Classify a type into analysis categories.
 
-        Args:
-            column_name: Column name
-            data_type: SQL data type
-
-        Returns:
-            Dictionary with total_rows, distinct_count, null_count, null_percentage
+        Accepts either a SQLAlchemy TypeEngine object (isinstance-based) or
+        a data type string (set-based fallback for backward compat).
         """
-        # Build query for basic stats
-        query = text(f"""
+        if isinstance(data_type, sa_types.TypeEngine):
+            if isinstance(data_type, (sa_types.Integer, sa_types.Numeric, sa_types.Float)):
+                return "numeric"
+            # MSSQL MONEY/SMALLMONEY don't inherit from Numeric
+            type_name = type(data_type).__name__.upper()
+            if type_name in ("MONEY", "SMALLMONEY"):
+                return "numeric"
+            if isinstance(data_type, (sa_types.DateTime, sa_types.Date, sa_types.Time)):
+                return "datetime"
+            if isinstance(data_type, (sa_types.String, sa_types.Text)):
+                return "string"
+            return "other"
+        # String-based fallback
+        data_type_lower = data_type.lower()
+        if data_type_lower in self._NUMERIC_TYPES_STR:
+            return "numeric"
+        elif data_type_lower in self._DATETIME_TYPES_STR:
+            return "datetime"
+        elif data_type_lower in self._STRING_TYPES_STR:
+            return "string"
+        else:
+            return "other"
+
+    def get_basic_stats(self, column_name: str, data_type: str) -> dict:
+        """Collect basic statistics for a column."""
+        sql = f"""
             SELECT
                 COUNT(*) as total_rows,
                 COUNT(DISTINCT [{column_name}]) as distinct_count,
                 SUM(CASE WHEN [{column_name}] IS NULL THEN 1 ELSE 0 END) as null_count
             FROM {self._qualified_table}
-        """)
+        """
+        query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
         row = result.fetchone()
@@ -214,17 +232,8 @@ class ColumnStatsCollector:
         }
 
     def get_numeric_stats(self, column_name: str) -> NumericStats:
-        """Collect numeric statistics for a column.
-
-        Adapted from former ColumnStatsCollector (lines 175-241).
-
-        Args:
-            column_name: Column name
-
-        Returns:
-            NumericStats instance (fields may be None if all values are NULL)
-        """
-        query = text(f"""
+        """Collect numeric statistics for a column."""
+        sql = f"""
             SELECT
                 MIN(CAST([{column_name}] AS FLOAT)) as min_value,
                 MAX(CAST([{column_name}] AS FLOAT)) as max_value,
@@ -232,7 +241,8 @@ class ColumnStatsCollector:
                 STDEV(CAST([{column_name}] AS FLOAT)) as std_dev
             FROM {self._qualified_table}
             WHERE [{column_name}] IS NOT NULL
-        """)
+        """
+        query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
         row = result.fetchone()
@@ -253,17 +263,18 @@ class ColumnStatsCollector:
         )
 
     def get_datetime_stats(self, column_name: str) -> DateTimeStats:
-        """Collect datetime statistics for a column.
+        """Collect datetime statistics for a column."""
+        # Time component detection varies by dialect
+        if self._dialect and self._dialect.name in ("databricks", "generic"):
+            time_check = (
+                f"HOUR([{column_name}]) <> 0 "
+                f"OR MINUTE([{column_name}]) <> 0 "
+                f"OR SECOND([{column_name}]) <> 0"
+            )
+        else:
+            time_check = f"CAST([{column_name}] AS TIME) <> '00:00:00'"
 
-        Adapted from former ColumnStatsCollector (lines 243-332).
-
-        Args:
-            column_name: Column name
-
-        Returns:
-            DateTimeStats instance (fields may be None if all values are NULL)
-        """
-        query = text(f"""
+        sql = f"""
             SELECT
                 MIN([{column_name}]) as min_date,
                 MAX([{column_name}]) as max_date,
@@ -272,14 +283,15 @@ class ColumnStatsCollector:
                     WHEN EXISTS (
                         SELECT 1
                         FROM {self._qualified_table}
-                        WHERE CAST([{column_name}] AS TIME) <> '00:00:00'
+                        WHERE {time_check}
                     )
                     THEN 1
                     ELSE 0
                 END as has_time_component
             FROM {self._qualified_table}
             WHERE [{column_name}] IS NOT NULL
-        """)
+        """
+        query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
         row = result.fetchone()
@@ -302,26 +314,17 @@ class ColumnStatsCollector:
     def get_string_stats(
         self, column_name: str, sample_size: int = 10
     ) -> StringStats:
-        """Collect string statistics for a column.
-
-        Adapted from former ColumnStatsCollector (lines 334-408).
-
-        Args:
-            column_name: Column name
-            sample_size: Number of top frequent values to return
-
-        Returns:
-            StringStats instance (fields may be None if all values are NULL)
-        """
+        """Collect string statistics for a column."""
         # Get length statistics
-        length_query = text(f"""
+        length_sql = f"""
             SELECT
                 MIN(LEN([{column_name}])) as min_length,
                 MAX(LEN([{column_name}])) as max_length,
                 AVG(CAST(LEN([{column_name}]) AS FLOAT)) as avg_length
             FROM {self._qualified_table}
             WHERE [{column_name}] IS NOT NULL
-        """)
+        """
+        length_query = text(transpile_query(length_sql, self._dialect))
 
         length_result = self.connection.execute(length_query)
         length_row = length_result.fetchone()
@@ -331,7 +334,7 @@ class ColumnStatsCollector:
         avg_length = length_row[2] if length_row else None
 
         # Get top frequent values
-        sample_query = text(f"""
+        sample_sql = f"""
             SELECT TOP {sample_size}
                 [{column_name}] as value,
                 COUNT(*) as frequency
@@ -339,7 +342,8 @@ class ColumnStatsCollector:
             WHERE [{column_name}] IS NOT NULL
             GROUP BY [{column_name}]
             ORDER BY COUNT(*) DESC, [{column_name}]
-        """)
+        """
+        sample_query = text(transpile_query(sample_sql, self._dialect))
 
         sample_result = self.connection.execute(sample_query)
         sample_values = [(row[0], row[1]) for row in sample_result.fetchall()]
@@ -351,56 +355,113 @@ class ColumnStatsCollector:
             sample_values=sample_values,
         )
 
-    def _get_type_category(self, data_type: str) -> str:
-        """Determine the category of a data type.
+    def _try_describe_extended_stats(self, column_name: str) -> dict | None:
+        """Try to get precomputed stats via Databricks DESCRIBE EXTENDED.
 
-        Args:
-            data_type: SQL data type string
-
-        Returns:
-            'numeric', 'datetime', 'string', or 'other'
+        Returns dict with stat keys if available, None if not.
         """
-        data_type_lower = data_type.lower()
+        if not self._dialect or self._dialect.name != "databricks":
+            return None
 
-        if data_type_lower in self.NUMERIC_TYPES:
-            return "numeric"
-        elif data_type_lower in self.DATETIME_TYPES:
-            return "datetime"
-        elif data_type_lower in self.STRING_TYPES:
-            return "string"
-        else:
-            return "other"
+        qi = self._dialect.quote_identifier
+        qualified_table = f"{qi(self.schema_name)}.{qi(self.table_name)}"
+        sql = f"DESCRIBE EXTENDED {qualified_table} {qi(column_name)}"
+
+        try:
+            result = self.connection.execute(text(sql))
+            rows = result.fetchall()
+        except Exception:
+            return None
+
+        stat_keys = {"min", "max", "num_nulls", "distinct_count", "avg_col_len", "max_col_len"}
+        stats = {}
+        for row in rows:
+            key = (row[0] or "").strip().lower()
+            val = (row[1] or "").strip()
+            if key in stat_keys:
+                stats[key] = val
+
+        # Check if stats are actually populated
+        if not stats or all(v in ("", "null", "NULL", "None") for v in stats.values()):
+            return None
+        return stats
+
+    def _build_stats_from_describe_extended(
+        self, column_name: str, type_obj: sa_types.TypeEngine, desc_stats: dict
+    ) -> ColumnStatistics:
+        """Build ColumnStatistics from DESCRIBE EXTENDED precomputed stats."""
+        type_category = self._get_type_category(type_obj)
+
+        def safe_int(v):
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+
+        def safe_float(v):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+
+        null_count = safe_int(desc_stats.get("num_nulls")) or 0
+        distinct_count = safe_int(desc_stats.get("distinct_count")) or 0
+
+        numeric_stats = None
+        if type_category == "numeric":
+            numeric_stats = NumericStats(
+                min_value=safe_float(desc_stats.get("min")),
+                max_value=safe_float(desc_stats.get("max")),
+                mean_value=None,  # DESCRIBE EXTENDED doesn't provide mean
+                std_dev=None,     # DESCRIBE EXTENDED doesn't provide stddev
+            )
+
+        return ColumnStatistics(
+            column_name=column_name,
+            table_name=self.table_name,
+            schema_name=self.schema_name,
+            data_type=str(type_obj),
+            total_rows=0,  # Not available from DESCRIBE EXTENDED column stats
+            distinct_count=distinct_count,
+            null_count=null_count,
+            null_percentage=0.0,  # Can't compute without total_rows
+            numeric_stats=numeric_stats,
+        )
 
     def get_column_statistics(
         self, column_name: str, sample_size: int = 10
     ) -> ColumnStatistics:
-        """Collect complete statistical profile for a single column.
-
-        Args:
-            column_name: Column name
-            sample_size: Number of top frequent values for string columns
-
-        Returns:
-            ColumnStatistics instance
-
-        Raises:
-            ValueError: If column does not exist
-        """
-        # Verify column exists
+        """Collect complete statistical profile for a single column."""
         if not self.column_exists(column_name):
             raise ValueError(
                 f"Column '{column_name}' not found in table "
                 f"'{self.schema_name}.{self.table_name}'"
             )
 
-        # Get data type
-        data_type = self.get_column_data_type(column_name)
+        # Get type info via Inspector or INFORMATION_SCHEMA
+        type_info = self.get_column_data_type(column_name)
+        if isinstance(type_info, sa_types.TypeEngine):
+            type_obj = type_info
+            data_type_str = str(type_info)
+        else:
+            type_obj = None
+            data_type_str = type_info
 
-        # Get basic stats
-        basic_stats = self.get_basic_stats(column_name, data_type)
+        # Databricks fast path: try DESCRIBE EXTENDED precomputed stats
+        if self._dialect and self._dialect.name == "databricks":
+            desc_stats = self._try_describe_extended_stats(column_name)
+            if desc_stats is not None and type_obj is not None:
+                return self._build_stats_from_describe_extended(
+                    column_name, type_obj, desc_stats
+                )
 
-        # Get type-specific stats
-        type_category = self._get_type_category(data_type)
+        # Tier 2: Standard SQL aggregates (transpiled)
+        basic_stats = self.get_basic_stats(column_name, data_type_str)
+
+        if type_obj is not None:
+            type_category = self._get_type_category(type_obj)
+        else:
+            type_category = self._get_type_category(data_type_str)
 
         numeric_stats = None
         datetime_stats = None
@@ -417,7 +478,7 @@ class ColumnStatsCollector:
             column_name=column_name,
             table_name=self.table_name,
             schema_name=self.schema_name,
-            data_type=data_type,
+            data_type=data_type_str,
             total_rows=basic_stats["total_rows"],
             distinct_count=basic_stats["distinct_count"],
             null_count=basic_stats["null_count"],
@@ -433,50 +494,62 @@ class ColumnStatsCollector:
         column_pattern: str | None = None,
         sample_size: int = 10,
     ) -> list[ColumnStatistics]:
-        """Collect statistics for multiple columns with optional filtering.
-
-        Args:
-            columns: Explicit list of column names (takes precedence over pattern)
-            column_pattern: SQL LIKE pattern for column names
-            sample_size: Number of top frequent values for string columns
-
-        Returns:
-            List of ColumnStatistics instances
-
-        Raises:
-            ValueError: If explicit column does not exist
-        """
-        # Determine which columns to analyze
-        columns_to_analyze = []
+        """Collect statistics for multiple columns with optional filtering."""
+        columns_to_analyze: list[str] = []
 
         if columns is not None:
-            # Explicit list takes precedence - just use column names
             columns_to_analyze = columns
         elif column_pattern is not None:
-            # Use pattern matching - get (column_name, data_type) tuples
             pattern_results = self.get_columns_by_pattern(column_pattern)
-            columns_to_analyze = [col_name for col_name, _dtype in pattern_results]
+            columns_to_analyze = [col_name for col_name, _type_info in pattern_results]
         else:
-            # Get all columns
-            all_columns_query = text("""
-                SELECT COLUMN_NAME
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-                ORDER BY ORDINAL_POSITION
-            """)
-            result = self.connection.execute(
-                all_columns_query,
-                {
-                    "schema_name": self.schema_name,
-                    "table_name": self.table_name,
-                },
-            )
-            columns_to_analyze = [row[0] for row in result.fetchall()]
+            if self._inspector is not None:
+                inspector_cols = self._inspector.get_columns(
+                    self.table_name, schema=self.schema_name
+                )
+                columns_to_analyze = [c["name"] for c in inspector_cols]
+            else:
+                all_columns_query = text("""
+                    SELECT COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = :schema_name
+                        AND TABLE_NAME = :table_name
+                    ORDER BY ORDINAL_POSITION
+                """)
+                result = self.connection.execute(
+                    all_columns_query,
+                    {
+                        "schema_name": self.schema_name,
+                        "table_name": self.table_name,
+                    },
+                )
+                columns_to_analyze = [row[0] for row in result.fetchall()]
 
-        # Collect statistics for each column
+        # Databricks fast path: probe first column to decide bulk strategy
+        use_fast_path = False
+        if (
+            self._dialect
+            and self._dialect.name == "databricks"
+            and columns_to_analyze
+        ):
+            probe_stats = self._try_describe_extended_stats(columns_to_analyze[0])
+            use_fast_path = probe_stats is not None
+
         results = []
         for column_name in columns_to_analyze:
+            if use_fast_path:
+                # Fast path for all columns (DESCRIBE EXTENDED has stats)
+                type_info = self.get_column_data_type(column_name)
+                if isinstance(type_info, sa_types.TypeEngine):
+                    desc_stats = self._try_describe_extended_stats(column_name)
+                    if desc_stats is not None:
+                        results.append(
+                            self._build_stats_from_describe_extended(
+                                column_name, type_info, desc_stats
+                            )
+                        )
+                        continue
+            # Tier 2 fallback
             stats = self.get_column_statistics(column_name, sample_size)
             results.append(stats)
 

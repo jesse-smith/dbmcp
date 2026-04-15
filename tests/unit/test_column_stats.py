@@ -851,5 +851,8 @@ class TestTranspilation:
 
         call_args = mock_connection.execute.call_args
         sql_text = str(call_args[0][0])
-        # Should use HOUR/MINUTE/SECOND instead of CAST AS TIME
-        assert "CAST" not in sql_text.upper() or "AS TIME" not in sql_text.upper()
+        # Should use HOUR/MINUTE/SECOND instead of CAST(... AS TIME)
+        # Note: sqlglot may insert CAST(... AS TIMESTAMP) for DATEDIFF, so check
+        # specifically that there's no "AS TIME)" pattern (the MSSQL time check)
+        assert "AS TIME)" not in sql_text.upper()
+        assert "HOUR" in sql_text.upper()
