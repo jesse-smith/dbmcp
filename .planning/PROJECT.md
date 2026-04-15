@@ -71,7 +71,7 @@ LLM agents can explore and query databases safely, with validated read-only acce
 
 ## Context
 
-- **Current state:** 9 MCP tools, 806 tests, TOON serialization, 70%+ test coverage, 3 dialects (MSSQL, Databricks, Generic)
+- **Current state:** 9 MCP tools, 852 tests, TOON serialization, 70%+ test coverage, 3 dialects (MSSQL, Databricks, Generic), dialect-aware analysis tools
 - **Tech stack:** Python 3.11+, FastMCP, SQLAlchemy, pyodbc, toon-format, sqlglot, azure-identity
 - **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`)
 - **Key modules:** `src/db/` (connection, query, validation, metadata, config), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates), `src/serialization/` (type handlers, TOON)
@@ -123,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-15 after Phase 11 complete — DatabricksDialect with token-auth engine construction, catalog-aware metadata (three-level namespace), DESCRIBE EXTENDED parsing for table properties, index gating, and optional catalog parameter on all schema tools*
+*Last updated: 2026-04-15 after Phase 12 complete — Analysis modules (column stats, PK discovery, FK candidates) adapted for cross-dialect support with sqlglot transpilation, Inspector-based metadata, Databricks DESCRIBE EXTENDED fast path, and capability-gated features*
