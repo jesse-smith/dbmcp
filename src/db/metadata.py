@@ -144,7 +144,11 @@ class MetadataService:
         return schemas
 
     def _list_schemas_databricks(self, connection_id: str, catalog: str) -> list[Schema]:
-        """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries."""
+        """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to prevent
+        SQL injection (per T-11-04 security requirement).
+        """
         schemas = []
         quoted_catalog = self._dialect.quote_identifier(catalog)
 
@@ -296,7 +300,11 @@ class MetadataService:
         offset: int,
         connection_id: str,
     ) -> tuple[list[Table], dict]:
-        """Databricks table listing using SHOW TABLES IN for cross-catalog queries."""
+        """Databricks table listing using SHOW TABLES IN for cross-catalog queries.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to prevent
+        SQL injection (per T-11-04 security requirement).
+        """
         tables: list[Table] = []
         quoted_catalog = self._dialect.quote_identifier(catalog)
         quoted_schema = self._dialect.quote_identifier(schema_name)
