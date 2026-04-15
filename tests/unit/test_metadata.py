@@ -763,3 +763,282 @@ class TestCatalogThreeLevelTableId:
 
         for t in tables:
             assert t.table_id.count(".") == 1, f"Expected two-level ID, got: {t.table_id}"
+
+
+# ============================================================================
+# Index Gating and DESCRIBE EXTENDED Tests (Phase 11, Plan 02 Task 2)
+# ============================================================================
+
+
+class TestIndexGating:
+    """Tests for index gating based on dialect.supports_indexes (D-13)."""
+
+    def test_indexes_omitted_when_supports_indexes_false(self, test_engine):
+        """get_table_schema omits 'indexes' key when dialect.supports_indexes is False."""
+        dialect = _make_databricks_dialect()  # supports_indexes=False
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main")
+        assert "indexes" not in result
+
+    def test_indexes_present_when_supports_indexes_true(self, test_engine):
+        """get_table_schema includes 'indexes' key when dialect.supports_indexes is True."""
+        dialect = _make_generic_dialect()  # supports_indexes=True
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main")
+        assert "indexes" in result
+
+    def test_indexes_present_when_dialect_is_none(self, test_engine):
+        """get_table_schema includes 'indexes' key when dialect is None (backward compat)."""
+        service = MetadataService(test_engine)
+        # SQLite dialect resolves to None via registry (no 'sqlite' dialect registered)
+
+        result = service.get_table_schema("customers", "main")
+        assert "indexes" in result
+
+    def test_indexes_omitted_when_include_indexes_false(self, test_engine):
+        """get_table_schema omits 'indexes' when include_indexes=False regardless of dialect."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main", include_indexes=False)
+        assert "indexes" not in result
+
+
+class TestDescribeExtended:
+    """Tests for _parse_databricks_table_properties DTE parsing."""
+
+    def _make_service_with_mock_engine(self):
+        """Create a MetadataService with mock engine for DTE testing."""
+        mock_engine = MagicMock()
+        dialect = _make_databricks_dialect()
+        service = MetadataService.__new__(MetadataService)
+        service.engine = mock_engine
+        service._inspector = None
+        service.dialect_name = "databricks"
+        service._dialect = dialect
+        return service, mock_engine
+
+    def _mock_dte_rows(self, rows):
+        """Create a mock connection that returns DTE rows."""
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = rows
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        return mock_conn
+
+    def test_extracts_owner(self):
+        """_parse_databricks_table_properties extracts owner from DTE output."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "user@domain.com"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["owner"] == "user@domain.com"
+
+    def test_extracts_storage_format(self):
+        """_parse_databricks_table_properties extracts Provider as storage_format."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Provider", "delta"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["storage_format"] == "delta"
+
+    def test_extracts_table_type_detail(self):
+        """_parse_databricks_table_properties extracts Type as table_type_detail."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Type", "MANAGED"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["table_type_detail"] == "MANAGED"
+
+    def test_extracts_created_time(self):
+        """_parse_databricks_table_properties extracts Created Time."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Created Time", "Wed Jan 15 10:30:00 UTC 2025"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+
+    def test_extracts_location(self):
+        """_parse_databricks_table_properties extracts Location."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Location", "dbfs:/user/hive/warehouse/my_table"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+
+    def test_extracts_partition_columns(self):
+        """_parse_databricks_table_properties extracts partition_columns list."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+            ("", ""),
+            ("# Partition Information", ""),
+            ("# col_name", "data_type"),
+            ("dt", "date"),
+            ("region", "string"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "user@domain.com"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["partition_columns"] == ["dt", "region"]
+        assert result["owner"] == "user@domain.com"
+
+    def test_returns_empty_dict_when_no_detail_section(self):
+        """_parse_databricks_table_properties returns empty dict when no detail section."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result == {}
+
+    def test_returns_empty_dict_on_sql_error(self):
+        """_parse_databricks_table_properties returns empty dict on SQL failure."""
+        service, engine = self._make_service_with_mock_engine()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.side_effect = SQLAlchemyError("connection lost")
+        engine.connect.return_value = mock_conn
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result == {}
+
+    def test_omits_partition_columns_when_not_partitioned(self):
+        """_parse_databricks_table_properties omits partition_columns for non-partitioned."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "admin"),
+            ("Type", "MANAGED"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert "partition_columns" not in result
+        assert result["owner"] == "admin"
+
+    def test_full_dte_output_parsing(self):
+        """Full DESCRIBE TABLE EXTENDED output parsing end-to-end."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+            ("", ""),
+            ("# Partition Information", ""),
+            ("# col_name", "data_type"),
+            ("dt", "date"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Database", "my_schema"),
+            ("Table", "my_table"),
+            ("Owner", "user@domain.com"),
+            ("Created Time", "Wed Jan 15 10:30:00 UTC 2025"),
+            ("Type", "MANAGED"),
+            ("Provider", "delta"),
+            ("Location", "dbfs:/user/hive/warehouse/my_table"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["owner"] == "user@domain.com"
+        assert result["storage_format"] == "delta"
+        assert result["table_type_detail"] == "MANAGED"
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+        assert result["partition_columns"] == ["dt"]
+
+
+class TestDatabricksTableProperties:
+    """Tests for DTE properties in get_table_schema response."""
+
+    def test_databricks_get_table_schema_includes_dte_properties(self, test_engine):
+        """Databricks get_table_schema response includes DTE properties."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        # Mock _parse_databricks_table_properties to return test data
+        dte_props = {
+            "owner": "user@domain.com",
+            "storage_format": "delta",
+            "table_type_detail": "MANAGED",
+            "created_time": "Wed Jan 15 10:30:00 UTC 2025",
+            "location": "dbfs:/user/hive/warehouse/my_table",
+            "partition_columns": ["dt"],
+        }
+        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+            result = service.get_table_schema("customers", "main")
+
+        assert result["owner"] == "user@domain.com"
+        assert result["storage_format"] == "delta"
+        assert result["table_type_detail"] == "MANAGED"
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+        assert result["partition_columns"] == ["dt"]
+
+    def test_non_databricks_get_table_schema_excludes_dte_properties(self, test_engine):
+        """Non-Databricks get_table_schema does NOT include DTE properties."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main")
+
+        assert "owner" not in result
+        assert "storage_format" not in result
+        assert "table_type_detail" not in result
+
+    def test_databricks_get_table_schema_includes_catalog_in_response(self, test_engine):
+        """Databricks get_table_schema includes catalog in response when provided."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        dte_props = {"owner": "admin"}
+        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+            result = service.get_table_schema("customers", "main", catalog="analytics")
+
+        assert result["catalog"] == "analytics"
+
+    def test_databricks_get_table_schema_no_dte_on_failure(self, test_engine):
+        """Databricks get_table_schema still works when DTE parsing returns empty."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with patch.object(service, "_parse_databricks_table_properties", return_value={}):
+            result = service.get_table_schema("customers", "main")
+
+        assert result["table_name"] == "customers"
+        assert "owner" not in result

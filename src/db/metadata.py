@@ -800,7 +800,9 @@ class MetadataService:
             ],
         }
 
-        if include_indexes:
+        # D-13: Gate index section on dialect.supports_indexes
+        # When supports_indexes is False, "indexes" key is absent entirely
+        if include_indexes and (not self._dialect or self._dialect.supports_indexes):
             indexes = self.get_indexes(table_name, schema_name)
             result["indexes"] = [
                 {
@@ -827,7 +829,100 @@ class MetadataService:
                 for fk in fks
             ]
 
+        # Databricks-specific table properties via DESCRIBE EXTENDED (D-07)
+        if self._dialect and self._dialect.name == "databricks":
+            dte_catalog = catalog or "main"  # Fall back to default catalog
+            dte_props = self._parse_databricks_table_properties(
+                table_name, schema_name, dte_catalog
+            )
+            # Merge DTE properties into result (only present keys)
+            result.update(dte_props)
+            # Add catalog to response for Databricks (D-11)
+            if catalog:
+                result["catalog"] = catalog
+
         return result
+
+    def _parse_databricks_table_properties(
+        self, table_name: str, schema_name: str, catalog: str
+    ) -> dict:
+        """Parse DESCRIBE TABLE EXTENDED for Databricks-specific properties.
+
+        Returns dict with optional keys: owner, storage_format, table_type_detail,
+        created_time, location, partition_columns.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to
+        prevent SQL injection (T-11-04).
+
+        Args:
+            table_name: Table name
+            schema_name: Schema name
+            catalog: Catalog name
+
+        Returns:
+            Dictionary of parsed properties. Empty dict on failure.
+        """
+        try:
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_schema = self._dialect.quote_identifier(schema_name)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            qualified = f"{quoted_catalog}.{quoted_schema}.{quoted_table}"
+
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"DESCRIBE TABLE EXTENDED {qualified}"))
+                rows = result.fetchall()
+
+            props: dict = {}
+            partition_cols: list[str] = []
+            in_partition_section = False
+            in_detail_section = False
+
+            for row in rows:
+                col_name = (row[0] or "").strip()
+                data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+                # Section markers
+                if col_name.startswith("# Partition Information"):
+                    in_partition_section = True
+                    in_detail_section = False
+                    continue
+                elif col_name.startswith("# Detailed Table Information"):
+                    in_partition_section = False
+                    in_detail_section = True
+                    continue
+                elif col_name.startswith("#"):
+                    continue  # Skip header rows
+                elif not col_name and not data_type:
+                    in_partition_section = False
+                    # Don't reset detail section -- it continues to end
+                    continue
+
+                if in_partition_section and col_name:
+                    partition_cols.append(col_name)
+
+                if in_detail_section:
+                    key_map = {
+                        "Owner": "owner",
+                        "Provider": "storage_format",
+                        "Type": "table_type_detail",
+                        "Created Time": "created_time",
+                        "Location": "location",
+                    }
+                    if col_name in key_map:
+                        props[key_map[col_name]] = data_type
+
+            if partition_cols:
+                props["partition_columns"] = partition_cols
+
+            return props
+
+        except Exception as e:
+            # T-11-06: Never let DTE parsing failure break get_table_schema
+            logger.warning(
+                f"Failed to parse DESCRIBE EXTENDED for {catalog}.{schema_name}.{table_name}: "
+                f"{type(e).__name__}: {e}"
+            )
+            return {}
 
     def table_exists(self, table_name: str, schema_name: str = "dbo") -> bool:
         """Check if a table exists.

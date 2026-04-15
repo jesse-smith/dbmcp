@@ -4,12 +4,21 @@ Tests for list_schemas, list_tables MCP tools.
 These tests require mocked MCP server responses.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
 from tests.helpers import parse_tool_response
 from tests.utils import SAMPLE_SCHEMA_ROWS, SAMPLE_TABLE_ROWS, create_mock_engine
+
+
+def _mock_generic_dialect():
+    """Create a mock dialect that behaves like GenericDialect."""
+    dialect = MagicMock()
+    type(dialect).name = PropertyMock(return_value="generic")
+    type(dialect).supports_indexes = PropertyMock(return_value=True)
+    type(dialect).has_fast_row_counts = PropertyMock(return_value=False)
+    return dialect
 
 
 class TestListSchemasMCPTool:
@@ -21,7 +30,10 @@ class TestListSchemasMCPTool:
         from src.mcp_server.server import get_connection_manager, list_schemas
 
         # Mock the connection manager
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             mock_engine = create_mock_engine({
                 "sys.schemas": SAMPLE_SCHEMA_ROWS,
             })
@@ -39,7 +51,10 @@ class TestListSchemasMCPTool:
         """T014A: Verify schema grouping response format."""
         from src.mcp_server.server import get_connection_manager, list_schemas
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             mock_engine = create_mock_engine({
                 "sys.schemas": SAMPLE_SCHEMA_ROWS,
             })
@@ -74,7 +89,10 @@ class TestListTablesMCPTool:
         """T015A: Verify schema_filter parameter works."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             dbo_tables = [t for t in SAMPLE_TABLE_ROWS if t["schema_name"] == "dbo"]
             mock_engine = create_mock_engine({
                 "sys.tables": dbo_tables,
@@ -93,7 +111,10 @@ class TestListTablesMCPTool:
         """T015A: Verify name_pattern filter works."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             # Filter to Customer% pattern
             customer_tables = [t for t in SAMPLE_TABLE_ROWS if t["table_name"].startswith("Customer")]
             mock_engine = create_mock_engine({
@@ -112,7 +133,10 @@ class TestListTablesMCPTool:
         """T015A: Verify min_row_count filter works."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             # Filter to tables with >= 1000 rows
             large_tables = [t for t in SAMPLE_TABLE_ROWS if t["row_count"] >= 1000]
             mock_engine = create_mock_engine({
@@ -135,7 +159,10 @@ class TestOutputMode:
         """T017A: Verify summary mode reduces token size."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             mock_engine = create_mock_engine({
                 "sys.tables": SAMPLE_TABLE_ROWS,
             })
@@ -154,7 +181,10 @@ class TestOutputMode:
         """T017A: Verify detailed mode includes column information."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             mock_engine = create_mock_engine({
                 "sys.tables": SAMPLE_TABLE_ROWS,
             })
@@ -186,7 +216,10 @@ class TestLimitEnforcement:
         """T018A: Verify limit parameter is respected."""
         from src.mcp_server.server import get_connection_manager, list_tables
 
-        with patch.object(get_connection_manager(), "get_engine") as mock_get_engine:
+        with (
+            patch.object(get_connection_manager(), "get_engine") as mock_get_engine,
+            patch.object(get_connection_manager(), "get_dialect", return_value=_mock_generic_dialect()),
+        ):
             mock_engine = create_mock_engine({
                 "sys.tables": SAMPLE_TABLE_ROWS,
             })
