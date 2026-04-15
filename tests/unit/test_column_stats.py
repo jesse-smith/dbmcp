@@ -84,7 +84,7 @@ class TestBasicStats:
         mock_result.fetchone.return_value = (100, 80, 5)
         mock_connection.execute.return_value = mock_result
 
-        stats = stats_collector.get_basic_stats("test_column", "int")
+        stats = stats_collector.get_basic_stats("test_column")
 
         assert stats["total_rows"] == 100
         assert stats["distinct_count"] == 80
@@ -98,7 +98,7 @@ class TestBasicStats:
         mock_result.fetchone.return_value = (100, 0, 100)
         mock_connection.execute.return_value = mock_result
 
-        stats = stats_collector.get_basic_stats("null_column", "int")
+        stats = stats_collector.get_basic_stats("null_column")
 
         assert stats["total_rows"] == 100
         assert stats["distinct_count"] == 0
@@ -112,7 +112,7 @@ class TestBasicStats:
         mock_result.fetchone.return_value = (0, 0, 0)
         mock_connection.execute.return_value = mock_result
 
-        stats = stats_collector.get_basic_stats("test_column", "int")
+        stats = stats_collector.get_basic_stats("test_column")
 
         assert stats["total_rows"] == 0
         assert stats["distinct_count"] == 0
@@ -790,7 +790,7 @@ class TestTranspilation:
         mock_result.fetchone.return_value = (100, 80, 5)
         mock_connection.execute.return_value = mock_result
 
-        collector.get_basic_stats("col", "int")
+        collector.get_basic_stats("col")
 
         # The SQL should contain TSQL bracket syntax unchanged
         call_args = mock_connection.execute.call_args
@@ -809,7 +809,7 @@ class TestTranspilation:
         mock_result.fetchone.return_value = (100, 80, 5)
         mock_connection.execute.return_value = mock_result
 
-        collector.get_basic_stats("col", "int")
+        collector.get_basic_stats("col")
 
         call_args = mock_connection.execute.call_args
         sql_text = str(call_args[0][0])
@@ -827,7 +827,7 @@ class TestTranspilation:
         mock_result.fetchone.return_value = (100, 80, 5)
         mock_connection.execute.return_value = mock_result
 
-        collector.get_basic_stats("col", "int")
+        collector.get_basic_stats("col")
 
         # The SQL should have been transpiled (bracket quotes converted to backticks)
         call_args = mock_connection.execute.call_args

@@ -204,7 +204,7 @@ class ColumnStatsCollector:
         else:
             return "other"
 
-    def get_basic_stats(self, column_name: str, data_type: str) -> dict:
+    def get_basic_stats(self, column_name: str) -> dict:
         """Collect basic statistics for a column."""
         sql = f"""
             SELECT
@@ -456,7 +456,7 @@ class ColumnStatsCollector:
                 )
 
         # Tier 2: Standard SQL aggregates (transpiled)
-        basic_stats = self.get_basic_stats(column_name, data_type_str)
+        basic_stats = self.get_basic_stats(column_name)
 
         if type_obj is not None:
             type_category = self._get_type_category(type_obj)
