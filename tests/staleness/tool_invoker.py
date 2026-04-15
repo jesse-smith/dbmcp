@@ -407,13 +407,15 @@ def _find_pk_candidates_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check
-    mock_result = MagicMock()
-    mock_result.scalar.return_value = 1
-    mock_conn.execute.return_value = mock_result
+    # Mock Inspector for table existence check
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["TestTable"]
+    mock_inspector.get_view_names.return_value = []
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.PKDiscovery", return_value=mock_discovery),
     ):
         yield
@@ -462,29 +464,20 @@ def _find_fk_candidates_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check (scalar returns 1)
-    mock_table_result = MagicMock()
-    mock_table_result.scalar.return_value = 1
-
-    # Mock column existence check (fetchone returns a row with data_type)
-    mock_col_row = MagicMock()
-    mock_col_row.__getitem__ = MagicMock(return_value="INT")
-    mock_col_result = MagicMock()
-    mock_col_result.fetchone.return_value = mock_col_row
-
-    # Return different results for different queries
-    call_count = {"n": 0}
-
-    def mock_execute(query, params=None):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return mock_table_result  # Table existence check
-        return mock_col_result  # Column existence check
-
-    mock_conn.execute = mock_execute
+    # Mock Inspector for table/column existence checks
+    mock_col_type = MagicMock()
+    mock_col_type.__str__ = MagicMock(return_value="INT")
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["orders"]
+    mock_inspector.get_view_names.return_value = []
+    mock_inspector.get_columns.return_value = [
+        {"name": "customer_id", "type": mock_col_type, "nullable": False},
+    ]
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.FKCandidateSearch", return_value=mock_search),
     ):
         yield

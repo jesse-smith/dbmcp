@@ -10,7 +10,7 @@ All tools expose raw statistics and structural metadata only — no interpretati
 
 import asyncio
 
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.analysis.column_stats import ColumnStatsCollector
@@ -199,28 +199,27 @@ async def find_pk_candidates(
     def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
+        dialect = conn_manager.get_dialect(connection_id)
 
         with engine.connect() as connection:
-            table_exists_query = text("""
-                SELECT COUNT(*)
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-            """)
-            result = connection.execute(
-                table_exists_query,
-                {"schema_name": schema_name, "table_name": table_name},
-            )
-            if result.scalar() == 0:
-                return {
-                    "status": "error",
-                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                }
+            inspector = inspect(engine)
+
+            # Table existence check via Inspector (dialect-agnostic)
+            table_names = inspector.get_table_names(schema=schema_name)
+            if table_name not in table_names:
+                view_names = inspector.get_view_names(schema=schema_name)
+                if table_name not in view_names:
+                    return {
+                        "status": "error",
+                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                    }
 
             discovery = PKDiscovery(
                 connection=connection,
                 schema_name=schema_name,
                 table_name=table_name,
+                dialect=dialect,
+                inspector=inspector,
             )
 
             candidates = discovery.find_candidates(type_filter=type_filter)
@@ -327,47 +326,33 @@ async def find_fk_candidates(
     def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
+        dialect = conn_manager.get_dialect(connection_id)
 
         with engine.connect() as connection:
-            table_exists_query = text("""
-                SELECT COUNT(*)
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-            """)
-            result = connection.execute(
-                table_exists_query,
-                {"schema_name": schema_name, "table_name": table_name},
-            )
-            if result.scalar() == 0:
-                return {
-                    "status": "error",
-                    "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
-                }
+            inspector = inspect(engine)
 
-            col_query = text("""
-                SELECT DATA_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-                    AND COLUMN_NAME = :column_name
-            """)
-            col_result = connection.execute(
-                col_query,
-                {
-                    "schema_name": schema_name,
-                    "table_name": table_name,
-                    "column_name": column_name,
-                },
+            # Table existence check via Inspector (dialect-agnostic)
+            table_names = inspector.get_table_names(schema=schema_name)
+            if table_name not in table_names:
+                view_names = inspector.get_view_names(schema=schema_name)
+                if table_name not in view_names:
+                    return {
+                        "status": "error",
+                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                    }
+
+            # Column existence and type via Inspector (dialect-agnostic)
+            columns = inspector.get_columns(table_name, schema=schema_name)
+            col_info = next(
+                (c for c in columns if c["name"] == column_name), None
             )
-            col_row = col_result.fetchone()
-            if col_row is None:
+            if col_info is None:
                 return {
                     "status": "error",
                     "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
                 }
 
-            source_data_type = col_row[0]
+            source_data_type = str(col_info["type"])
 
             search = FKCandidateSearch(
                 connection=connection,
@@ -375,6 +360,8 @@ async def find_fk_candidates(
                 source_table=table_name,
                 source_column=column_name,
                 source_data_type=source_data_type,
+                dialect=dialect,
+                inspector=inspector,
             )
 
             fk_result = search.find_candidates(
