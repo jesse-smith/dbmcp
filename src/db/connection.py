@@ -394,7 +394,14 @@ class ConnectionManager:
         Returns:
             Connection metadata object.
         """
-        from src.config import GenericConnectionConfig, MssqlConnectionConfig, resolve_env_vars
+        from urllib.parse import quote_plus, urlencode
+
+        from src.config import (
+            DatabricksConnectionConfig,
+            GenericConnectionConfig,
+            MssqlConnectionConfig,
+            resolve_env_vars,
+        )
 
         if isinstance(config, MssqlConnectionConfig):
             password = resolve_env_vars(config.password) if config.password else None
@@ -414,9 +421,17 @@ class ConnectionManager:
         elif isinstance(config, GenericConnectionConfig):
             url = resolve_env_vars(config.sqlalchemy_url) if config.sqlalchemy_url else ""
             return self.connect_with_url(url, dialect, query_timeout)
+        elif isinstance(config, DatabricksConnectionConfig):
+            token = resolve_env_vars(config.token) if config.token else ""
+            query_params = urlencode({
+                "http_path": config.http_path,
+                "catalog": config.catalog,
+                "schema": config.schema_name,
+            })
+            url = f"databricks://token:{quote_plus(token)}@{config.host}?{query_params}"
+            return self.connect_with_url(url, dialect, query_timeout)
         else:
-            # DatabricksConnectionConfig -- Phase 11
-            raise NotImplementedError(f"Config type {type(config).__name__} not yet supported")
+            raise ValueError(f"Unsupported config type: {type(config).__name__}")
 
     def _generate_url_connection_id(self, sqlalchemy_url: str) -> str:
         """Generate a deterministic connection ID from a SQLAlchemy URL.

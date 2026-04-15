@@ -214,12 +214,11 @@ class TestConnectWithConfig:
         assert result.connection_id == "url123"
 
     def test_connect_with_config_unsupported_raises(self):
-        """connect_with_config for unknown config type raises NotImplementedError."""
-        from src.config import DatabricksConnectionConfig
-
-        config = DatabricksConnectionConfig(host="some-host")
+        """connect_with_config for unknown config type raises ValueError."""
+        config = MagicMock()
+        config.__class__.__name__ = "UnknownConfig"
         dialect = MagicMock()
         manager = ConnectionManager()
 
-        with pytest.raises(NotImplementedError, match="DatabricksConnectionConfig"):
+        with pytest.raises(ValueError, match="Unsupported config type"):
             manager.connect_with_config(config, dialect)
