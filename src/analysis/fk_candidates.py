@@ -406,7 +406,8 @@ class FKCandidateSearch:
         """
         src_count_query = text(transpile_query(src_count_sql, self._dialect))
         src_result = self.connection.execute(src_count_query)
-        src_distinct = src_result.fetchall()[0][0]
+        src_row = src_result.fetchone()
+        src_distinct = src_row[0] if src_row else 0
 
         if src_distinct == 0:
             return {"overlap_count": None, "overlap_percentage": None}
@@ -423,7 +424,8 @@ class FKCandidateSearch:
         """
         overlap_query = text(transpile_query(overlap_sql, self._dialect))
         overlap_result = self.connection.execute(overlap_query)
-        overlap_count = overlap_result.fetchall()[0][0]
+        overlap_row = overlap_result.fetchone()
+        overlap_count = overlap_row[0] if overlap_row else 0
 
         overlap_percentage = (overlap_count / src_distinct) * 100.0
 
