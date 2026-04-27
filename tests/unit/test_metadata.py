@@ -1094,7 +1094,10 @@ class TestSharedMetadataBehavior:
                 MagicMock(schema_name="dbo", table_count=3, view_count=1),
                 MagicMock(schema_name="sales", table_count=2, view_count=0),
             ]
-            dialect_inspector.connection.execute.return_value = iter(mssql_rows)
+            mock_result = MagicMock()
+            mock_result.__iter__ = lambda self: iter(mssql_rows)
+            mock_result.fetchall.return_value = mssql_rows
+            dialect_inspector.connection.execute.return_value = mock_result
             schemas = service.list_schemas(connection_id="c1")
             names = {s.schema_name for s in schemas}
             assert names == {"dbo", "sales"}
@@ -1132,7 +1135,10 @@ class TestSharedMetadataBehavior:
                     row_count=2, last_modified=None, has_primary_key=1,
                 ),
             ]
-            dialect_inspector.connection.execute.side_effect = [count_row, iter(data_rows)]
+            data_result = MagicMock()
+            data_result.__iter__ = lambda self: iter(data_rows)
+            data_result.fetchall.return_value = data_rows
+            dialect_inspector.connection.execute.side_effect = [count_row, data_result]
             tables, pagination = service.list_tables(schema_name="dbo")
             names = {t.table_name for t in tables}
             assert names == {"customers", "orders"}
