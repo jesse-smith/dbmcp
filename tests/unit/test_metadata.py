@@ -771,23 +771,16 @@ class TestCatalogThreeLevelTableId:
 
 
 class TestIndexGating:
-    """Tests for index gating based on dialect.supports_indexes (D-13)."""
+    """Tests for index gating based on dialect.supports_indexes (D-13).
 
-    def test_indexes_omitted_when_supports_indexes_false(self, test_engine):
-        """get_table_schema omits 'indexes' key when dialect.supports_indexes is False."""
-        dialect = _make_databricks_dialect()  # supports_indexes=False
-        service = MetadataService(test_engine, dialect=dialect)
-
-        result = service.get_table_schema("customers", "main")
-        assert "indexes" not in result
-
-    def test_indexes_present_when_supports_indexes_true(self, test_engine):
-        """get_table_schema includes 'indexes' key when dialect.supports_indexes is True."""
-        dialect = _make_generic_dialect()  # supports_indexes=True
-        service = MetadataService(test_engine, dialect=dialect)
-
-        result = service.get_table_schema("customers", "main")
-        assert "indexes" in result
+    NOTE (Phase 13 / Plan 03): `test_indexes_omitted_when_supports_indexes_false`
+    and `test_indexes_present_when_supports_indexes_true` were retired — the
+    same assertion under mssql/databricks/generic is covered by
+    `TestSharedMetadataBehavior.test_get_table_schema_returns_table_schema_object`
+    (index-section presence keyed off dialect.supports_indexes). The two tests
+    kept here cover distinct edge cases (dialect=None backward compat and the
+    include_indexes=False parameter override) that the shared test does not.
+    """
 
     def test_indexes_present_when_dialect_is_none(self, test_engine):
         """get_table_schema includes 'indexes' key when dialect is None (backward compat)."""
