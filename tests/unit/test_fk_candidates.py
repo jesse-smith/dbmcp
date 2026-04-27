@@ -7,6 +7,8 @@ and result limiting.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.models.analysis import PKCandidate
 
@@ -679,44 +681,21 @@ class TestFindCandidates:
 
 
 # ---------------------------------------------------------------------------
-# Dialect mock fixtures
+# Inspector shape builder (dialect fixtures live in tests/conftest.py)
 # ---------------------------------------------------------------------------
 
-def _mock_mssql_dialect():
-    """Create a mock MSSQL dialect."""
-    d = MagicMock()
-    d.name = "mssql"
-    d.sqlglot_dialect = "tsql"
-    d.supports_indexes = True
-    return d
-
-
-def _mock_databricks_dialect():
-    """Create a mock Databricks dialect."""
-    d = MagicMock()
-    d.name = "databricks"
-    d.sqlglot_dialect = "databricks"
-    d.supports_indexes = False
-    return d
-
-
-def _mock_generic_dialect():
-    """Create a mock generic dialect."""
-    d = MagicMock()
-    d.name = "generic"
-    d.sqlglot_dialect = None
-    d.supports_indexes = True
-    return d
-
-
-def _mock_inspector(
+def _build_inspector(
     table_names=None,
     columns=None,
     pk_constraint=None,
     unique_constraints=None,
     indexes=None,
 ):
-    """Create a mock Inspector."""
+    """Create a mock Inspector. Local shape-builder (not a fixture).
+
+    Named to distinguish from the conftest-level ``mock_inspector`` fixture,
+    which has a different column shape.
+    """
     insp = MagicMock()
     insp.get_table_names.return_value = table_names or []
     insp.get_columns.return_value = columns or []
@@ -735,10 +714,10 @@ def _mock_inspector(
 class TestInspectorTableDiscovery:
     """Tests for Inspector-based table listing (non-MSSQL)."""
 
-    def test_inspector_table_listing_with_target_tables_filter(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_table_listing_with_target_tables_filter(self, dialect):
         """Inspector-based table listing filters by explicit target_tables."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             table_names=["Customers", "Products", "Orders"],
         )
         conn = MagicMock()
@@ -749,7 +728,7 @@ class TestInspectorTableDiscovery:
             source_table="OrderItems",
             source_column="product_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         tables = search.get_target_tables(
@@ -761,10 +740,10 @@ class TestInspectorTableDiscovery:
         assert "Products" in table_names
         assert "Orders" not in table_names
 
-    def test_inspector_table_listing_with_pattern_filter(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_table_listing_with_pattern_filter(self, dialect):
         """Inspector-based table listing filters by pattern."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             table_names=["Customers", "Categories", "Products"],
         )
         conn = MagicMock()
@@ -775,7 +754,7 @@ class TestInspectorTableDiscovery:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         tables = search.get_target_tables(
@@ -787,10 +766,10 @@ class TestInspectorTableDiscovery:
         assert "Categories" in table_names
         assert "Products" not in table_names
 
-    def test_inspector_table_listing_excludes_source(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_table_listing_excludes_source(self, dialect):
         """Inspector-based table listing excludes source table."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             table_names=["Customers", "Orders", "Products"],
         )
         conn = MagicMock()
@@ -801,7 +780,7 @@ class TestInspectorTableDiscovery:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         tables = search.get_target_tables()
@@ -810,10 +789,10 @@ class TestInspectorTableDiscovery:
         assert "Orders" not in table_names
         assert "Customers" in table_names
 
-    def test_inspector_table_listing_sorted(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_table_listing_sorted(self, dialect):
         """Inspector-based table listing returns sorted results."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             table_names=["Zebra", "Apple", "Mango"],
         )
         conn = MagicMock()
@@ -824,7 +803,7 @@ class TestInspectorTableDiscovery:
             source_table="Other",
             source_column="id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         tables = search.get_target_tables()
@@ -865,10 +844,10 @@ class TestDialectAwareMetadata:
 
         assert metadata["target_has_index"] is True
 
-    def test_generic_uses_inspector_get_indexes(self):
+    @pytest.mark.dialects('generic')
+    def test_generic_uses_inspector_get_indexes(self, dialect):
         """Generic dialect uses Inspector.get_indexes() for has_index."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             pk_constraint={"constrained_columns": ["id"], "name": "pk_customers"},
             unique_constraints=[],
             indexes=[
@@ -884,7 +863,7 @@ class TestDialectAwareMetadata:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         metadata = search.get_column_metadata(
@@ -898,10 +877,10 @@ class TestDialectAwareMetadata:
         assert metadata["target_is_primary_key"] is True
         assert metadata["target_has_index"] is True
 
-    def test_databricks_omits_target_has_index(self):
+    @pytest.mark.dialects('databricks')
+    def test_databricks_omits_target_has_index(self, dialect):
         """Databricks returns target_has_index=None (supports_indexes=False)."""
-        dialect = _mock_databricks_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             pk_constraint={"constrained_columns": ["id"], "name": "pk_t"},
             unique_constraints=[],
         )
@@ -913,7 +892,7 @@ class TestDialectAwareMetadata:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         metadata = search.get_column_metadata(
@@ -948,10 +927,10 @@ class TestDialectAwareMetadata:
 
         assert "target_has_index" not in d
 
-    def test_generic_inspector_constraints(self):
-        """Generic dialect uses Inspector for constraint checks."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+    @pytest.mark.dialects('generic')
+    def test_generic_inspector_constraints(self, dialect):
+        """Generic dialect uses Inspector for constraint checks (target_has_index=True requires supports_indexes)."""
+        inspector = _build_inspector(
             pk_constraint={"constrained_columns": [], "name": None},
             unique_constraints=[{"column_names": ["email"], "name": "uq_email"}],
             indexes=[{"column_names": ["email"], "name": "idx_email", "unique": True}],
@@ -964,7 +943,7 @@ class TestDialectAwareMetadata:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         metadata = search.get_column_metadata(
@@ -987,12 +966,12 @@ class TestDialectAwareMetadata:
 class TestTranspiledOverlap:
     """Tests for SQL transpilation in overlap queries."""
 
-    def test_overlap_transpiled_for_non_mssql(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_overlap_transpiled_for_non_mssql(self, dialect):
         """INTERSECT query is transpiled for non-MSSQL dialect."""
-        dialect = _mock_generic_dialect()
         # Generic dialect with sqlglot_dialect=None means no transpilation
         # But the code still calls transpile_query (which is a no-op for None)
-        inspector = _mock_inspector()
+        inspector = _build_inspector()
         conn = MagicMock()
 
         conn.execute.side_effect = [
@@ -1006,7 +985,7 @@ class TestTranspiledOverlap:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         overlap = search.compute_overlap(
@@ -1026,10 +1005,10 @@ class TestTranspiledOverlap:
 class TestInspectorCandidateColumns:
     """Tests for Inspector-based candidate column discovery."""
 
-    def test_inspector_all_columns_non_mssql(self):
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_all_columns_non_mssql(self, dialect):
         """Non-MSSQL with pk_candidates_only=False uses Inspector.get_columns()."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector(
+        inspector = _build_inspector(
             columns=[
                 {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
                 {"name": "name", "type": MagicMock(__str__=lambda s: "VARCHAR"), "nullable": True},
@@ -1043,7 +1022,7 @@ class TestInspectorCandidateColumns:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         columns = search.get_candidate_columns(
@@ -1056,11 +1035,11 @@ class TestInspectorCandidateColumns:
         assert columns[0]["column_name"] == "id"
         assert columns[1]["column_name"] == "name"
 
+    @pytest.mark.dialects('generic', 'databricks')
     @patch("src.analysis.fk_candidates.PKDiscovery")
-    def test_pk_discovery_receives_dialect_inspector(self, mock_pk_cls):
+    def test_pk_discovery_receives_dialect_inspector(self, mock_pk_cls, dialect):
         """PKDiscovery constructor receives dialect and inspector."""
-        dialect = _mock_generic_dialect()
-        inspector = _mock_inspector()
+        inspector = _build_inspector()
         conn = MagicMock()
 
         mock_pk_instance = MagicMock()
@@ -1075,7 +1054,7 @@ class TestInspectorCandidateColumns:
             source_table="Orders",
             source_column="customer_id",
             source_data_type="int",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
         search.get_candidate_columns(
@@ -1088,6 +1067,6 @@ class TestInspectorCandidateColumns:
             connection=conn,
             schema_name="public",
             table_name="Customers",
-            dialect=dialect,
+            dialect=dialect.dialect,
             inspector=inspector,
         )
