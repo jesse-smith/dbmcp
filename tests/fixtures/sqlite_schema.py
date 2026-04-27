@@ -11,6 +11,11 @@ Maintaining two DDL dialects is explicitly rejected per 13-RESEARCH.md §2.
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+# Expected row counts seeded by load_sqlite_schema. Tests that assert on row
+# counts should import this dict rather than hard-coding the numbers, so that
+# changes here surface via test_* failures at the import/use site.
+SAMPLE_ROW_COUNTS = {"customers": 2, "orders": 2, "products": 1}
+
 
 def load_sqlite_schema(engine: Engine) -> None:
     """Load the shared test schema into an in-memory SQLite engine.
