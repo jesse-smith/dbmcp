@@ -125,8 +125,8 @@ Plans:
   3. Test suite exercises all three dialect paths (MSSQL, Databricks, generic) through parameterized fixtures
 **Plans:** 4 plans
 Plans:
-- [ ] 13-01-PLAN.md — Fixture infrastructure (dialect + dialect_inspector in conftest.py, sqlite_schema.py, dialects marker)
-- [ ] 13-02-PLAN.md — Migrate test_column_stats.py / test_pk_discovery.py / test_fk_candidates.py in-place to dialect fixture
+- [x] 13-01-PLAN.md — Fixture infrastructure (dialect + dialect_inspector in conftest.py, sqlite_schema.py, dialects marker)
+- [x] 13-02-PLAN.md — Migrate test_column_stats.py / test_pk_discovery.py / test_fk_candidates.py in-place to dialect fixture
 - [ ] 13-03-PLAN.md — Parallel-add TestSharedMetadataBehavior to test_metadata.py and retire duplicates
 - [ ] 13-04-PLAN.md — Raise coverage fail_under 70 to 85 (lands LAST)
 
@@ -149,4 +149,4 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 10. GenericDialect & Tool Interface | v2.0 | 3/3 | Complete    | 2026-04-14 |
 | 11. DatabricksDialect | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 12. Analysis Module Adaptation | v2.0 | 2/2 | Complete    | 2026-04-15 |
-| 13. Test Infrastructure & Coverage | v2.0 | 0/4 | Planned     | - |
+| 13. Test Infrastructure & Coverage | v2.0 | 2/4 | In Progress | - |
