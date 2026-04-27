@@ -62,7 +62,7 @@ def dialect(request) -> DialectTestContext:
     connection = MagicMock()
     inspector = MagicMock()
     engine.connect.return_value.__enter__.return_value = connection
-    engine.connect.return_value.__exit__ = MagicMock()
+    engine.connect.return_value.__exit__ = MagicMock(return_value=False)
     return DialectTestContext(
         name=name, dialect=dialect_obj, engine=engine,
         connection=connection, inspector=inspector,
@@ -95,7 +95,7 @@ def mock_engine():
     """Create a mock SQLAlchemy engine."""
     engine = MagicMock()
     engine.connect.return_value.__enter__ = MagicMock()
-    engine.connect.return_value.__exit__ = MagicMock()
+    engine.connect.return_value.__exit__ = MagicMock(return_value=False)
     return engine
 
 
