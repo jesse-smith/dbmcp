@@ -50,7 +50,8 @@ Requirements for multi-dialect support milestone. Each maps to roadmap phases.
 - [ ] **TEST-01**: All existing MSSQL tests pass unchanged after dialect extraction (zero behavior change)
 - [x] **TEST-02
 **: Dialect-parameterized test fixtures for generic and Databricks paths (mock-based, no live connection required)
-- [ ] **TEST-03**: 70%+ test coverage maintained across all modules
+- [x] **TEST-03
+**: 70%+ test coverage maintained across all modules
 
 ## Future Requirements
 
