@@ -70,20 +70,25 @@ def dialect(request) -> DialectTestContext:
 
 
 @pytest.fixture
-def dialect_inspector(dialect) -> DialectTestContext:
+def dialect_inspector(dialect):
     """Augments `dialect` with a real SQLAlchemy Inspector + in-memory SQLite
     for the generic dialect only. mssql/databricks keep the MagicMock inspector
     (SQLite cannot impersonate sys.indexes or DESCRIBE EXTENDED)."""
     if dialect.name != "generic":
-        return dialect
+        yield dialect
+        return
     engine = create_engine("sqlite:///:memory:", echo=False)
     load_sqlite_schema(engine)
     connection = engine.connect()
-    inspector = sa_inspect(engine)
-    return DialectTestContext(
-        name=dialect.name, dialect=dialect.dialect,
-        engine=engine, connection=connection, inspector=inspector,
-    )
+    try:
+        inspector = sa_inspect(engine)
+        yield DialectTestContext(
+            name=dialect.name, dialect=dialect.dialect,
+            engine=engine, connection=connection, inspector=inspector,
+        )
+    finally:
+        connection.close()
+        engine.dispose()
 
 # =============================================================================
 # Mock Connection Fixtures
