@@ -82,7 +82,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 ### Pending Todos
 
-None yet.
+- [database] Fix connect_with_url to work with MSSQL (`.planning/todos/pending/2026-04-27-fix-connect-with-url-to-work-with-mssql.md`)
 
 ### Blockers/Concerns
 
