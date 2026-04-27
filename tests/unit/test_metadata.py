@@ -1045,18 +1045,14 @@ class TestDatabricksTableProperties:
 
 def _configure_magicmock_engine_dialect(dialect_ctx):
     """Give a MagicMock(spec=Engine) the `.dialect.name` attribute MetadataService
-    reads during __init__. No-op for real engines (generic via dialect_inspector)."""
-    if not hasattr(dialect_ctx.engine, "dialect") or not isinstance(
-        dialect_ctx.engine.dialect, MagicMock
-    ):
-        # Real engine path — nothing to do
-        try:
-            # For MagicMock(spec=Engine), accessing .dialect raises AttributeError
-            _ = dialect_ctx.engine.dialect
-            return  # real engine
-        except AttributeError:
-            pass
-    # MagicMock path: configure .dialect.name = context name
+    reads during __init__. No-op for real engines (generic via dialect_inspector).
+
+    Branch on `DialectTestContext.name` rather than sniffing engine type: the
+    fixture contract guarantees `name == "generic"` iff the engine is a real
+    SQLAlchemy Engine.
+    """
+    if dialect_ctx.name == "generic":
+        return  # real Engine — don't touch
     dialect_ctx.engine.dialect = MagicMock()
     dialect_ctx.engine.dialect.name = dialect_ctx.name
 
