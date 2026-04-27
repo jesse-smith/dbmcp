@@ -22,6 +22,9 @@ def load_sqlite_schema(engine: Engine) -> None:
 
     Also seeds a small amount of sample data for row-count assertions.
     """
+    assert engine.dialect.name == "sqlite", (
+        f"load_sqlite_schema requires a SQLite engine, got {engine.dialect.name!r}"
+    )
     with engine.connect() as conn:
         conn.execute(text(
             "CREATE TABLE customers ("
