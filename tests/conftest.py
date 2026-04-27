@@ -382,13 +382,6 @@ def mock_inspector(sample_columns, sample_indexes):
 # =============================================================================
 # Integration Test Markers
 # =============================================================================
-
-
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests requiring database"
-    )
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow running"
-    )
+# Markers (integration, slow, performance, dialects) are registered in
+# pyproject.toml under [tool.pytest.ini_options].markers — that registration
+# is authoritative. No pytest_configure hook needed here.
