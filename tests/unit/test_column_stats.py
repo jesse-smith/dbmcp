@@ -542,40 +542,16 @@ class TestFullColumnStatistics:
         assert stat.datetime_stats is None
 
 
-# --- Dialect-aware fixtures ---
-
-
-def _make_mock_dialect(name, sqlglot_dialect, supports_indexes=True):
-    """Create a mock DialectStrategy."""
-    dialect = Mock()
-    dialect.name = name
-    dialect.sqlglot_dialect = sqlglot_dialect
-    dialect.supports_indexes = supports_indexes
-    dialect.quote_identifier = Mock(side_effect=lambda x: f"`{x}`")
-    return dialect
+# --- Inspector shape fixture (dialect fixtures live in tests/conftest.py) ---
 
 
 @pytest.fixture
-def mock_mssql_dialect():
-    """Mock MSSQL dialect (tsql, supports indexes)."""
-    return _make_mock_dialect("mssql", "tsql", supports_indexes=True)
+def sa_types_inspector():
+    """Mock SQLAlchemy Inspector populated with sa_types.TypeEngine column dicts.
 
-
-@pytest.fixture
-def mock_databricks_dialect():
-    """Mock Databricks dialect (databricks, no indexes)."""
-    return _make_mock_dialect("databricks", "databricks", supports_indexes=False)
-
-
-@pytest.fixture
-def mock_generic_dialect():
-    """Mock generic dialect (None sqlglot_dialect, supports indexes)."""
-    return _make_mock_dialect("generic", None, supports_indexes=True)
-
-
-@pytest.fixture
-def mock_inspector():
-    """Mock SQLAlchemy Inspector with get_columns()."""
+    Local file-level fixture. Named to avoid shadowing the conftest-level
+    `mock_inspector` fixture (which has a different column shape).
+    """
     inspector = Mock()
     inspector.get_columns.return_value = [
         {"name": "id", "type": sa_types.Integer()},
@@ -643,20 +619,20 @@ class TestTypeClassification:
 class TestInspectorColumnDiscovery:
     """Test Inspector-based column methods."""
 
-    def test_column_exists_uses_inspector(self, mock_connection, mock_inspector):
+    def test_column_exists_uses_inspector(self, mock_connection, sa_types_inspector):
         """column_exists uses Inspector.get_columns() when inspector provided."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", inspector=mock_inspector
+            mock_connection, "dbo", "t", inspector=sa_types_inspector
         )
         assert collector.column_exists("id") is True
         assert collector.column_exists("nonexistent") is False
         # Connection should NOT have been called (Inspector used instead)
         mock_connection.execute.assert_not_called()
 
-    def test_get_columns_by_pattern_uses_inspector(self, mock_connection, mock_inspector):
+    def test_get_columns_by_pattern_uses_inspector(self, mock_connection, sa_types_inspector):
         """get_columns_by_pattern uses Inspector with Python fnmatch filtering."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", inspector=mock_inspector
+            mock_connection, "dbo", "t", inspector=sa_types_inspector
         )
         # Pattern %_at should match created_at
         results = collector.get_columns_by_pattern("%_at")
@@ -665,10 +641,10 @@ class TestInspectorColumnDiscovery:
         assert isinstance(results[0][1], sa_types.TypeEngine)
         mock_connection.execute.assert_not_called()
 
-    def test_get_column_data_type_returns_type_obj(self, mock_connection, mock_inspector):
+    def test_get_column_data_type_returns_type_obj(self, mock_connection, sa_types_inspector):
         """get_column_data_type returns TypeEngine when inspector provided."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", inspector=mock_inspector
+            mock_connection, "dbo", "t", inspector=sa_types_inspector
         )
         result = collector.get_column_data_type("id")
         assert isinstance(result, sa_types.TypeEngine)
@@ -678,13 +654,14 @@ class TestInspectorColumnDiscovery:
 class TestDatabricksFastPath:
     """Test Databricks DESCRIBE EXTENDED fast path."""
 
+    @pytest.mark.dialects('databricks')
     def test_fast_path_returns_stats_when_present(
-        self, mock_connection, mock_databricks_dialect, mock_inspector
+        self, mock_connection, dialect, sa_types_inspector
     ):
         """DESCRIBE EXTENDED returns stats -> fast path used."""
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
-            dialect=mock_databricks_dialect, inspector=mock_inspector,
+            dialect=dialect.dialect, inspector=sa_types_inspector,
         )
 
         # Mock DESCRIBE EXTENDED result
@@ -708,13 +685,14 @@ class TestDatabricksFastPath:
         assert stats["num_nulls"] == "5"
         assert stats["distinct_count"] == "995"
 
+    @pytest.mark.dialects('databricks')
     def test_fast_path_returns_none_when_stats_absent(
-        self, mock_connection, mock_databricks_dialect, mock_inspector
+        self, mock_connection, dialect, sa_types_inspector
     ):
         """DESCRIBE EXTENDED returns empty stats -> None (fall back to Tier 2)."""
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
-            dialect=mock_databricks_dialect, inspector=mock_inspector,
+            dialect=dialect.dialect, inspector=sa_types_inspector,
         )
 
         desc_result = MagicMock()
@@ -731,34 +709,41 @@ class TestDatabricksFastPath:
         stats = collector._try_describe_extended_stats("id")
         assert stats is None
 
+    @pytest.mark.dialects('mssql', 'generic')
     def test_fast_path_skipped_for_non_databricks(
-        self, mock_connection, mock_mssql_dialect, mock_inspector
+        self, mock_connection, dialect, sa_types_inspector
     ):
-        """DESCRIBE EXTENDED not attempted for MSSQL dialect."""
+        """DESCRIBE EXTENDED is not attempted for non-databricks dialects.
+
+        Parametrized across mssql and generic to verify both skip the fast
+        path without hitting the connection. Databricks behavior is covered
+        by test_fast_path_returns_stats_when_present.
+        """
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
-            dialect=mock_mssql_dialect, inspector=mock_inspector,
+            dialect=dialect.dialect, inspector=sa_types_inspector,
         )
         stats = collector._try_describe_extended_stats("id")
         assert stats is None
         mock_connection.execute.assert_not_called()
 
-    def test_fast_path_skipped_when_no_dialect(self, mock_connection, mock_inspector):
+    def test_fast_path_skipped_when_no_dialect(self, mock_connection, sa_types_inspector):
         """DESCRIBE EXTENDED not attempted when dialect is None."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", inspector=mock_inspector
+            mock_connection, "dbo", "t", inspector=sa_types_inspector
         )
         stats = collector._try_describe_extended_stats("id")
         assert stats is None
         mock_connection.execute.assert_not_called()
 
+    @pytest.mark.dialects('databricks')
     def test_build_stats_from_describe_extended_numeric(
-        self, mock_connection, mock_databricks_dialect, mock_inspector
+        self, mock_connection, dialect, sa_types_inspector
     ):
         """Build ColumnStatistics from DESCRIBE EXTENDED for numeric column."""
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
-            dialect=mock_databricks_dialect, inspector=mock_inspector,
+            dialect=dialect.dialect, inspector=sa_types_inspector,
         )
         desc_stats = {
             "min": "1",
@@ -797,12 +782,13 @@ class TestTranspilation:
         sql_text = str(call_args[0][0])
         assert "[col]" in sql_text
 
+    @pytest.mark.dialects('mssql')
     def test_tsql_queries_unchanged_when_dialect_is_mssql(
-        self, mock_connection, mock_mssql_dialect
+        self, mock_connection, dialect
     ):
         """SQL passes through unchanged when dialect is MSSQL."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", dialect=mock_mssql_dialect
+            mock_connection, "dbo", "t", dialect=dialect.dialect
         )
 
         mock_result = MagicMock()
@@ -815,12 +801,13 @@ class TestTranspilation:
         sql_text = str(call_args[0][0])
         assert "[col]" in sql_text
 
+    @pytest.mark.dialects('databricks')
     def test_queries_transpiled_for_databricks(
-        self, mock_connection, mock_databricks_dialect
+        self, mock_connection, dialect
     ):
         """SQL is transpiled when dialect is Databricks."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", dialect=mock_databricks_dialect
+            mock_connection, "dbo", "t", dialect=dialect.dialect
         )
 
         mock_result = MagicMock()
@@ -835,12 +822,13 @@ class TestTranspilation:
         # After transpilation, TSQL brackets should be replaced with backticks
         assert "[col]" not in sql_text
 
+    @pytest.mark.dialects('databricks')
     def test_datetime_time_check_uses_hour_for_databricks(
-        self, mock_connection, mock_databricks_dialect
+        self, mock_connection, dialect
     ):
         """Databricks datetime query uses HOUR/MINUTE/SECOND for time check."""
         collector = ColumnStatsCollector(
-            mock_connection, "dbo", "t", dialect=mock_databricks_dialect
+            mock_connection, "dbo", "t", dialect=dialect.dialect
         )
 
         mock_result = MagicMock()
