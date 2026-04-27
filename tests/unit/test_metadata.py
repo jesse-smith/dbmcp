@@ -1043,3 +1043,174 @@ class TestDatabricksTableProperties:
 
         assert result["table_name"] == "customers"
         assert "owner" not in result
+
+
+# ============================================================================
+# Shared dialect-parametrized metadata behavior (Phase 13, Plan 03)
+# ============================================================================
+
+
+def _configure_magicmock_engine_dialect(dialect_ctx):
+    """Give a MagicMock(spec=Engine) the `.dialect.name` attribute MetadataService
+    reads during __init__. No-op for real engines (generic via dialect_inspector)."""
+    if not hasattr(dialect_ctx.engine, "dialect") or not isinstance(
+        dialect_ctx.engine.dialect, MagicMock
+    ):
+        # Real engine path — nothing to do
+        try:
+            # For MagicMock(spec=Engine), accessing .dialect raises AttributeError
+            _ = dialect_ctx.engine.dialect
+            return  # real engine
+        except AttributeError:
+            pass
+    # MagicMock path: configure .dialect.name = context name
+    dialect_ctx.engine.dialect = MagicMock()
+    dialect_ctx.engine.dialect.name = dialect_ctx.name
+
+
+def _build_metadata_service(dialect_ctx):
+    """Build a MetadataService from a DialectTestContext, wiring the mock inspector
+    in place for the non-generic (MagicMock) paths. Generic uses the real engine
+    and the natural lazy inspector."""
+    _configure_magicmock_engine_dialect(dialect_ctx)
+    service = MetadataService(dialect_ctx.engine, dialect=dialect_ctx.dialect)
+    if dialect_ctx.name != "generic":
+        # Pre-populate the lazy inspector cache with the MagicMock inspector.
+        service._inspector = dialect_ctx.inspector
+    return service
+
+
+class TestSharedMetadataBehavior:
+    """Dialect-parametrized shared-behavior tests for MetadataService.
+
+    Uses the `dialect_inspector` fixture so the `generic` path exercises a real
+    SQLAlchemy Inspector against in-memory SQLite, while `mssql`/`databricks`
+    run against MagicMock execution surfaces configured inline.
+
+    Added per Phase 13 / D-08 / D-17 (parallel-add strategy for test_metadata.py).
+    Existing `TestListSchemas`, `TestListTables`, `TestCatalogListSchemas`, etc.
+    are preserved — this class covers only the shared-behavior contract across
+    dialects. Dialect-exclusive behavior (MSSQL DMV SQL shapes, Databricks
+    DESCRIBE EXTENDED, catalog-scoped SHOW TABLES IN) remains in the existing
+    classes above.
+    """
+
+    def test_list_schemas_returns_schema_objects(self, dialect_inspector):
+        """Shared: list_schemas returns Schema objects regardless of dialect."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "mssql":
+            # MSSQL path executes the DMV SQL; stub `conn.execute(...)` rows.
+            mssql_rows = [
+                MagicMock(schema_name="dbo", table_count=3, view_count=1),
+                MagicMock(schema_name="sales", table_count=2, view_count=0),
+            ]
+            dialect_inspector.connection.execute.return_value = iter(mssql_rows)
+            schemas = service.list_schemas(connection_id="c1")
+            names = {s.schema_name for s in schemas}
+            assert names == {"dbo", "sales"}
+            assert all(s.connection_id == "c1" for s in schemas)
+        elif dialect_inspector.name == "databricks":
+            # Databricks without catalog falls back to the generic-inspector path
+            # (the Databricks-specific SHOW SCHEMAS IN path requires catalog=).
+            dialect_inspector.inspector.get_schema_names.return_value = ["default"]
+            dialect_inspector.inspector.get_table_names.return_value = ["t1", "t2"]
+            dialect_inspector.inspector.get_view_names.return_value = []
+            schemas = service.list_schemas(connection_id="c1")
+            assert len(schemas) >= 1
+            assert all(hasattr(s, "schema_name") for s in schemas)
+        else:  # generic — real SQLite
+            schemas = service.list_schemas(connection_id="c1")
+            assert len(schemas) >= 1
+            assert schemas[0].schema_name == "main"
+            assert schemas[0].connection_id == "c1"
+
+    def test_list_tables_returns_table_objects(self, dialect_inspector):
+        """Shared: list_tables returns Table objects for the active dialect."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "mssql":
+            # MSSQL path runs two queries: count + paginated SELECT.
+            count_row = MagicMock()
+            count_row.fetchone.return_value = (2,)
+            data_rows = [
+                MagicMock(
+                    schema_name="dbo", table_name="customers", object_type="U ",
+                    row_count=3, last_modified=None, has_primary_key=1,
+                ),
+                MagicMock(
+                    schema_name="dbo", table_name="orders", object_type="U ",
+                    row_count=2, last_modified=None, has_primary_key=1,
+                ),
+            ]
+            dialect_inspector.connection.execute.side_effect = [count_row, iter(data_rows)]
+            tables, pagination = service.list_tables(schema_name="dbo")
+            names = {t.table_name for t in tables}
+            assert names == {"customers", "orders"}
+            assert pagination["total_count"] == 2
+        elif dialect_inspector.name == "databricks":
+            # Databricks path w/o catalog uses the generic inspector path.
+            dialect_inspector.inspector.get_schema_names.return_value = ["main"]
+            dialect_inspector.inspector.get_table_names.return_value = ["customers", "orders"]
+            dialect_inspector.inspector.get_view_names.return_value = []
+            # Row counts via _get_row_count_generic — patch to avoid real SQL.
+            with patch.object(service, "_get_row_count_generic", return_value=5):
+                tables, pagination = service.list_tables()
+            names = {t.table_name for t in tables}
+            assert names == {"customers", "orders"}
+        else:  # generic — real SQLite
+            tables, pagination = service.list_tables()
+            names = {t.table_name for t in tables}
+            assert "customers" in names
+            assert "orders" in names
+            assert "products" in names
+            assert pagination["total_count"] == 3
+
+    def test_get_table_schema_returns_table_schema_object(self, dialect_inspector):
+        """Shared: get_table_schema returns a dict with columns; index-section
+        presence reflects dialect.supports_indexes (META-04 / D-13)."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "generic":
+            result = service.get_table_schema("customers", "main")
+        else:
+            # MagicMock path — configure inspector responses used by get_columns /
+            # get_pk_constraint / get_foreign_keys / get_indexes.
+            insp = dialect_inspector.inspector
+            col_type = MagicMock()
+            col_type.__str__ = lambda self: "INTEGER"
+            insp.get_columns.return_value = [
+                {"name": "id", "type": col_type, "nullable": False,
+                 "autoincrement": True, "default": None},
+            ]
+            insp.get_pk_constraint.return_value = {
+                "name": "pk_customers", "constrained_columns": ["id"],
+            }
+            insp.get_foreign_keys.return_value = []
+            insp.get_indexes.return_value = []
+            # Databricks get_table_schema additionally calls DESCRIBE EXTENDED —
+            # short-circuit it so the shared test stays dialect-agnostic.
+            if dialect_inspector.name == "databricks":
+                with patch.object(service, "_parse_databricks_table_properties",
+                                  return_value={}):
+                    result = service.get_table_schema("customers", "main")
+            else:
+                result = service.get_table_schema("customers", "main")
+
+        # Shared assertions: table metadata shape
+        assert result["table_name"] == "customers"
+        assert result["schema_name"] == "main"
+        assert isinstance(result["columns"], list)
+        assert len(result["columns"]) >= 1
+
+        # Index section presence reflects dialect.supports_indexes (D-13)
+        if dialect_inspector.dialect.supports_indexes:
+            assert "indexes" in result, (
+                f"dialect={dialect_inspector.name} supports_indexes=True but "
+                f"'indexes' key missing from result"
+            )
+        else:
+            assert "indexes" not in result, (
+                f"dialect={dialect_inspector.name} supports_indexes=False but "
+                f"'indexes' key present in result"
+            )
