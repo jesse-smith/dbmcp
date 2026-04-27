@@ -107,8 +107,8 @@ Requirements for multi-dialect support milestone. Each maps to roadmap phases.
 | ANLYS-04 | Phase 12 | Complete |
 | ANLYS-05 | Phase 12 | Complete |
 | TEST-01 | Phase 8 | Pending |
-| TEST-02 | Phase 13 | Pending |
-| TEST-03 | Phase 13 | Pending |
+| TEST-02 | Phase 13 | Complete |
+| TEST-03 | Phase 13 | Complete |
 
 **Coverage:**
 
