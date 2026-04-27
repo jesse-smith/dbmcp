@@ -6,11 +6,17 @@ This module provides fixtures for:
 - Sample data for unit tests
 """
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.inspection import inspect as sa_inspect
 
 from src.db.connection import ConnectionManager
+from src.db.dialects import get_dialect
+from src.db.dialects.protocol import DialectStrategy
 from src.models.schema import (
     AuthenticationMethod,
     Column,
@@ -20,6 +26,64 @@ from src.models.schema import (
     Table,
     TableType,
 )
+from tests.fixtures.sqlite_schema import load_sqlite_schema
+
+# =============================================================================
+# Dialect Fixtures (Phase 13)
+# =============================================================================
+
+ALL_DIALECTS = ("mssql", "databricks", "generic")
+
+
+@dataclass
+class DialectTestContext:
+    """Bundle of dialect strategy and execution surface for parametrized tests."""
+
+    name: str
+    dialect: DialectStrategy
+    engine: object        # MagicMock(spec=Engine) by default; real Engine in dialect_inspector
+    connection: object    # MagicMock; wired to engine.connect().__enter__() for MagicMock path
+    inspector: object     # MagicMock by default; real SQLAlchemy Inspector in dialect_inspector (generic)
+
+
+@pytest.fixture(params=ALL_DIALECTS, ids=ALL_DIALECTS)
+def dialect(request) -> DialectTestContext:
+    """Parametrized dialect fixture yielding a real DialectStrategy + MagicMock
+    execution surface. Node IDs: test_X[mssql] / test_X[databricks] / test_X[generic].
+
+    Opt-out via @pytest.mark.dialects('mssql', ...): non-listed dialects skip."""
+    name = request.param
+    marker = request.node.get_closest_marker("dialects")
+    if marker and name not in marker.args:
+        pytest.skip(f"dialect={name} excluded by @pytest.mark.dialects{marker.args}")
+
+    dialect_obj = get_dialect(name)()  # real strategy instance
+    engine = MagicMock(spec=Engine)
+    connection = MagicMock()
+    inspector = MagicMock()
+    engine.connect.return_value.__enter__.return_value = connection
+    engine.connect.return_value.__exit__ = MagicMock()
+    return DialectTestContext(
+        name=name, dialect=dialect_obj, engine=engine,
+        connection=connection, inspector=inspector,
+    )
+
+
+@pytest.fixture
+def dialect_inspector(dialect) -> DialectTestContext:
+    """Augments `dialect` with a real SQLAlchemy Inspector + in-memory SQLite
+    for the generic dialect only. mssql/databricks keep the MagicMock inspector
+    (SQLite cannot impersonate sys.indexes or DESCRIBE EXTENDED)."""
+    if dialect.name != "generic":
+        return dialect
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    load_sqlite_schema(engine)
+    connection = engine.connect()
+    inspector = sa_inspect(engine)
+    return DialectTestContext(
+        name=dialect.name, dialect=dialect.dialect,
+        engine=engine, connection=connection, inspector=inspector,
+    )
 
 # =============================================================================
 # Mock Connection Fixtures

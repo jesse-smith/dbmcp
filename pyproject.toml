@@ -69,6 +69,7 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "dialects(*names): restrict a parametrized dialect test to specific dialect params (e.g., 'mssql')",
 ]
 
 [tool.ruff]
