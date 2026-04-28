@@ -351,7 +351,6 @@ class ConnectionManager:
                 sqlalchemy_url=sqlalchemy_url,
                 query_timeout=query_timeout,
             )
-            self._test_connection(engine, start_time, dialect.name)
         except ConnectionError:
             raise
         except SQLAlchemyError as e:
@@ -360,15 +359,54 @@ class ConnectionManager:
             logger.error(f"Connection to {safe_url} failed after {elapsed_ms}ms: {type(e).__name__}")
             raise ConnectionError(f"Could not connect to {safe_url}: {str(e)}") from e
 
+        try:
+            return self._register_engine(
+                engine,
+                dialect,
+                connection_id,
+                server=parsed_url.host or "",
+                database=parsed_url.database or "",
+                port=parsed_url.port or 0,
+                username=parsed_url.username,
+                start_time=start_time,
+            )
+        except ConnectionError:
+            raise
+        except SQLAlchemyError as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            safe_url = parsed_url.render_as_string(hide_password=True)
+            logger.error(f"Connection to {safe_url} failed after {elapsed_ms}ms: {type(e).__name__}")
+            raise ConnectionError(f"Could not connect to {safe_url}: {str(e)}") from e
+
+    def _register_engine(
+        self,
+        engine: Engine,
+        dialect: DialectStrategy,
+        connection_id: str,
+        *,
+        server: str,
+        database: str,
+        port: int,
+        username: str | None,
+        start_time: float,
+    ) -> Connection:
+        """Test the engine, register bookkeeping, and return the Connection.
+
+        Shared post-engine-creation path used by both ``connect_with_url`` and
+        the direct Databricks branch of ``connect_with_config``. Keeping this
+        single path prevents the two call sites from drifting (what made the
+        original Databricks bug possible).
+        """
+        self._test_connection(engine, start_time, dialect.name)
         self._engines[connection_id] = engine
         self._dialects[connection_id] = dialect
         connection = Connection(
             connection_id=connection_id,
-            server=parsed_url.host or "",
-            database=parsed_url.database or "",
-            port=parsed_url.port or 0,
+            server=server,
+            database=database,
+            port=port,
             dialect_name=dialect.name,
-            username=parsed_url.username,
+            username=username,
             created_at=datetime.now(),
         )
         self._connections[connection_id] = connection
@@ -422,14 +460,57 @@ class ConnectionManager:
             url = resolve_env_vars(config.sqlalchemy_url) if config.sqlalchemy_url else ""
             return self.connect_with_url(url, dialect, query_timeout)
         elif isinstance(config, DatabricksConnectionConfig):
+            host = resolve_env_vars(config.host) if config.host else ""
+            http_path = resolve_env_vars(config.http_path) if config.http_path else ""
             token = resolve_env_vars(config.token) if config.token else ""
+            catalog = resolve_env_vars(config.catalog) if config.catalog else "main"
+            schema = resolve_env_vars(config.schema_name) if config.schema_name else "default"
+
+            # Build a canonical URL only for connection_id derivation + reuse
+            # check. The dialect does NOT receive this URL — it takes the
+            # resolved kwargs directly (matching its actual signature).
             query_params = urlencode({
-                "http_path": config.http_path,
-                "catalog": config.catalog,
-                "schema": config.schema_name,
+                "http_path": http_path,
+                "catalog": catalog,
+                "schema": schema,
             })
-            url = f"databricks://token:{quote_plus(token)}@{config.host}?{query_params}"
-            return self.connect_with_url(url, dialect, query_timeout)
+            canonical_url = (
+                f"databricks://token:{quote_plus(token)}@{host}?{query_params}"
+            )
+            connection_id = self._generate_url_connection_id(canonical_url)
+            if connection_id in self._engines:
+                logger.info(f"Reusing existing connection: {connection_id}")
+                return self._connections[connection_id]
+
+            start_time = time.time()
+            try:
+                engine = dialect.create_engine(
+                    host=host,
+                    http_path=http_path,
+                    token=token,
+                    catalog=catalog,
+                    schema=schema,
+                )
+            except SQLAlchemyError as e:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                logger.error(
+                    f"Databricks connection to {host} failed after "
+                    f"{elapsed_ms}ms: {type(e).__name__}"
+                )
+                raise ConnectionError(
+                    f"Could not connect to databricks://{host}: {str(e)}"
+                ) from e
+
+            return self._register_engine(
+                engine,
+                dialect,
+                connection_id,
+                server=host,
+                database=catalog,
+                port=0,
+                username="token",
+                start_time=start_time,
+            )
         else:
             raise ValueError(f"Unsupported config type: {type(config).__name__}")
 

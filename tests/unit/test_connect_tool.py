@@ -6,8 +6,6 @@ verifies correct routing to connect_with_config / connect_with_url.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import toon_format
 
 from src.mcp_server.server import connect_database
@@ -262,10 +260,23 @@ class TestConnectDatabaseByUrl:
 class TestConnectWithConfigDatabricks:
     """Direct tests for ConnectionManager.connect_with_config with DatabricksConnectionConfig."""
 
-    def test_databricks_config_routes_to_connect_with_url(self):
-        """DatabricksConnectionConfig routes to connect_with_url with correct URL."""
-        from src.config import DatabricksConnectionConfig
+    def _patched_cm_and_dialect(self, dialect_name="databricks"):
+        """Build a ConnectionManager with _test_connection neutralized and a
+        dialect mock whose create_engine returns a MagicMock Engine."""
         from src.db.connection import ConnectionManager
+
+        cm = ConnectionManager()
+        # _test_connection runs SELECT 1 against a real engine; neutralize it.
+        cm._test_connection = lambda engine, start_time, dialect_name: None
+        dialect = MagicMock()
+        dialect.name = dialect_name
+        dialect.create_engine.return_value = MagicMock(name="Engine")
+        return cm, dialect
+
+    def test_databricks_config_calls_dialect_with_resolved_kwargs(self):
+        """DatabricksConnectionConfig invokes dialect.create_engine with kwargs
+        (host, http_path, token, catalog, schema) — NOT sqlalchemy_url."""
+        from src.config import DatabricksConnectionConfig
 
         config = DatabricksConnectionConfig(
             host="workspace.cloud.databricks.com",
@@ -274,86 +285,93 @@ class TestConnectWithConfigDatabricks:
             catalog="analytics",
             schema_name="production",
         )
-        dialect = MagicMock()
-        cm = ConnectionManager()
+        cm, dialect = self._patched_cm_and_dialect()
 
-        with patch.object(cm, "connect_with_url") as mock_connect_url:
-            mock_connect_url.return_value = MagicMock()
-            cm.connect_with_config(config, dialect, query_timeout=30)
+        cm.connect_with_config(config, dialect, query_timeout=30)
 
-            mock_connect_url.assert_called_once()
-            url_arg = mock_connect_url.call_args[0][0]
-
-            assert url_arg.startswith("databricks://token:")
-            assert "dapi_test_token" in url_arg
-            assert "workspace.cloud.databricks.com" in url_arg
-            assert "http_path" in url_arg
-            assert "catalog=analytics" in url_arg
-            assert "schema=production" in url_arg
+        dialect.create_engine.assert_called_once()
+        kwargs = dialect.create_engine.call_args.kwargs
+        assert kwargs == {
+            "host": "workspace.cloud.databricks.com",
+            "http_path": "/sql/1.0/warehouses/abc123",
+            "token": "dapi_test_token",
+            "catalog": "analytics",
+            "schema": "production",
+        }
+        assert "sqlalchemy_url" not in kwargs
 
     def test_databricks_config_resolves_env_var_token(self):
         """Token with env var reference is resolved via resolve_env_vars."""
         import os
 
         from src.config import DatabricksConnectionConfig
-        from src.db.connection import ConnectionManager
 
         config = DatabricksConnectionConfig(
             host="test.databricks.com",
             http_path="/sql/1.0/warehouses/abc",
             token="${DATABRICKS_TOKEN}",
         )
-        dialect = MagicMock()
-        cm = ConnectionManager()
+        cm, dialect = self._patched_cm_and_dialect()
 
-        with (
-            patch.dict(os.environ, {"DATABRICKS_TOKEN": "resolved_secret"}),
-            patch.object(cm, "connect_with_url") as mock_connect_url,
-        ):
-            mock_connect_url.return_value = MagicMock()
+        with patch.dict(os.environ, {"DATABRICKS_TOKEN": "resolved_secret"}):
             cm.connect_with_config(config, dialect)
 
-            url_arg = mock_connect_url.call_args[0][0]
-            assert "resolved_secret" in url_arg
-            assert "${DATABRICKS_TOKEN}" not in url_arg
+        kwargs = dialect.create_engine.call_args.kwargs
+        assert kwargs["token"] == "resolved_secret"
+        assert "${DATABRICKS_TOKEN}" not in kwargs["token"]
+
+    def test_databricks_config_resolves_env_var_host_and_http_path(self):
+        """host and http_path env var references are resolved (Bug A regression)."""
+        import os
+
+        from src.config import DatabricksConnectionConfig
+
+        config = DatabricksConnectionConfig(
+            host="${DBX_HOST}",
+            http_path="${DBX_PATH}",
+            token="tok",
+        )
+        cm, dialect = self._patched_cm_and_dialect()
+
+        with patch.dict(
+            os.environ,
+            {"DBX_HOST": "real.databricks.com", "DBX_PATH": "/sql/1.0/warehouses/xyz"},
+        ):
+            cm.connect_with_config(config, dialect)
+
+        kwargs = dialect.create_engine.call_args.kwargs
+        assert kwargs["host"] == "real.databricks.com"
+        assert kwargs["http_path"] == "/sql/1.0/warehouses/xyz"
 
     def test_databricks_config_defaults_catalog_and_schema(self):
-        """Default catalog 'main' and schema 'default' are included in URL."""
+        """Default catalog 'main' and schema 'default' are passed when unset."""
         from src.config import DatabricksConnectionConfig
-        from src.db.connection import ConnectionManager
 
         config = DatabricksConnectionConfig(
             host="test.databricks.com",
             http_path="/sql/1.0/warehouses/abc",
             token="tok",
         )
-        dialect = MagicMock()
-        cm = ConnectionManager()
+        cm, dialect = self._patched_cm_and_dialect()
 
-        with patch.object(cm, "connect_with_url") as mock_connect_url:
-            mock_connect_url.return_value = MagicMock()
-            cm.connect_with_config(config, dialect)
+        cm.connect_with_config(config, dialect)
 
-            url_arg = mock_connect_url.call_args[0][0]
-            assert "catalog=main" in url_arg
-            assert "schema=default" in url_arg
+        kwargs = dialect.create_engine.call_args.kwargs
+        assert kwargs["catalog"] == "main"
+        assert kwargs["schema"] == "default"
 
     def test_databricks_config_none_token_uses_empty_string(self):
-        """None token results in empty string in URL password position."""
+        """None token becomes empty string in the token kwarg."""
         from src.config import DatabricksConnectionConfig
-        from src.db.connection import ConnectionManager
 
         config = DatabricksConnectionConfig(
             host="test.databricks.com",
             http_path="/sql/1.0/warehouses/abc",
             token=None,
         )
-        dialect = MagicMock()
-        cm = ConnectionManager()
+        cm, dialect = self._patched_cm_and_dialect()
 
-        with patch.object(cm, "connect_with_url") as mock_connect_url:
-            mock_connect_url.return_value = MagicMock()
-            cm.connect_with_config(config, dialect)
+        cm.connect_with_config(config, dialect)
 
-            url_arg = mock_connect_url.call_args[0][0]
-            assert "databricks://token:@" in url_arg
+        kwargs = dialect.create_engine.call_args.kwargs
+        assert kwargs["token"] == ""
