@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-13)
 Phase: 13
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-04-28 - Completed quick task 260428-fr7: Surface config parse failures to the MCP client
+Last activity: 2026-04-28 - Completed quick task 260428-jr7: Fix Databricks connect_with_config
 
 Progress: [██████████] 100%
 
@@ -97,6 +97,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260428-fr7 | Surface config parse failures to the MCP client | 2026-04-28 | fd48be3 | [260428-fr7-surface-config-parse-failures-to-the-mcp](./quick/260428-fr7-surface-config-parse-failures-to-the-mcp/) |
+| 260428-jr7 | Fix Databricks connect_with_config (env vars + dialect signature) | 2026-04-28 | 4fdaa90 | [260428-jr7-fix-databricks-connect-with-config-integ](./quick/260428-jr7-fix-databricks-connect-with-config-integ/) |
 
 ## Session Continuity
 
