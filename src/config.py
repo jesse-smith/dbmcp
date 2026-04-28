@@ -100,6 +100,7 @@ class AppConfig:
     defaults: DefaultsConfig = field(default_factory=DefaultsConfig)
     connections: dict[str, ConnectionConfig] = field(default_factory=dict)
     allowed_stored_procedures: frozenset[str] = field(default_factory=frozenset)
+    load_error: str | None = None
 
 
 # =============================================================================
@@ -350,16 +351,24 @@ def load_config() -> AppConfig:
         return AppConfig()
 
     try:
+        resolved_path = str(config_path.resolve())
+    except OSError:
+        resolved_path = str(config_path)
+    try:
         with open(config_path, "rb") as f:
             raw = tomllib.load(f)
         logger.info("Config loaded from %s", config_path)
         return _parse_config(raw)
     except tomllib.TOMLDecodeError as e:
         logger.warning("Config: malformed TOML in %s: %s; using defaults", config_path, e)
-        return AppConfig()
+        return AppConfig(
+            load_error=f"{type(e).__name__}: {e} (path={resolved_path})"
+        )
     except Exception as e:
         logger.warning("Config: error reading %s: %s; using defaults", config_path, e)
-        return AppConfig()
+        return AppConfig(
+            load_error=f"{type(e).__name__}: {e} (path={resolved_path})"
+        )
 
 
 # =============================================================================

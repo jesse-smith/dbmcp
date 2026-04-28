@@ -405,7 +405,62 @@ class TestLoadConfig:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "dbmcp.toml").write_text("this is not valid TOML {{{{")
         config = load_config()
-        assert config == AppConfig()
+        # Connections and defaults fall back to empty/default, but load_error is now populated.
+        assert config.connections == {}
+        assert config.defaults == DefaultsConfig()
+        assert config.load_error is not None
+
+    def test_load_config_sets_load_error_on_invalid_toml(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
+        toml_path = tmp_path / "dbmcp.toml"
+        toml_path.write_text("this is = = broken")
+        config = load_config()
+        assert config.load_error is not None
+        assert isinstance(config.load_error, str)
+        assert len(config.load_error) > 0
+        assert str(toml_path) in config.load_error
+        # Error token should reference the underlying TOML parse failure.
+        assert "TOMLDecodeError" in config.load_error or "parse" in config.load_error.lower()
+
+    def test_load_config_sets_load_error_on_missing_dialect(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
+        toml_path = tmp_path / "dbmcp.toml"
+        toml_path.write_text(textwrap.dedent("""\
+            [connections.prod]
+            server = "srv1"
+            database = "db1"
+        """))
+        config = load_config()
+        assert config.load_error is not None
+        assert "dialect" in config.load_error.lower()
+        assert str(toml_path) in config.load_error
+
+    def test_load_config_load_error_is_none_on_success(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
+        (tmp_path / "dbmcp.toml").write_text(textwrap.dedent("""\
+            [connections.prod]
+            dialect = "mssql"
+            server = "srv1"
+            database = "db1"
+        """))
+        config = load_config()
+        assert config.load_error is None
+        assert "prod" in config.connections
+
+    def test_load_config_returns_empty_connections_when_load_error_set(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "fakehome"))
+        (tmp_path / "dbmcp.toml").write_text("this is = = broken")
+        config = load_config()
+        assert config.load_error is not None
+        assert config.connections == {}
 
     def test_local_takes_precedence_over_home(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
