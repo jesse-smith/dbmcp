@@ -65,6 +65,11 @@ class GenericDialect:
         """No known-safe stored procedures for generic dialects."""
         return frozenset()
 
+    @property
+    def safe_operational_commands(self) -> frozenset[str]:
+        """No dialect-specific SHOW/DESCRIBE allowlist for generic SQL."""
+        return frozenset()
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote using ANSI SQL double-quotes."""
         return f'"{identifier}"'

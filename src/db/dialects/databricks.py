@@ -58,6 +58,11 @@ class DatabricksDialect:
         """No known-safe stored procedures for Databricks."""
         return frozenset()
 
+    @property
+    def safe_operational_commands(self) -> frozenset[str]:
+        """Read-only discovery verbs (SHOW/DESCRIBE/DESC/EXPLAIN) are safe for Databricks."""
+        return frozenset({"SHOW", "DESCRIBE", "DESC", "EXPLAIN"})
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote using Databricks backticks."""
         return f"`{identifier}`"

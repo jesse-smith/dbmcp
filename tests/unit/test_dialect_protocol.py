@@ -41,6 +41,10 @@ class _StubDialect:
     def safe_procedures(self) -> frozenset[str]:
         return frozenset()
 
+    @property
+    def safe_operational_commands(self) -> frozenset[str]:
+        return frozenset()
+
 
 class _IncompleteDialect:
     """Non-conforming stub missing quote_identifier."""

@@ -79,6 +79,16 @@ class DialectStrategy(Protocol):
         """
         ...
 
+    @property
+    def safe_operational_commands(self) -> frozenset[str]:
+        """Read-only operational command verbs allowed by the validator.
+
+        Returns frozenset of uppercase command verbs (e.g. {'SHOW', 'DESCRIBE'}).
+        The denylist is otherwise dialect-agnostic; this allowlist opens specific
+        discovery primitives per dialect (e.g. Databricks needs SHOW CATALOGS).
+        """
+        ...
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote an identifier using dialect-appropriate quoting.
 

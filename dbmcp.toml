@@ -1,0 +1,12 @@
+[connections.stemsoftclinictest]
+dialect = "mssql"
+server = "SVWTSTEM04"
+database = "StemSoftClinicTest"
+authentication_method = "windows"
+trust_server_cert = true
+
+[connections.databricks-test]
+dialect = "databricks"
+host = "${DATABRICKS_HOST}"
+http_path = "${DATABRICKS_HTTP_PATH}"
+token = "${DATABRICKS_TOKEN}"

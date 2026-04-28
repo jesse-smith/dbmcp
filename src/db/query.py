@@ -540,10 +540,14 @@ class QueryService:
         safe_procs = (
             self._dialect.safe_procedures if self._dialect else frozenset()
         ) | get_config().allowed_stored_procedures
+        safe_ops = (
+            self._dialect.safe_operational_commands if self._dialect else frozenset()
+        )
         validation = validate_query(
             query_text,
             dialect=dialect_str,
             safe_procedures=safe_procs,
+            safe_operational_commands=safe_ops,
             allow_write=allow_write,
         )
         query_type = self.parse_query_type(query_text)

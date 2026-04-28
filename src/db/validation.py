@@ -48,6 +48,7 @@ def validate_query(
     *,
     dialect: str,
     safe_procedures: frozenset[str] = frozenset(),
+    safe_operational_commands: frozenset[str] = frozenset(),
     allow_write: bool = False,
 ) -> ValidationResult:
     """Validate a SQL query against the AST-based denylist.
@@ -89,7 +90,7 @@ def validate_query(
     for idx, stmt in enumerate(statements):
         if stmt is None:
             continue
-        reasons.extend(_classify_statement(stmt, idx, safe_procedures))
+        reasons.extend(_classify_statement(stmt, idx, safe_procedures, safe_operational_commands))
 
     # allow_write bypass: remove DML and CTE-wrapped write denials
     if allow_write:
@@ -99,7 +100,10 @@ def validate_query(
 
 
 def _classify_statement(
-    stmt: exp.Expression, idx: int, safe_procedures: frozenset[str]
+    stmt: exp.Expression,
+    idx: int,
+    safe_procedures: frozenset[str],
+    safe_operational_commands: frozenset[str] = frozenset(),
 ) -> list[DenialReason]:
     """Classify a single parsed statement and return denial reasons (if any)."""
     # Garbage parse detection (e.g., DBCC -> Alias)
@@ -113,7 +117,7 @@ def _classify_statement(
     # Command: EXEC/EXECUTE (sqlglot <29) or other unrecognized commands -> Operational
     # Must be checked before DENIED_TYPES since Command is in that map
     if isinstance(stmt, exp.Command):
-        return _check_command(stmt, idx, safe_procedures)
+        return _check_command(stmt, idx, safe_procedures, safe_operational_commands)
 
     # Kill -> Operational (not in DENIED_TYPES to avoid confusion with Command handling)
     if isinstance(stmt, exp.Kill):
@@ -204,12 +208,17 @@ def _check_control_flow(
 
 
 def _check_command(
-    stmt: exp.Command, idx: int, safe_procedures: frozenset[str]
+    stmt: exp.Command,
+    idx: int,
+    safe_procedures: frozenset[str],
+    safe_operational_commands: frozenset[str] = frozenset(),
 ) -> list[DenialReason]:
     """Check a Command node (EXEC/EXECUTE or other unrecognized command)."""
     cmd_name = str(stmt.this).upper() if stmt.this else ""
     if cmd_name in ("EXEC", "EXECUTE"):
         return _check_stored_procedure(stmt, idx, safe_procedures)
+    if cmd_name in safe_operational_commands:
+        return []
     return [DenialReason(DenialCategory.OPERATIONAL, f"{cmd_name} operations are not permitted", idx)]
 
 

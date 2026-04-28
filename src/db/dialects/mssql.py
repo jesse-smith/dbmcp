@@ -89,6 +89,11 @@ class MssqlDialect:
             "sp_describe_undeclared_parameters",
         })
 
+    @property
+    def safe_operational_commands(self) -> frozenset[str]:
+        """MSSQL has no SHOW/DESCRIBE primitives -- empty allowlist."""
+        return frozenset()
+
     def quote_identifier(self, identifier: str) -> str:
         """Quote using SQL Server square brackets."""
         return f"[{identifier.replace(']', ']]')}]"

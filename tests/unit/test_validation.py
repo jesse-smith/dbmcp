@@ -368,3 +368,61 @@ class TestCrossDialectValidation:
         """Calling validate_query without dialect= raises TypeError."""
         with pytest.raises(TypeError):
             validate_query("SELECT 1")
+
+
+class TestSafeOperationalCommands:
+    """Dialect-aware operational command allowlist (Test 7 gap #2).
+
+    Databricks relies on SHOW/DESCRIBE as primary discovery primitives. The
+    denylist is dialect-agnostic by default; callers pass
+    safe_operational_commands to open specific command verbs per-dialect.
+    """
+
+    def test_show_catalogs_blocked_by_default(self):
+        """SHOW CATALOGS stays blocked when no allowlist provided."""
+        result = validate_query("SHOW CATALOGS", dialect="databricks")
+        assert result.is_safe is False
+        assert result.reasons[0].category == DenialCategory.OPERATIONAL
+
+    def test_show_catalogs_allowed_for_databricks(self):
+        """SHOW CATALOGS passes when SHOW is in safe_operational_commands."""
+        result = validate_query(
+            "SHOW CATALOGS",
+            dialect="databricks",
+            safe_operational_commands=frozenset({"SHOW", "DESCRIBE", "DESC", "EXPLAIN"}),
+        )
+        assert result.is_safe is True, [r.detail for r in result.reasons]
+
+    def test_show_schemas_allowed_for_databricks(self):
+        result = validate_query(
+            "SHOW SCHEMAS IN `main`",
+            dialect="databricks",
+            safe_operational_commands=frozenset({"SHOW"}),
+        )
+        assert result.is_safe is True
+
+    def test_describe_allowed_for_databricks(self):
+        result = validate_query(
+            "DESCRIBE TABLE `main`.`default`.`foo`",
+            dialect="databricks",
+            safe_operational_commands=frozenset({"DESCRIBE"}),
+        )
+        assert result.is_safe is True
+
+    def test_mssql_show_still_blocked(self):
+        """Empty allowlist (MSSQL default) keeps SHOW blocked."""
+        result = validate_query(
+            "SHOW CATALOGS",
+            dialect="tsql",
+            safe_operational_commands=frozenset(),
+        )
+        assert result.is_safe is False
+
+    def test_kill_still_blocked_for_databricks(self):
+        """Allowlist only affects Command nodes; KILL remains blocked."""
+        result = validate_query(
+            "KILL 55",
+            dialect="databricks",
+            safe_operational_commands=frozenset({"SHOW", "KILL"}),
+        )
+        assert result.is_safe is False
