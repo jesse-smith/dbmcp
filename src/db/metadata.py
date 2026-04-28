@@ -881,7 +881,10 @@ class MetadataService:
         Returns:
             Dictionary with complete table metadata
         """
-        columns = self.get_columns(table_name, schema_name)
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            columns = self._get_databricks_columns(table_name, schema_name, catalog)
+        else:
+            columns = self.get_columns(table_name, schema_name)
 
         result = {
             "table_name": table_name,
@@ -949,6 +952,66 @@ class MetadataService:
                 result["catalog"] = catalog
 
         return result
+
+    def _get_databricks_columns(
+        self, table_name: str, schema_name: str, catalog: str
+    ) -> list[Column]:
+        """Fetch columns for a cross-catalog Databricks table via DESCRIBE TABLE.
+
+        SQLAlchemy Inspector is bound to the engine's default catalog and silently
+        returns [] for tables in other catalogs.  This method issues a plain
+        DESCRIBE TABLE using the fully-qualified three-part name, which works
+        regardless of which catalog the connection was opened against.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to
+        prevent SQL injection (T-mwr-02).
+
+        Args:
+            table_name: Table name
+            schema_name: Schema (database) name
+            catalog: Databricks catalog name
+
+        Returns:
+            List of Column objects.  Empty list on any error.
+        """
+        try:
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_schema = self._dialect.quote_identifier(schema_name)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            qualified = f"{quoted_catalog}.{quoted_schema}.{quoted_table}"
+            table_id = f"{catalog}.{schema_name}.{table_name}"
+
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"DESCRIBE TABLE {qualified}"))
+                rows = result.fetchall()
+
+            columns: list[Column] = []
+            for idx, row in enumerate(rows, start=1):
+                col_name = (row[0] or "").strip()
+                data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+                # Stop at blank separator or any section marker (starts with "#")
+                if not col_name or col_name.startswith("#"):
+                    break
+
+                columns.append(Column(
+                    column_id=f"{table_id}.{col_name}",
+                    table_id=table_id,
+                    column_name=col_name,
+                    ordinal_position=idx,
+                    data_type=data_type,
+                    is_primary_key=False,
+                    is_foreign_key=False,
+                ))
+
+            return columns
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch columns via DESCRIBE TABLE for "
+                f"{catalog}.{schema_name}.{table_name}: {type(e).__name__}: {e}"
+            )
+            return []
 
     def _parse_databricks_table_properties(
         self, table_name: str, schema_name: str, catalog: str
