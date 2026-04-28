@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-13)
 Phase: 13
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-04-27
+Last activity: 2026-04-28 - Completed quick task 260428-fr7: Surface config parse failures to the MCP client
 
 Progress: [██████████] 100%
 
@@ -91,6 +91,12 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 - FastMCP has no session-level lifecycle hooks; `atexit` is the cleanup mechanism
 - databricks-sqlalchemy Inspector may raise non-SQLAlchemy exceptions (research flag for Phase 11)
 - sqlglot transpilation coverage for analysis query patterns needs empirical validation (research flag for Phase 12)
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260428-fr7 | Surface config parse failures to the MCP client | 2026-04-28 | fd48be3 | [260428-fr7-surface-config-parse-failures-to-the-mcp](./quick/260428-fr7-surface-config-parse-failures-to-the-mcp/) |
 
 ## Session Continuity
 
