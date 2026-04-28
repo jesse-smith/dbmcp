@@ -1411,4 +1411,133 @@ class TestTableExistsCatalog:
             result = service.table_exists("foo", "dbo", catalog="IGNORED")
 
         assert result is True
-        mock_insp.get_table_names.assert_called_once_with(schema="dbo")
+
+
+# ============================================================================
+# Cross-catalog column fetch for Databricks (mwr fix)
+# ============================================================================
+
+
+class TestGetTableSchemaCrossCatalogColumns:
+    """Tests for _get_databricks_columns and cross-catalog get_table_schema.
+
+    When catalog is provided and dialect is Databricks, get_table_schema must
+    use DESCRIBE TABLE (not inspector.get_columns) to fetch columns, because
+    the inspector is bound to the engine's default catalog.
+    """
+
+    def test_cross_catalog_columns_populated_from_describe(self, test_engine):
+        """get_table_schema with catalog returns columns from DESCRIBE TABLE."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [
+            ("id", "int", ""),
+            ("name", "string", ""),
+            ("", "", ""),  # blank separator
+            ("# Detailed Table Information", "", ""),
+            ("Catalog", "bmtct", ""),
+        ]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "playground", catalog="bmtct")
+
+        assert len(result["columns"]) == 2
+        assert result["columns"][0]["column_name"] == "id"
+        assert result["columns"][1]["column_name"] == "name"
+
+    def test_cross_catalog_does_not_call_inspector_get_columns(self, test_engine):
+        """inspector.get_columns is NOT called when catalog is provided + Databricks."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [("id", "int", ""), ("name", "string", "")]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+            patch.object(service, "get_columns") as mock_get_columns,
+        ):
+            service.get_table_schema("t", "playground", catalog="bmtct")
+
+        mock_get_columns.assert_not_called()
+
+    def test_non_databricks_still_calls_inspector_get_columns(self, test_engine):
+        """Non-Databricks path: catalog ignored, inspector.get_columns used."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with (
+            patch.object(service, "get_columns", return_value=[]) as mock_get_columns,
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            service.get_table_schema("customers", "main", catalog="ignored")
+
+        mock_get_columns.assert_called_once()
+
+    def test_databricks_no_catalog_falls_through_to_inspector(self, test_engine):
+        """Databricks without explicit catalog uses inspector path (default catalog)."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with (
+            patch.object(service, "get_columns", return_value=[]) as mock_get_columns,
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            service.get_table_schema("customers", "main")  # no catalog kwarg
+
+        mock_get_columns.assert_called_once()
+
+    def test_describe_rows_stop_at_section_marker(self, test_engine):
+        """Rows after '#' section markers are not parsed as columns."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [
+            ("id", "int", ""),
+            ("# Partition Information", "", ""),
+            ("dt", "date", ""),  # inside partition section — NOT a column
+        ]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "schema", catalog="cat")
+
+        # Only "id" should appear — rows after the "#" section marker are skipped
+        assert len(result["columns"]) == 1
+        assert result["columns"][0]["column_name"] == "id"

@@ -756,6 +756,109 @@ class TestQueryExecution:
         assert query.denial_reasons[0].category == DenialCategory.DDL
 
 
+class TestSafeOperationalCommandExecution:
+    """Tests for result materialization of SHOW/DESCRIBE on Databricks.
+
+    Safe operational commands (SHOW, DESCRIBE, EXPLAIN) are result-producing
+    reads that must return rows, not just a rowcount.
+    """
+
+    def _make_mock_dialect(self, safe_ops=frozenset({"SHOW", "DESCRIBE"})):
+        """Create a mock dialect with safe_operational_commands."""
+        from unittest.mock import PropertyMock
+        dialect = MagicMock()
+        type(dialect).safe_operational_commands = PropertyMock(return_value=safe_ops)
+        type(dialect).safe_procedures = PropertyMock(return_value=frozenset())
+        type(dialect).sqlglot_dialect = PropertyMock(return_value="databricks")
+        dialect.name = "databricks"
+        return dialect
+
+    def test_show_catalogs_materializes_rows(self, mock_engine):
+        """execute_query('SHOW CATALOGS') returns actual rows, not 0."""
+        mock_result = MagicMock()
+        mock_result.keys.return_value = ["catalog"]
+        mock_result.fetchall.return_value = [("bmtct",), ("main",)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="SHOW CATALOGS",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is True
+        assert query.rows == [{"catalog": "bmtct"}, {"catalog": "main"}]
+        assert query.rows_affected == 2
+
+    def test_describe_table_materializes_rows(self, mock_engine):
+        """execute_query('DESCRIBE TABLE t') returns rows."""
+        mock_result = MagicMock()
+        mock_result.keys.return_value = ["col_name", "data_type", "comment"]
+        mock_result.fetchall.return_value = [("id", "int", ""), ("name", "string", "")]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="DESCRIBE TABLE catalog.schema.t",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is True
+        assert len(query.rows) == 2
+        assert query.rows[0]["col_name"] == "id"
+
+    def test_show_without_databricks_dialect_is_blocked(self, mock_engine):
+        """SHOW CATALOGS with no safe_operational_commands is blocked by validator."""
+        mock_engine.dialect.name = "sqlite"
+
+        # No dialect set — safe_operational_commands will be empty frozenset
+        service = QueryService(mock_engine, dialect=None)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="SHOW CATALOGS",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is False
+        assert query.rows == []
+
+    def test_insert_still_uses_write_path(self, mock_engine):
+        """INSERT queries still use rowcount + commit, not row materialization."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        # INSERT is a write; allow_write=True to get past the validator
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="INSERT INTO t VALUES (1)",
+            row_limit=1000,
+            allow_write=True,
+        )
+
+        # Should have taken the write/commit path (rows empty, rows_affected==1)
+        assert query.rows == []
+        assert mock_conn.commit.called
+
+
 class TestTruncationConfig:
     """Test that truncation limit is driven by config, not hardcoded."""
 

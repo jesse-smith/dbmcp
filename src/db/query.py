@@ -649,6 +649,14 @@ class QueryService:
                 if query_type == QueryType.SELECT:
                     return self._process_select_results(result, conn, original_query, row_limit)
 
+                # Databricks SHOW/DESCRIBE/EXPLAIN are result-producing reads —
+                # they return rows but are not SELECT queries.  Materialise them
+                # through _process_select_results and skip the commit (read-only).
+                query_verb = executed_query.strip().upper().split()[0] if executed_query.strip() else ""
+                safe_ops = self._dialect.safe_operational_commands if self._dialect is not None else frozenset()
+                if query_verb in safe_ops:
+                    return self._process_select_results(result, conn, original_query, row_limit)
+
                 rows_affected = result.rowcount if result.rowcount >= 0 else 0
                 conn.commit()
                 return [], [], rows_affected, None, None
