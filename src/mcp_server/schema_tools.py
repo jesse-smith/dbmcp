@@ -127,6 +127,11 @@ async def connect_database(
 
         if connection_name is not None:
             config = get_config()
+            if config.load_error:
+                return {
+                    "status": "error",
+                    "error_message": f"config parse error: {config.load_error}",
+                }
             if connection_name not in config.connections:
                 return {
                     "status": "error",
