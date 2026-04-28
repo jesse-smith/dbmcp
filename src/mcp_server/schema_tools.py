@@ -215,7 +215,9 @@ async def list_schemas(connection_id: str, catalog: str | None = None) -> str:
     Args:
         connection_id: Connection ID from connect_database
         catalog: Optional Databricks catalog name. Overrides the connection's
-            default catalog. Ignored for non-Databricks dialects.
+            default catalog. If omitted on a Databricks connection, the
+            connection's configured default catalog is used (SHOW SCHEMAS IN).
+            Ignored for non-Databricks dialects.
 
     Returns:
         TOON-encoded string with schema list:

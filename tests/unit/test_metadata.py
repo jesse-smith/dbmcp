@@ -619,30 +619,109 @@ class TestCatalogListSchemas:
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("schema_a",), ("schema_b",)]
+        counts_result = MagicMock()
+        counts_result.fetchall.return_value = []  # no counts available
+
         mock_conn = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
-            ("schema_a",), ("schema_b",),
-        ]
-        mock_conn.execute.return_value = mock_result
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch.object(service.engine, "connect", return_value=mock_conn):
             schemas = service.list_schemas(connection_id="test", catalog="analytics")
 
-        executed_sql = str(mock_conn.execute.call_args[0][0])
-        assert "SHOW SCHEMAS IN" in executed_sql
-        assert "`analytics`" in executed_sql
+        # Assert the SHOW SCHEMAS query was issued (first call)
+        first_sql = str(mock_conn.execute.call_args_list[0][0][0])
+        assert "SHOW SCHEMAS IN" in first_sql
+        assert "`analytics`" in first_sql
+        assert len(schemas) == 2  # noqa: PLR2004
 
-    def test_list_schemas_without_catalog_uses_inspector(self, test_engine):
-        """list_schemas without catalog uses existing Inspector path."""
+    def test_list_schemas_populates_table_and_view_counts(self, test_engine):
+        """Databricks list_schemas joins information_schema.tables for counts."""
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
-        schemas = service.list_schemas(connection_id="test")
-        assert len(schemas) >= 1
-        assert schemas[0].schema_name == "main"
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("playground",), ("empty",)]
+        counts_result = MagicMock()
+        # (schema_name, table_count, view_count)
+        counts_result.fetchall.return_value = [("playground", 5, 2)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            schemas = service.list_schemas(connection_id="t", catalog="bmtct")
+
+        by_name = {s.schema_name: s for s in schemas}
+        assert by_name["playground"].table_count == 5  # noqa: PLR2004
+        assert by_name["playground"].view_count == 2  # noqa: PLR2004
+        assert by_name["empty"].table_count == 0
+        assert by_name["empty"].view_count == 0
+
+        # Counts query must reference information_schema.tables of the catalog
+        counts_sql = str(mock_conn.execute.call_args_list[1][0][0])
+        assert "information_schema" in counts_sql.lower()
+        assert "`bmtct`" in counts_sql
+
+    def test_list_schemas_counts_query_failure_falls_back_to_zero(self, test_engine):
+        """If information_schema query raises, schemas are still returned with 0 counts."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("playground",)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [
+            schemas_result,
+            SQLAlchemyError("no access to information_schema"),
+        ]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            schemas = service.list_schemas(connection_id="t", catalog="bmtct")
+
+        assert len(schemas) == 1
+        assert schemas[0].schema_name == "playground"
+        assert schemas[0].table_count == 0
+        assert schemas[0].view_count == 0
+
+    def test_list_schemas_without_catalog_uses_engine_default(self, test_engine):
+        """Databricks + no catalog extracts engine URL's catalog and uses SHOW SCHEMAS IN."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("default",)]
+        counts_result = MagicMock()
+        counts_result.fetchall.return_value = []
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        # Patch engine.url so we have a deterministic configured default.
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "bmtct"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test")
+
+        first_sql = str(mock_conn.execute.call_args_list[0][0][0])
+        assert "SHOW SCHEMAS IN" in first_sql
+        assert "`bmtct`" in first_sql
+        assert len(schemas) == 1
+        assert schemas[0].schema_name == "default"
 
     def test_list_schemas_catalog_ignored_for_non_databricks(self, test_engine):
         """catalog parameter ignored for non-Databricks dialects."""
@@ -1103,14 +1182,22 @@ class TestSharedMetadataBehavior:
             assert names == {"dbo", "sales"}
             assert all(s.connection_id == "c1" for s in schemas)
         elif dialect_inspector.name == "databricks":
-            # Databricks without catalog falls back to the generic-inspector path
-            # (the Databricks-specific SHOW SCHEMAS IN path requires catalog=).
-            dialect_inspector.inspector.get_schema_names.return_value = ["default"]
-            dialect_inspector.inspector.get_table_names.return_value = ["t1", "t2"]
-            dialect_inspector.inspector.get_view_names.return_value = []
+            # Databricks without catalog uses the engine's default catalog
+            # (extracted from engine.url.query) and issues SHOW SCHEMAS IN.
+            schemas_result = MagicMock()
+            schemas_result.fetchall.return_value = [("default",)]
+            counts_result = MagicMock()
+            counts_result.fetchall.return_value = []
+            dialect_inspector.connection.execute.side_effect = [
+                schemas_result, counts_result,
+            ]
+            fake_url = MagicMock()
+            fake_url.query = {"catalog": "main"}
+            dialect_inspector.engine.url = fake_url
             schemas = service.list_schemas(connection_id="c1")
             assert len(schemas) >= 1
-            assert all(hasattr(s, "schema_name") for s in schemas)
+            assert schemas[0].schema_name == "default"
+            assert schemas[0].connection_id == "c1"
         else:  # generic — real SQLite
             schemas = service.list_schemas(connection_id="c1")
             assert len(schemas) >= 1

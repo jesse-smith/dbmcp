@@ -85,16 +85,23 @@ class MetadataService:
         Args:
             connection_id: Optional connection ID for schema_id generation
             catalog: Optional Databricks catalog name. Overrides the connection's
-                default catalog. Ignored for non-Databricks dialects.
+                default catalog. When omitted on a Databricks connection, the
+                configured default catalog (from the engine URL) is used.
+                Ignored for non-Databricks dialects.
 
         Returns:
             List of Schema objects sorted by table count descending
         """
         start_time = time.time()
 
-        # Databricks with explicit catalog: use raw SQL for cross-catalog query
-        if catalog and self._dialect and self._dialect.name == "databricks":
-            result = self._list_schemas_databricks(connection_id, catalog)
+        # Databricks: always use SHOW SCHEMAS IN <catalog>. When catalog is not
+        # passed, fall back to the engine URL's configured catalog (same value
+        # DatabricksDialect.create_engine embedded). The Inspector path is
+        # misleading for Databricks -- it returns the connection's default
+        # catalog name as a single pseudo-schema with zero tables.
+        if self._dialect and self._dialect.name == "databricks":
+            effective_catalog = catalog or self._databricks_default_catalog()
+            result = self._list_schemas_databricks(connection_id, effective_catalog)
         elif self._dialect and self._dialect.has_fast_row_counts:
             result = self._list_schemas_mssql(connection_id)
         else:
@@ -143,26 +150,63 @@ class MetadataService:
         logger.debug(f"Found {len(schemas)} schemas (SQL Server)")
         return schemas
 
+    def _databricks_default_catalog(self) -> str:
+        """Return the engine's configured default Databricks catalog.
+
+        The DatabricksDialect.create_engine embeds catalog in the SQLAlchemy URL
+        query params. Falls back to 'main' if the URL doesn't surface one.
+        """
+        try:
+            return self.engine.url.query.get("catalog", "main")
+        except AttributeError:
+            return "main"
+
     def _list_schemas_databricks(self, connection_id: str, catalog: str) -> list[Schema]:
         """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries.
+
+        After collecting the schema list, performs a single grouped query against
+        `<catalog>.information_schema.tables` to populate table_count/view_count
+        per schema. If the information_schema query fails (e.g. permissions), the
+        schemas are still returned with zero counts.
 
         All identifiers are backtick-quoted via dialect.quote_identifier() to prevent
         SQL injection (per T-11-04 security requirement).
         """
-        schemas = []
+        schemas: list[Schema] = []
         quoted_catalog = self._dialect.quote_identifier(catalog)
 
         with self.engine.connect() as conn:
-            result = conn.execute(text(f"SHOW SCHEMAS IN {quoted_catalog}"))
-            for row in result.fetchall():
+            schema_rows = conn.execute(
+                text(f"SHOW SCHEMAS IN {quoted_catalog}")
+            ).fetchall()
+
+            counts: dict[str, tuple[int, int]] = {}
+            try:
+                counts_rows = conn.execute(text(
+                    f"SELECT table_schema, "
+                    f"SUM(CASE WHEN table_type = 'VIEW' THEN 0 ELSE 1 END) AS table_count, "
+                    f"SUM(CASE WHEN table_type = 'VIEW' THEN 1 ELSE 0 END) AS view_count "
+                    f"FROM {quoted_catalog}.information_schema.tables "
+                    f"GROUP BY table_schema"
+                )).fetchall()
+                for row in counts_rows:
+                    counts[row[0]] = (int(row[1] or 0), int(row[2] or 0))
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    f"Databricks information_schema counts unavailable for "
+                    f"catalog={catalog}: {exc}. Falling back to zero counts."
+                )
+
+            for row in schema_rows:
                 schema_name = row[0]
                 schema_id = f"{connection_id}_{schema_name}" if connection_id else schema_name
+                table_count, view_count = counts.get(schema_name, (0, 0))
                 schemas.append(Schema(
                     schema_id=schema_id,
                     connection_id=connection_id,
                     schema_name=schema_name,
-                    table_count=0,  # Not available from SHOW SCHEMAS
-                    view_count=0,
+                    table_count=table_count,
+                    view_count=view_count,
                     last_scanned=datetime.now(),
                 ))
 
