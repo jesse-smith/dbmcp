@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-13)
 Phase: 13
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-04-28 - Completed quick task 260428-l6x: Fix Databricks Test 7 bugs (4 fixes)
+Last activity: 2026-04-28 - Completed quick task 260428-mwr: Fix execute_query row materialization + cross-catalog column fetch
 
 Progress: [██████████] 100%
 
@@ -85,8 +85,6 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 - [database] Fix connect_with_url to work with MSSQL (`.planning/todos/pending/2026-04-27-fix-connect-with-url-to-work-with-mssql.md`)
 - [testing] Audit Databricks connect_with_config test coverage (`.planning/todos/pending/2026-04-28-audit-databricks-test-coverage.md`)
 - [ux] "Unexpected error:" prefix on Databricks ImportError (`.planning/todos/pending/2026-04-28-missing-databricks-package-error-prefix.md`)
-- [databricks] get_table_schema returns empty columns list cross-catalog (`.planning/todos/pending/2026-04-28-databricks-get-table-schema-empty-columns.md`)
-- [databricks] execute_query("SHOW CATALOGS") passes validator but returns 0 rows (`.planning/todos/pending/2026-04-28-execute-query-show-catalogs-returns-no-rows.md`)
 
 ### Blockers/Concerns
 
@@ -102,6 +100,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260428-fr7 | Surface config parse failures to the MCP client | 2026-04-28 | fd48be3 | [260428-fr7-surface-config-parse-failures-to-the-mcp](./quick/260428-fr7-surface-config-parse-failures-to-the-mcp/) |
 | 260428-jr7 | Fix Databricks connect_with_config (env vars + dialect signature) | 2026-04-28 | 4fdaa90 | [260428-jr7-fix-databricks-connect-with-config-integ](./quick/260428-jr7-fix-databricks-connect-with-config-integ/) |
 | 260428-l6x | Fix Databricks Test 7 bugs (validator, table_exists catalog, list_schemas counts + no-catalog) | 2026-04-28 | f651c2b,16c62c3,1c07dfd | [260428-l6x-fix-databricks-test7-bugs](./quick/260428-l6x-fix-databricks-test7-bugs/) |
+| 260428-mwr | Fix execute_query row materialization + cross-catalog column fetch | 2026-04-28 | 6d37227,3abcbc1 | [260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod](./quick/260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod/) |
 
 ## Session Continuity
 
