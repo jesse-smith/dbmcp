@@ -83,6 +83,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 ### Pending Todos
 
 - [database] Fix connect_with_url to work with MSSQL (`.planning/todos/pending/2026-04-27-fix-connect-with-url-to-work-with-mssql.md`)
+- [database] Local dbmcp.toml not found by MCP server (`.planning/todos/pending/2026-04-28-local-dbmcp-toml-not-found-by-mcp-server.md`)
 
 ### Blockers/Concerns
 
