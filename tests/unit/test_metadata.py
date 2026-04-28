@@ -692,6 +692,35 @@ class TestCatalogListSchemas:
         assert schemas[0].table_count == 0
         assert schemas[0].view_count == 0
 
+    def test_list_schemas_no_catalog_falls_back_to_show_catalogs(self, test_engine):
+        """If the engine-default catalog is unavailable, list available catalogs."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        catalogs_result = MagicMock()
+        catalogs_result.fetchall.return_value = [("bmtct",), ("other_catalog",)]
+
+        mock_conn = MagicMock()
+        # First: SHOW SCHEMAS IN `main` raises; then SHOW CATALOGS returns list.
+        mock_conn.execute.side_effect = [
+            SQLAlchemyError("NO_SUCH_CATALOG_EXCEPTION"),
+            catalogs_result,
+        ]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "main"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test")
+
+        names = {s.schema_name for s in schemas}
+        assert names == {"bmtct", "other_catalog"}
+
     def test_list_schemas_without_catalog_uses_engine_default(self, test_engine):
         """Databricks + no catalog extracts engine URL's catalog and uses SHOW SCHEMAS IN."""
         dialect = _make_databricks_dialect()
