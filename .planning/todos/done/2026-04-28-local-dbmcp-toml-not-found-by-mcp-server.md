@@ -1,11 +1,30 @@
 ---
 created: 2026-04-28T15:52:59.518Z
+resolved: 2026-04-28
+resolved_by: quick task 260428-fr7
 title: Local dbmcp.toml not found by MCP server
 area: database
 files:
   - src/config/loader.py
   - README.md:105-110
 ---
+
+## Resolution (2026-04-28)
+
+Original diagnosis was incorrect. Config discovery (`_find_config_file` in
+`src/config.py`) works correctly — both `./dbmcp.toml` and
+`~/.dbmcp/config.toml` were being found. The actual root cause was a silent
+parse failure: `load_config()` caught the validation error (missing required
+`dialect` field introduced by the v2.0 multi-dialect branch), logged a
+`warning` (invisible to MCP clients), and returned an empty `AppConfig()`.
+`connect_database` then reported the misleading `Available: none`.
+
+Fixed in quick task **260428-fr7**:
+- `AppConfig.load_error` now captures parse exceptions.
+- `connect_database` branches on `config.load_error` before the name-lookup
+  and surfaces the real error to the client.
+
+See `.planning/quick/260428-fr7-surface-config-parse-failures-to-the-mcp/`.
 
 ## Problem
 
