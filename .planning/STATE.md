@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-13)
 Phase: 13
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-04-28 - Completed quick task 260428-jr7: Fix Databricks connect_with_config
+Last activity: 2026-04-28 - Completed quick task 260428-l6x: Fix Databricks Test 7 bugs (4 fixes)
 
 Progress: [██████████] 100%
 
@@ -83,7 +83,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 ### Pending Todos
 
 - [database] Fix connect_with_url to work with MSSQL (`.planning/todos/pending/2026-04-27-fix-connect-with-url-to-work-with-mssql.md`)
-- [database] Local dbmcp.toml not found by MCP server (`.planning/todos/pending/2026-04-28-local-dbmcp-toml-not-found-by-mcp-server.md`)
+- [testing] Audit Databricks connect_with_config test coverage (`.planning/todos/pending/2026-04-28-audit-databricks-test-coverage.md`)
+- [ux] "Unexpected error:" prefix on Databricks ImportError (`.planning/todos/pending/2026-04-28-missing-databricks-package-error-prefix.md`)
 
 ### Blockers/Concerns
 
@@ -98,6 +99,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 |---|-------------|------|--------|-----------|
 | 260428-fr7 | Surface config parse failures to the MCP client | 2026-04-28 | fd48be3 | [260428-fr7-surface-config-parse-failures-to-the-mcp](./quick/260428-fr7-surface-config-parse-failures-to-the-mcp/) |
 | 260428-jr7 | Fix Databricks connect_with_config (env vars + dialect signature) | 2026-04-28 | 4fdaa90 | [260428-jr7-fix-databricks-connect-with-config-integ](./quick/260428-jr7-fix-databricks-connect-with-config-integ/) |
+| 260428-l6x | Fix Databricks Test 7 bugs (validator, table_exists catalog, list_schemas counts + no-catalog) | 2026-04-28 | f651c2b,16c62c3,1c07dfd | [260428-l6x-fix-databricks-test7-bugs](./quick/260428-l6x-fix-databricks-test7-bugs/) |
 
 ## Session Continuity
 
