@@ -85,6 +85,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 - [database] Fix connect_with_url to work with MSSQL (`.planning/todos/pending/2026-04-27-fix-connect-with-url-to-work-with-mssql.md`)
 - [testing] Audit Databricks connect_with_config test coverage (`.planning/todos/pending/2026-04-28-audit-databricks-test-coverage.md`)
 - [ux] "Unexpected error:" prefix on Databricks ImportError (`.planning/todos/pending/2026-04-28-missing-databricks-package-error-prefix.md`)
+- [databricks] get_table_schema returns empty columns list cross-catalog (`.planning/todos/pending/2026-04-28-databricks-get-table-schema-empty-columns.md`)
+- [databricks] execute_query("SHOW CATALOGS") passes validator but returns 0 rows (`.planning/todos/pending/2026-04-28-execute-query-show-catalogs-returns-no-rows.md`)
 
 ### Blockers/Concerns
 
