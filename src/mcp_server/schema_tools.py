@@ -440,7 +440,7 @@ async def get_table_schema(
     def _sync_work():
         metadata_svc = _get_metadata_service(connection_id)
 
-        if not metadata_svc.table_exists(table_name, schema_name):
+        if not metadata_svc.table_exists(table_name, schema_name, catalog=catalog):
             return {
                 "status": "error",
                 "error_message": f"Table '{schema_name}.{table_name}' not found",

@@ -1209,3 +1209,90 @@ class TestSharedMetadataBehavior:
                 f"dialect={dialect_inspector.name} supports_indexes=False but "
                 f"'indexes' key present in result"
             )
+
+
+# ============================================================================
+# table_exists catalog threading (Test 7 gap #3)
+# ============================================================================
+
+
+class TestTableExistsCatalog:
+    """table_exists must accept an optional catalog param for Databricks."""
+
+    def test_table_exists_databricks_with_catalog_issues_show_tables(self, test_engine):
+        """Databricks table_exists(catalog=X) uses SHOW TABLES IN `X`.`schema`."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("playground", "caboodle_tests", False),
+            ("playground", "other_table", False),
+        ]
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is True
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "SHOW TABLES IN" in executed_sql
+        assert "`bmtct`" in executed_sql
+        assert "`playground`" in executed_sql
+
+    def test_table_exists_databricks_missing_table_returns_false(self, test_engine):
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("playground", "other_table", False),
+        ]
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is False
+
+    def test_table_exists_databricks_sql_error_returns_false(self, test_engine):
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError("boom")
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is False
+
+    def test_table_exists_non_databricks_ignores_catalog(self, test_engine):
+        """Non-Databricks path still uses the inspector and ignores catalog."""
+        service = MetadataService(test_engine)  # no dialect -> inspector path
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_table_names.return_value = ["foo"]
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.table_exists("foo", "dbo", catalog="IGNORED")
+
+        assert result is True
+        mock_insp.get_table_names.assert_called_once_with(schema="dbo")

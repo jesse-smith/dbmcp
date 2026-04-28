@@ -950,16 +950,41 @@ class MetadataService:
             # Return error indicator so caller can optionally surface it
             return {"_describe_extended_error": error_msg}
 
-    def table_exists(self, table_name: str, schema_name: str = "dbo") -> bool:
+    def table_exists(
+        self,
+        table_name: str,
+        schema_name: str = "dbo",
+        catalog: str | None = None,
+    ) -> bool:
         """Check if a table exists.
 
         Args:
             table_name: Table name
             schema_name: Schema name
+            catalog: Optional Databricks catalog. When provided and the dialect
+                is Databricks, uses `SHOW TABLES IN <catalog>.<schema>` for a
+                cross-catalog check. Ignored for other dialects.
 
         Returns:
             True if table exists
         """
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            try:
+                quoted_catalog = self._dialect.quote_identifier(catalog)
+                quoted_schema = self._dialect.quote_identifier(schema_name)
+                with self.engine.connect() as conn:
+                    result = conn.execute(
+                        text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
+                    )
+                    # SHOW TABLES rows: (database/schema, tableName, isTemporary)
+                    for row in result.fetchall():
+                        # tableName is index 1 per Databricks SHOW TABLES contract
+                        if len(row) >= 2 and row[1] == table_name:
+                            return True
+                return False
+            except SQLAlchemyError:
+                return False
+
         try:
             tables = self.inspector.get_table_names(schema=schema_name)
             return table_name in tables
