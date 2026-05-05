@@ -95,6 +95,15 @@ async def connect_database(
 
     Provide exactly one of connection_name or sqlalchemy_url.
 
+    MSSQL URL query parameters (mssql+pyodbc://...):
+    - authentication_method: sql | windows | azure_ad | azure_ad_integrated
+      (default: sql when credentials are present, else windows)
+    - trust_server_cert: true | false (default: false)
+    - tenant_id: Azure AD tenant (optional)
+
+    Example (MSSQL):
+        mssql+pyodbc://user:pass@host/db?authentication_method=sql&trust_server_cert=true
+
     Args:
         connection_name: Named connection from config file (optional)
         sqlalchemy_url: SQLAlchemy connection URL (optional)
