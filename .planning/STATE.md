@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Multi-Dialect Support
 status: milestone_complete
 stopped_at: Completed 13-04-PLAN.md
-last_updated: "2026-04-27T18:24:46.193Z"
-last_activity: 2026-04-27
+last_updated: "2026-05-05T15:45:00.000Z"
+last_activity: 2026-05-05 - Completed quick task 260504-ilw: Centralize log file to ~/.dbmcp/logs/ with rotation and auto-migration
 progress:
   total_phases: 6
   completed_phases: 7
@@ -101,6 +101,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260428-jr7 | Fix Databricks connect_with_config (env vars + dialect signature) | 2026-04-28 | 4fdaa90 | [260428-jr7-fix-databricks-connect-with-config-integ](./quick/260428-jr7-fix-databricks-connect-with-config-integ/) |
 | 260428-l6x | Fix Databricks Test 7 bugs (validator, table_exists catalog, list_schemas counts + no-catalog) | 2026-04-28 | f651c2b,16c62c3,1c07dfd | [260428-l6x-fix-databricks-test7-bugs](./quick/260428-l6x-fix-databricks-test7-bugs/) |
 | 260428-mwr | Fix execute_query row materialization + cross-catalog column fetch | 2026-04-28 | 6d37227,3abcbc1 | [260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod](./quick/260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod/) |
+| 260504-ilw | Centralize log file to ~/.dbmcp/logs/ with rotation and auto-migration | 2026-05-05 | afe9b72 | [260504-ilw-centralize-log-file-to-dbmcp-logs-with-r](./quick/260504-ilw-centralize-log-file-to-dbmcp-logs-with-r/) |
 
 ## Session Continuity
 
