@@ -5,7 +5,7 @@ milestone_name: Multi-Dialect Support
 status: milestone_complete
 stopped_at: Completed 13-04-PLAN.md
 last_updated: "2026-05-05T15:45:00.000Z"
-last_activity: 2026-05-05 - Completed quick task 260505-mxi: Drop "Unexpected error:" prefix on ImportError/ModuleNotFoundError in MCP tools
+last_activity: 2026-05-05 - Completed quick task 260505-o1k: Fix MSSQL driver override — URL-supplied driver wins over dialect default
 progress:
   total_phases: 6
   completed_phases: 7
@@ -103,6 +103,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-mhm | Fix connect_with_url to work with MSSQL (MSSQLDialect parses sqlalchemy_url) | 2026-05-05 | c07b071,77721ca,de838d9 | [260505-mhm-fix-connect-with-url-to-work-with-mssql-](./quick/260505-mhm-fix-connect-with-url-to-work-with-mssql-/) |
 | 260505-mr3 | Audit Databricks test coverage — verdict: not a blocker; follow-up todo filed for integration tests | 2026-05-05 | (audit-only, no code) | [260505-mr3-audit-test-coverage-for-databricks-conne](./quick/260505-mr3-audit-test-coverage-for-databricks-conne/) |
 | 260505-mxi | Drop "Unexpected error:" prefix on ImportError/ModuleNotFoundError in MCP tools | 2026-05-05 | 0859b53,02df7e0,4afd68f | [260505-mxi-drop-unexpected-error-prefix-on-importer](./quick/260505-mxi-drop-unexpected-error-prefix-on-importer/) |
+| 260505-o1k | Fix MSSQL driver override — URL-supplied driver query param wins over dialect default | 2026-05-05 | 40358bc,bcc3360 | [260505-o1k-fix-mssql-driver-override-url-supplied-d](./quick/260505-o1k-fix-mssql-driver-override-url-supplied-d/) |
 
 ## Session Continuity
 
