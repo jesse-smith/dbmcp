@@ -218,7 +218,23 @@ class DatabricksDialect:
         })
         url = f"databricks://token:{quote_plus(token)}@{host}?{query_params}"
 
-        return sa_create_engine(url, pool_pre_ping=True, echo=False)
+        # Defaults: 30s socket timeout (mirrors MSSQL), cap retries at 2 so bad
+        # hosts fail fast instead of hanging for minutes on connector retries.
+        connection_timeout = kwargs.get("connection_timeout", 30)
+        dialect_defaults = {
+            "_socket_timeout": connection_timeout,
+            "_retry_stop_after_attempts_count": 2,
+        }
+        # User-supplied connect_args win on matching keys; defaults fill gaps.
+        user_connect_args = kwargs.get("connect_args") or {}
+        merged_connect_args = {**dialect_defaults, **user_connect_args}
+
+        return sa_create_engine(
+            url,
+            pool_pre_ping=True,
+            echo=False,
+            connect_args=merged_connect_args,
+        )
 
     def fast_row_counts(
         self, engine: Engine, schema_name: str | None = None
