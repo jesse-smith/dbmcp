@@ -5,7 +5,7 @@ milestone_name: Multi-Dialect Support
 status: milestone_complete
 stopped_at: Completed 13-04-PLAN.md
 last_updated: "2026-05-05T15:45:00.000Z"
-last_activity: 2026-05-05 - Completed quick task 260505-mhm: Fix connect_with_url to work with MSSQL (MSSQLDialect parses sqlalchemy_url)
+last_activity: 2026-05-05 - Completed quick task 260505-mr3: Audit Databricks test coverage (verdict: not a blocker; follow-up todo filed)
 progress:
   total_phases: 6
   completed_phases: 7
@@ -82,8 +82,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 ### Pending Todos
 
-- [testing] Audit Databricks connect_with_config test coverage (`.planning/todos/pending/2026-04-28-audit-databricks-test-coverage.md`)
 - [ux] "Unexpected error:" prefix on Databricks ImportError (`.planning/todos/pending/2026-04-28-missing-databricks-package-error-prefix.md`)
+- [testing] Add Databricks integration tests for env-var substitution and error wrapping (`.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`)
 
 ### Blockers/Concerns
 
@@ -102,6 +102,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260428-mwr | Fix execute_query row materialization + cross-catalog column fetch | 2026-04-28 | 6d37227,3abcbc1 | [260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod](./quick/260428-mwr-fix-bugs-just-surfaced-and-listed-in-tod/) |
 | 260504-ilw | Centralize log file to ~/.dbmcp/logs/ with rotation and auto-migration | 2026-05-05 | afe9b72 | [260504-ilw-centralize-log-file-to-dbmcp-logs-with-r](./quick/260504-ilw-centralize-log-file-to-dbmcp-logs-with-r/) |
 | 260505-mhm | Fix connect_with_url to work with MSSQL (MSSQLDialect parses sqlalchemy_url) | 2026-05-05 | c07b071,77721ca,de838d9 | [260505-mhm-fix-connect-with-url-to-work-with-mssql-](./quick/260505-mhm-fix-connect-with-url-to-work-with-mssql-/) |
+| 260505-mr3 | Audit Databricks test coverage — verdict: not a blocker; follow-up todo filed for integration tests | 2026-05-05 | (audit-only, no code) | [260505-mr3-audit-test-coverage-for-databricks-conne](./quick/260505-mr3-audit-test-coverage-for-databricks-conne/) |
 
 ## Session Continuity
 
