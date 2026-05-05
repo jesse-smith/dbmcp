@@ -422,6 +422,77 @@ class TestCreateEngineFromUrl:
         assert "Database%3Dkwdb" in url_arg or "Database=kwdb" in url_arg
         assert "UID%3Dkwuser" in url_arg or "UID=kwuser" in url_arg
 
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_url_driver_overrides_default(self, mock_create_engine, _mock_event):
+        """URL ?driver=ODBC+Driver+17+... overrides the hardcoded Driver 18 default."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url=(
+                "mssql+pyodbc://user:pass@host/db"
+                "?driver=ODBC+Driver+17+for+SQL+Server"
+            ),
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        # URL arg is quote_plus-encoded: "ODBC Driver 17 for SQL Server" -> "ODBC+Driver+17+for+SQL+Server"
+        # Driver={...} -> Driver%3D%7BODBC+Driver+17+for+SQL+Server%7D
+        assert (
+            "Driver%3D%7BODBC+Driver+17+for+SQL+Server%7D" in url_arg
+            or "Driver={ODBC Driver 17 for SQL Server}" in url_arg
+        ), f"expected Driver 17 in url_arg, got: {url_arg}"
+        assert (
+            "ODBC+Driver+18+for+SQL+Server" not in url_arg
+            and "ODBC Driver 18 for SQL Server" not in url_arg
+        ), f"Driver 18 should not appear when URL supplies Driver 17: {url_arg}"
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_url_without_driver_uses_default(self, mock_create_engine, _mock_event):
+        """URL without driver= query param falls back to Driver 18 default (backward compat)."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url="mssql+pyodbc://user:pass@host/db",
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert (
+            "ODBC+Driver+18+for+SQL+Server" in url_arg
+            or "ODBC Driver 18 for SQL Server" in url_arg
+        ), f"expected Driver 18 default when URL has no driver query: {url_arg}"
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_kwargs_path_uses_default_driver(self, mock_create_engine, _mock_event):
+        """Regression: kwargs-only path (no sqlalchemy_url) continues to use Driver 18."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            server="kwserver",
+            database="kwdb",
+            port=1433,
+            username="kwuser",
+            password="kwpass",
+            authentication_method=AuthenticationMethod.SQL,
+            trust_server_cert=True,
+            connection_timeout=30,
+            query_timeout=30,
+            pool_config=PoolConfig(),
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert (
+            "ODBC+Driver+18+for+SQL+Server" in url_arg
+            or "ODBC Driver 18 for SQL Server" in url_arg
+        )
+
 
 class TestRegistryIntegration:
     """Verify MssqlDialect is auto-registered via __init__.py."""
