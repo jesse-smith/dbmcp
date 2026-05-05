@@ -260,6 +260,169 @@ class TestFastRowCounts:
         assert result == {}
 
 
+class TestCreateEngineFromUrl:
+    """Verify MssqlDialect.create_engine parses sqlalchemy_url kwarg.
+
+    See plan 260505-mhm: URL-based connection must work for MSSQL — the
+    URL takes precedence over conflicting kwargs when provided.
+    """
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_parses_url_sql_auth(self, mock_create_engine, _mock_event):
+        """URL with user:pass@host:1433/db derives SQL auth params."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url="mssql+pyodbc://user:pass@host:1433/mydb",
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        # SQL auth ODBC string has UID/PWD and Server=host,1433; DB=mydb
+        assert "UID%3Duser" in url_arg or "UID=user" in url_arg
+        assert "PWD%3Dpass" in url_arg or "PWD=pass" in url_arg
+        assert "Server%3Dhost%2C1433" in url_arg or "Server=host,1433" in url_arg
+        assert "Database%3Dmydb" in url_arg or "Database=mydb" in url_arg
+        # trust_server_cert default False
+        assert "TrustServerCertificate%3Dno" in url_arg or "TrustServerCertificate=no" in url_arg
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_parses_url_windows_auth(self, mock_create_engine, _mock_event):
+        """URL with authentication_method=windows uses Trusted_Connection."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url="mssql+pyodbc://host/mydb?authentication_method=windows",
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert "Trusted_Connection" in url_arg
+        # No UID/PWD for Windows auth
+        assert "UID%3D" not in url_arg and "UID=" not in url_arg
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_parses_url_trust_server_cert_true(self, mock_create_engine, _mock_event):
+        """trust_server_cert=true in query string sets TrustServerCertificate=yes."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url="mssql+pyodbc://user:pass@host/mydb?trust_server_cert=true",
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert "TrustServerCertificate%3Dyes" in url_arg or "TrustServerCertificate=yes" in url_arg
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_parses_url_trust_server_cert_variants(self, mock_create_engine, _mock_event):
+        """trust_server_cert accepts '1'/'yes' as truthy, '0'/'false' as falsy."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        for truthy in ("1", "yes", "TRUE", "True"):
+            mock_create_engine.reset_mock()
+            dialect.create_engine(
+                sqlalchemy_url=f"mssql+pyodbc://u:p@h/d?trust_server_cert={truthy}",
+                query_timeout=30,
+            )
+            url_arg = mock_create_engine.call_args[0][0]
+            assert (
+                "TrustServerCertificate%3Dyes" in url_arg
+                or "TrustServerCertificate=yes" in url_arg
+            ), f"truthy value {truthy!r} should produce yes"
+
+        for falsy in ("0", "false", "FALSE", "no"):
+            mock_create_engine.reset_mock()
+            dialect.create_engine(
+                sqlalchemy_url=f"mssql+pyodbc://u:p@h/d?trust_server_cert={falsy}",
+                query_timeout=30,
+            )
+            url_arg = mock_create_engine.call_args[0][0]
+            assert (
+                "TrustServerCertificate%3Dno" in url_arg
+                or "TrustServerCertificate=no" in url_arg
+            ), f"falsy value {falsy!r} should produce no"
+
+    def test_create_engine_url_missing_host_raises(self):
+        """URL without host raises ValueError mentioning 'server'."""
+        import pytest
+
+        dialect = MssqlDialect()
+        with pytest.raises(ValueError, match="server"):
+            dialect.create_engine(sqlalchemy_url="mssql+pyodbc:///mydb")
+
+    def test_create_engine_url_missing_database_raises(self):
+        """URL without database raises ValueError mentioning 'database'."""
+        import pytest
+
+        dialect = MssqlDialect()
+        with pytest.raises(ValueError, match="database"):
+            dialect.create_engine(sqlalchemy_url="mssql+pyodbc://host/")
+
+    def test_create_engine_url_invalid_auth_method_raises(self):
+        """Invalid authentication_method query value raises ValueError listing accepted values."""
+        import pytest
+
+        dialect = MssqlDialect()
+        with pytest.raises(ValueError, match="authentication_method"):
+            dialect.create_engine(
+                sqlalchemy_url="mssql+pyodbc://u:p@h/d?authentication_method=bogus"
+            )
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_url_ignores_conflicting_kwargs(self, mock_create_engine, _mock_event):
+        """When sqlalchemy_url is provided, conflicting kwargs (server=) are ignored — URL wins."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            sqlalchemy_url="mssql+pyodbc://user:pass@url_host/url_db",
+            server="other_host",
+            database="other_db",
+            authentication_method=AuthenticationMethod.WINDOWS,
+            query_timeout=30,
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert "Server%3Durl_host" in url_arg or "Server=url_host" in url_arg
+        assert "Server=other_host" not in url_arg and "Server%3Dother_host" not in url_arg
+        assert "Database%3Durl_db" in url_arg or "Database=url_db" in url_arg
+
+    @patch("src.db.dialects.mssql.event")
+    @patch("src.db.dialects.mssql.sa_create_engine")
+    def test_create_engine_kwargs_only_path_unchanged(self, mock_create_engine, _mock_event):
+        """Regression: kwargs-only call (no sqlalchemy_url) still works."""
+        mock_create_engine.return_value = MagicMock()
+        dialect = MssqlDialect()
+
+        dialect.create_engine(
+            server="kwserver",
+            database="kwdb",
+            port=1433,
+            username="kwuser",
+            password="kwpass",
+            authentication_method=AuthenticationMethod.SQL,
+            trust_server_cert=True,
+            connection_timeout=30,
+            query_timeout=30,
+            pool_config=PoolConfig(),
+        )
+
+        url_arg = mock_create_engine.call_args[0][0]
+        assert "Server%3Dkwserver%2C1433" in url_arg or "Server=kwserver,1433" in url_arg
+        assert "Database%3Dkwdb" in url_arg or "Database=kwdb" in url_arg
+        assert "UID%3Dkwuser" in url_arg or "UID=kwuser" in url_arg
+
+
 class TestRegistryIntegration:
     """Verify MssqlDialect is auto-registered via __init__.py."""
 
