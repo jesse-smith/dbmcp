@@ -12,6 +12,7 @@ from src.config import get_config
 from src.db.connection import ConnectionError, _classify_db_error
 from src.db.dialects.registry import get_dialect, resolve_dialect_from_url
 from src.db.metadata import MetadataService
+from src.mcp_server._errors import format_unexpected_error
 from src.mcp_server.server import get_connection_manager, logger, mcp
 from src.serialization import encode_response
 
@@ -202,7 +203,7 @@ async def connect_database(
             _cat, guidance = _classify_db_error(e)
             error_msg = f"{guidance} ({e})"
         else:
-            error_msg = f"Unexpected error: {type(e).__name__}: {str(e)}"
+            error_msg = format_unexpected_error(e, include_type=True)
         return encode_response({
             "status": "error",
             "error_message": error_msg,

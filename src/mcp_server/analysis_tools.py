@@ -17,6 +17,7 @@ from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.db.connection import _classify_db_error
+from src.mcp_server._errors import format_unexpected_error
 from src.mcp_server.server import get_connection_manager, mcp
 from src.serialization import encode_response
 
@@ -140,7 +141,7 @@ async def get_column_info(
             _cat, guidance = _classify_db_error(e)
             error_msg = f"{guidance} ({e})"
         else:
-            error_msg = f"Unexpected error: {str(e)}"
+            error_msg = format_unexpected_error(e, include_type=False)
         return encode_response({
             "status": "error",
             "error_message": error_msg,
@@ -244,7 +245,7 @@ async def find_pk_candidates(
             _cat, guidance = _classify_db_error(e)
             error_msg = f"{guidance} ({e})"
         else:
-            error_msg = f"Unexpected error: {str(e)}"
+            error_msg = format_unexpected_error(e, include_type=False)
         return encode_response({
             "status": "error",
             "error_message": error_msg,
@@ -400,7 +401,7 @@ async def find_fk_candidates(
             _cat, guidance = _classify_db_error(e)
             error_msg = f"{guidance} ({e})"
         else:
-            error_msg = f"Unexpected error: {str(e)}"
+            error_msg = format_unexpected_error(e, include_type=False)
         return encode_response({
             "status": "error",
             "error_message": error_msg,
