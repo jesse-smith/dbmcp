@@ -22,6 +22,7 @@ except ImportError as e:
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.pool import QueuePool
 
 from src.db.dialects.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
@@ -101,10 +102,34 @@ class MssqlDialect:
     def create_engine(self, **kwargs) -> Engine:
         """Create a SQLAlchemy Engine with MSSQL-specific ODBC configuration.
 
+        Two entry modes:
+
+        1. **Kwargs mode** (named connections): pass server, database,
+           authentication_method explicitly.
+        2. **URL mode** (sqlalchemy_url): pass ``sqlalchemy_url="mssql+pyodbc://..."``
+           and the dialect parses host, database, port, credentials, and auth
+           parameters from the URL. URL values take precedence — any
+           conflicting kwargs (server, database, username, password,
+           authentication_method, trust_server_cert, tenant_id) are ignored
+           when ``sqlalchemy_url`` is present; only ``query_timeout``,
+           ``pool_config``, ``connection_id``, and ``disconnect_callback``
+           survive from kwargs.
+
+        Supported URL query parameters (URL mode):
+
+        - ``authentication_method``: ``sql`` | ``windows`` | ``azure_ad`` |
+          ``azure_ad_integrated``. If omitted, defaults to ``sql`` when
+          username+password are present, else ``windows``.
+        - ``trust_server_cert``: ``true`` / ``false`` / ``1`` / ``0`` /
+          ``yes`` / ``no`` (case-insensitive). Default ``false``.
+        - ``tenant_id``: Azure AD tenant (optional).
+
         Args:
             **kwargs: Connection parameters:
-                server (str): SQL Server host.
-                database (str): Database name.
+                sqlalchemy_url (str | None): SQLAlchemy URL — when present,
+                    populates server/database/credentials/auth from URL.
+                server (str): SQL Server host (kwargs mode).
+                database (str): Database name (kwargs mode).
                 port (int): Server port (default 1433).
                 username (str | None): Username for SQL/Azure AD auth.
                 password (str | None): Password for SQL/Azure AD auth.
@@ -119,6 +144,10 @@ class MssqlDialect:
 
         Returns:
             Configured SQLAlchemy Engine.
+
+        Raises:
+            ValueError: If sqlalchemy_url is malformed — missing host,
+                missing database, or invalid authentication_method value.
         """
         if pyodbc is None:
             if _pyodbc_import_error and "driver" in str(_pyodbc_import_error).lower():
@@ -130,6 +159,12 @@ class MssqlDialect:
                 raise ImportError(
                     "MSSQL support requires pyodbc. Install with: pip install dbmcp[mssql]"
                 ) from _pyodbc_import_error
+
+        # URL-mode branch: when sqlalchemy_url is provided, parse it and
+        # overwrite any conflicting kwargs (URL wins). See method docstring.
+        sqlalchemy_url = kwargs.get("sqlalchemy_url")
+        if sqlalchemy_url is not None:
+            kwargs = self._kwargs_from_url(sqlalchemy_url, kwargs)
 
         server: str = kwargs["server"]
         database: str = kwargs["database"]
@@ -255,6 +290,94 @@ class MssqlDialect:
                 result[row.table_key] = int(row.row_count)
 
         return result
+
+    @staticmethod
+    def _kwargs_from_url(sqlalchemy_url: str, original_kwargs: dict) -> dict:
+        """Parse a SQLAlchemy URL into the kwargs dict create_engine expects.
+
+        URL wins: any conflicting original kwargs are dropped. Preserved
+        keys: query_timeout, pool_config, connection_id, disconnect_callback.
+
+        Args:
+            sqlalchemy_url: The ``mssql+pyodbc://...`` URL to parse.
+            original_kwargs: The kwargs dict passed to create_engine.
+
+        Returns:
+            A new kwargs dict with URL-derived server/database/credentials/auth
+            merged with preserved runtime kwargs.
+
+        Raises:
+            ValueError: If URL is missing host, missing database, or carries
+                an unrecognized ``authentication_method`` query value.
+        """
+        url = make_url(sqlalchemy_url)
+
+        if not url.host:
+            raise ValueError(
+                f"sqlalchemy_url missing server (host): {sqlalchemy_url!r}"
+            )
+        if not url.database:
+            raise ValueError(
+                f"sqlalchemy_url missing database: {sqlalchemy_url!r}"
+            )
+
+        # url.query is an immutabledict; normalize to a plain dict of
+        # single-value strings (SQLAlchemy collapses scalar query params).
+        query = dict(url.query)
+
+        # authentication_method: explicit value wins; otherwise default by
+        # presence of credentials (SQL if user+pass, else WINDOWS).
+        auth_raw = query.get("authentication_method")
+        if auth_raw is not None:
+            try:
+                authentication_method = AuthenticationMethod(auth_raw.lower())
+            except ValueError as e:
+                accepted = ", ".join(m.value for m in AuthenticationMethod)
+                raise ValueError(
+                    f"Invalid authentication_method {auth_raw!r} in sqlalchemy_url. "
+                    f"Accepted values: {accepted}"
+                ) from e
+        elif url.username and url.password:
+            authentication_method = AuthenticationMethod.SQL
+        else:
+            authentication_method = AuthenticationMethod.WINDOWS
+
+        # trust_server_cert: parse as bool (case-insensitive).
+        tsc_raw = query.get("trust_server_cert", "")
+        trust_server_cert = tsc_raw.strip().lower() in ("true", "1", "yes")
+
+        # Build the normalized kwargs the existing code path expects.
+        # Preserve only runtime kwargs (timeouts, pool, callbacks) from original.
+        preserved_keys = {
+            "query_timeout",
+            "pool_config",
+            "connection_id",
+            "disconnect_callback",
+            "connection_timeout",
+        }
+        conflicting = [
+            k
+            for k in original_kwargs
+            if k != "sqlalchemy_url" and k not in preserved_keys
+        ]
+        if conflicting:
+            logger.debug(
+                "sqlalchemy_url supplied; ignoring conflicting kwargs: %s",
+                conflicting,
+            )
+
+        new_kwargs = {k: original_kwargs[k] for k in preserved_keys if k in original_kwargs}
+        new_kwargs.update({
+            "server": url.host,
+            "database": url.database,
+            "port": url.port or 1433,
+            "username": url.username,
+            "password": url.password,
+            "authentication_method": authentication_method,
+            "trust_server_cert": trust_server_cert,
+            "tenant_id": query.get("tenant_id"),
+        })
+        return new_kwargs
 
     @staticmethod
     def _build_odbc_connection_string(
