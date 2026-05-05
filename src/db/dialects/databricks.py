@@ -10,6 +10,11 @@ from urllib.parse import quote_plus, urlencode
 
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
+
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 try:
     import databricks.sql  # noqa: F401
@@ -67,13 +72,112 @@ class DatabricksDialect:
         """Quote using Databricks backticks."""
         return f"`{identifier}`"
 
+    @staticmethod
+    def _kwargs_from_url(sqlalchemy_url: str, original_kwargs: dict) -> dict:
+        """Parse a SQLAlchemy ``databricks://...`` URL into create_engine kwargs.
+
+        URL-derived keys: host, http_path, token, catalog, schema.
+
+        Conflict policy: URL wins. Any original kwargs other than the
+        preserved runtime set are dropped (and logged at DEBUG).
+
+        Preserved runtime kwargs (passed through verbatim):
+        ``query_timeout``, ``pool_config``, ``connection_id``,
+        ``disconnect_callback``, ``connection_timeout``.
+
+        URL → kwargs mapping:
+            - host       ← url.host (required; ValueError if missing)
+            - http_path  ← url.query["http_path"] (required; ValueError if missing)
+            - token      ← url.password or "" (username expected literally "token")
+            - catalog    ← url.query.get("catalog", "main")
+            - schema     ← url.database or url.query.get("schema") or "default"
+
+        Args:
+            sqlalchemy_url: The ``databricks://...`` URL to parse.
+            original_kwargs: The kwargs dict passed to create_engine.
+
+        Returns:
+            A new kwargs dict suitable for the kwargs-only branch of
+            ``create_engine``.
+
+        Raises:
+            ValueError: If URL is missing host or http_path.
+        """
+        url = make_url(sqlalchemy_url)
+
+        if not url.host:
+            raise ValueError(
+                f"sqlalchemy_url missing host: {sqlalchemy_url!r}"
+            )
+
+        query = dict(url.query)
+        http_path = query.get("http_path")
+        if not http_path:
+            raise ValueError(
+                f"sqlalchemy_url missing http_path: {sqlalchemy_url!r}"
+            )
+
+        token = url.password or ""
+        catalog = query.get("catalog", "main")
+        schema = url.database or query.get("schema") or "default"
+
+        preserved_keys = {
+            "query_timeout",
+            "pool_config",
+            "connection_id",
+            "disconnect_callback",
+            "connection_timeout",
+        }
+        conflicting = [
+            k
+            for k in original_kwargs
+            if k != "sqlalchemy_url" and k not in preserved_keys
+        ]
+        if conflicting:
+            logger.debug(
+                "sqlalchemy_url supplied; ignoring conflicting kwargs: %s",
+                conflicting,
+            )
+
+        new_kwargs = {
+            k: original_kwargs[k] for k in preserved_keys if k in original_kwargs
+        }
+        new_kwargs.update({
+            "host": url.host,
+            "http_path": http_path,
+            "token": token,
+            "catalog": catalog,
+            "schema": schema,
+        })
+        return new_kwargs
+
     def create_engine(self, **kwargs) -> Engine:
         """Create a SQLAlchemy Engine with Databricks token auth.
 
+        Two call styles are supported:
+
+        1. **Kwargs-only (legacy):** pass ``host``, ``http_path``, ``token``,
+           ``catalog``, ``schema`` directly.
+        2. **URL-based:** pass ``sqlalchemy_url="databricks://token:T@host...?http_path=..."``.
+           The URL is parsed via SQLAlchemy's ``make_url`` and its fields
+           (host, password-as-token, ``http_path``/``catalog``/``schema`` query
+           params, or schema from the path component) supply the connection
+           identity.
+
+        **Conflict policy (URL mode):** URL wins. Any conflicting kwargs
+        (host, http_path, token, catalog, schema) are dropped and logged at
+        DEBUG. Preserved runtime kwargs that pass through unchanged:
+        ``query_timeout``, ``pool_config``, ``connection_id``,
+        ``disconnect_callback``, ``connection_timeout``.
+
         Args:
-            **kwargs: Connection parameters:
-                host (str): Databricks workspace hostname. (required)
-                http_path (str): SQL warehouse HTTP path. (required)
+            **kwargs: Connection parameters. Either ``sqlalchemy_url`` or
+                the kwargs-only set below.
+
+                sqlalchemy_url (str): Full ``databricks://`` URL. When
+                    present, it supplies all connection identity fields.
+                host (str): Databricks workspace hostname. (required in kwargs mode)
+                http_path (str): SQL warehouse HTTP path. (required in kwargs mode)
                 token (str): Personal access token or OAuth token. (optional)
                 catalog (str): Unity Catalog name (default "main"). (optional)
                 schema (str): Schema name (default "default"). (optional)
@@ -83,13 +187,18 @@ class DatabricksDialect:
 
         Raises:
             ImportError: If databricks-sqlalchemy is not installed.
-            ValueError: If required parameters are missing.
+            ValueError: If required parameters are missing (kwargs mode)
+                or the URL lacks host/http_path (URL mode).
         """
         if _databricks_import_error is not None:
             raise ImportError(
                 "Databricks support requires databricks-sqlalchemy. "
                 "Install with: pip install dbmcp[databricks]"
             ) from _databricks_import_error
+
+        sqlalchemy_url = kwargs.get("sqlalchemy_url")
+        if sqlalchemy_url is not None:
+            kwargs = self._kwargs_from_url(sqlalchemy_url, kwargs)
 
         # Validate required parameters
         try:
