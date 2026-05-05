@@ -373,6 +373,155 @@ class TestCreateEngineFromUrl:
             databricks_mod._databricks_import_error = original_error
 
 
+class TestCreateEngineConnectArgs:
+    """Tests for connect_args plumbing (socket timeout + retry cap)."""
+
+    def _prep(self, databricks_mod):
+        databricks_mod._databricks_import_error = None
+        return databricks_mod.DatabricksDialect()
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_default_connect_args_applied(self, mock_sa_create_engine):
+        """Kwargs-mode with no connection_timeout → defaults (30s socket, 2 retries)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                host="h.databricks.com",
+                http_path="/sql/1.0/warehouses/x",
+                token="t",
+            )
+
+            call_kwargs = mock_sa_create_engine.call_args.kwargs
+            assert call_kwargs["connect_args"] == {
+                "_socket_timeout": 30,
+                "_retry_stop_after_attempts_count": 2,
+            }
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_connection_timeout_kwarg_overrides_default(self, mock_sa_create_engine):
+        """connection_timeout=N → _socket_timeout=N, retry cap still 2."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                host="h.databricks.com",
+                http_path="/sql/1.0/warehouses/x",
+                token="t",
+                connection_timeout=5,
+            )
+
+            ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
+            assert ca["_socket_timeout"] == 5
+            assert ca["_retry_stop_after_attempts_count"] == 2
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_user_connect_args_merged_user_wins_per_key(self, mock_sa_create_engine):
+        """User-supplied connect_args override dialect defaults per-key; extras preserved."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                host="h.databricks.com",
+                http_path="/sql/1.0/warehouses/x",
+                token="t",
+                connect_args={"_socket_timeout": 10, "_retry_delay_max": 15},
+            )
+
+            ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
+            assert ca == {
+                "_socket_timeout": 10,
+                "_retry_stop_after_attempts_count": 2,
+                "_retry_delay_max": 15,
+            }
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_user_retry_cap_override(self, mock_sa_create_engine):
+        """User-supplied _retry_stop_after_attempts_count wins over default 2."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                host="h.databricks.com",
+                http_path="/sql/1.0/warehouses/x",
+                token="t",
+                connect_args={"_retry_stop_after_attempts_count": 5},
+            )
+
+            ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
+            assert ca["_retry_stop_after_attempts_count"] == 5
+            assert ca["_socket_timeout"] == 30
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_connect_args_applied_on_url_path(self, mock_sa_create_engine):
+        """URL-mode with no connection_timeout → same defaults (30, 2)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                sqlalchemy_url="databricks://token:T@host.com/main?http_path=/sql/1.0/warehouses/p",
+            )
+
+            ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
+            assert ca == {
+                "_socket_timeout": 30,
+                "_retry_stop_after_attempts_count": 2,
+            }
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_connect_args_url_path_respects_connection_timeout_kwarg(
+        self, mock_sa_create_engine
+    ):
+        """URL-mode + connection_timeout=7 → _socket_timeout=7 (preserved through _kwargs_from_url)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            dialect = self._prep(databricks_mod)
+            mock_sa_create_engine.return_value = MagicMock()
+
+            dialect.create_engine(
+                sqlalchemy_url="databricks://token:T@host.com/main?http_path=/sql/1.0/warehouses/p",
+                connection_timeout=7,
+            )
+
+            ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
+            assert ca["_socket_timeout"] == 7
+            assert ca["_retry_stop_after_attempts_count"] == 2
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+
 class TestDatabricksDialectRegistration:
     """Tests for dialect registry integration."""
 
