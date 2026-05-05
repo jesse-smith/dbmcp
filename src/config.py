@@ -94,12 +94,20 @@ ConnectionConfig: TypeAlias = (
 
 
 @dataclass(frozen=True)
+class LoggingConfig:
+    """Logging configuration."""
+
+    dir: Path | None = None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration."""
 
     defaults: DefaultsConfig = field(default_factory=DefaultsConfig)
     connections: dict[str, ConnectionConfig] = field(default_factory=dict)
     allowed_stored_procedures: frozenset[str] = field(default_factory=frozenset)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     load_error: str | None = None
 
 
@@ -311,6 +319,17 @@ def _validate_sp_names(names: list) -> frozenset[str]:
     return frozenset(valid)
 
 
+def _parse_logging(raw_logging: dict) -> LoggingConfig:
+    """Parse [logging] section. Only `dir` is supported currently."""
+    dir_val = raw_logging.get("dir")
+    if dir_val is None:
+        return LoggingConfig()
+    if not isinstance(dir_val, str) or not dir_val.strip():
+        logger.warning("Config: [logging] dir=%r is not a non-empty string; ignoring", dir_val)
+        return LoggingConfig()
+    return LoggingConfig(dir=Path(dir_val).expanduser())
+
+
 def _parse_config(raw: dict) -> AppConfig:
     """Parse a raw TOML dict into an AppConfig.
 
@@ -324,11 +343,13 @@ def _parse_config(raw: dict) -> AppConfig:
     connections = _parse_connections(raw.get("connections", {}))
     sp_names = raw.get("allowed_stored_procedures", [])
     allowed_sps = _validate_sp_names(sp_names)
+    logging_cfg = _parse_logging(raw.get("logging", {}))
 
     return AppConfig(
         defaults=defaults,
         connections=connections,
         allowed_stored_procedures=allowed_sps,
+        logging=logging_cfg,
     )
 
 

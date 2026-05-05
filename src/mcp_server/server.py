@@ -11,16 +11,18 @@ All logging goes to file and stderr only.
 import atexit
 import signal
 import sys
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from src.config import init_config
+from src.config import init_config, load_config
 from src.db.connection import ConnectionManager
 from src.logging_config import CredentialFilter, setup_logging
 
-# Configure logging (file + stderr, never stdout)
-logger = setup_logging(log_file=Path("dbmcp.log"), log_to_stderr=True)
+# Configure logging (file + stderr, never stdout). Log path defaults to
+# ~/.dbmcp/logs/<cwd-basename>-<hash>.log and is overridable via [logging] dir
+# in dbmcp.toml / ~/.dbmcp/config.toml.
+_bootstrap_cfg = load_config()
+logger = setup_logging(log_dir=_bootstrap_cfg.logging.dir, log_to_stderr=True)
 logger.addFilter(CredentialFilter())
 
 # Create MCP server instance
