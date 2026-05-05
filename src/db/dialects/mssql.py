@@ -177,6 +177,7 @@ class MssqlDialect:
         query_timeout: int = kwargs.get("query_timeout", 30)
         pool_config = kwargs.get("pool_config")
         tenant_id: str | None = kwargs.get("tenant_id")
+        driver: str | None = kwargs.get("driver")
         connection_id: str | None = kwargs.get("connection_id")
         disconnect_callback: Callable[[str], None] | None = kwargs.get("disconnect_callback")
 
@@ -195,6 +196,7 @@ class MssqlDialect:
             authentication_method=authentication_method,
             trust_server_cert=trust_server_cert,
             connection_timeout=connection_timeout,
+            driver=driver,
         )
 
         pool_kwargs = {
@@ -376,6 +378,7 @@ class MssqlDialect:
             "authentication_method": authentication_method,
             "trust_server_cert": trust_server_cert,
             "tenant_id": query.get("tenant_id"),
+            "driver": query.get("driver"),
         })
         return new_kwargs
 
@@ -389,6 +392,7 @@ class MssqlDialect:
         authentication_method: AuthenticationMethod,
         trust_server_cert: bool,
         connection_timeout: int,
+        driver: str | None = None,
     ) -> str:
         """Build ODBC connection string for SQL Server.
 
@@ -401,12 +405,17 @@ class MssqlDialect:
             authentication_method: Auth method.
             trust_server_cert: Trust server certificate.
             connection_timeout: Timeout in seconds.
+            driver: ODBC driver name (e.g. "ODBC Driver 17 for SQL Server").
+                When None, defaults to "ODBC Driver 18 for SQL Server". Intended
+                to be populated via the ``driver`` URL query param; kwargs-mode
+                callers typically leave this as the default.
 
         Returns:
             ODBC connection string.
         """
+        driver_name = driver or "ODBC Driver 18 for SQL Server"
         parts = [
-            "Driver={ODBC Driver 18 for SQL Server}",
+            f"Driver={{{driver_name}}}",
             f"Server={server},{port}",
             f"Database={database}",
             f"TrustServerCertificate={'yes' if trust_server_cert else 'no'}",
