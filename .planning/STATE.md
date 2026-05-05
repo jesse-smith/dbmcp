@@ -5,7 +5,7 @@ milestone_name: Multi-Dialect Support
 status: milestone_complete
 stopped_at: Completed 13-04-PLAN.md
 last_updated: "2026-05-05T15:45:00.000Z"
-last_activity: 2026-05-05 - Completed quick task 260505-o6n: Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url)
+last_activity: 2026-05-05 - Completed quick task 260505-own: Apply connect_timeout default + retry cap to DatabricksDialect
 progress:
   total_phases: 6
   completed_phases: 7
@@ -105,6 +105,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-mxi | Drop "Unexpected error:" prefix on ImportError/ModuleNotFoundError in MCP tools | 2026-05-05 | 0859b53,02df7e0,4afd68f | [260505-mxi-drop-unexpected-error-prefix-on-importer](./quick/260505-mxi-drop-unexpected-error-prefix-on-importer/) |
 | 260505-o1k | Fix MSSQL driver override — URL-supplied driver query param wins over dialect default | 2026-05-05 | 40358bc,bcc3360 | [260505-o1k-fix-mssql-driver-override-url-supplied-d](./quick/260505-o1k-fix-mssql-driver-override-url-supplied-d/) |
 | 260505-o6n | Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url — mirrors MSSQL fix) | 2026-05-05 | b50268f,10e56a6 | [260505-o6n-fix-databricksdialect-url-parsing-parse-](./quick/260505-o6n-fix-databricksdialect-url-parsing-parse-/) |
+| 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
 
 ## Session Continuity
 
