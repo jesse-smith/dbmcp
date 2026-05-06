@@ -38,11 +38,11 @@ created: 2026-04-14
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 11-01-01 | 01 | 1 | DIAL-03 | — | N/A | unit | `uv run pytest tests/test_databricks_dialect.py -x -q` | ❌ W0 | ⬜ pending |
-| 11-02-01 | 02 | 1 | META-01 | — | N/A | unit | `uv run pytest tests/test_metadata.py -x -q` | ✅ | ⬜ pending |
-| 11-02-02 | 02 | 1 | META-02 | — | N/A | unit | `uv run pytest tests/test_metadata.py -x -q` | ✅ | ⬜ pending |
-| 11-02-03 | 02 | 2 | META-03 | — | N/A | unit | `uv run pytest tests/test_schema_tools.py -x -q` | ✅ | ⬜ pending |
-| 11-02-04 | 02 | 2 | META-04 | — | N/A | unit | `uv run pytest tests/test_metadata.py -x -q` | ✅ | ⬜ pending |
+| 11-01-01 | 01 | 1 | DIAL-03 | — | N/A | unit | `uv run pytest tests/unit/test_databricks_dialect.py -x -q` | ✅ | ✅ green |
+| 11-02-01 | 02 | 1 | META-01 | — | N/A | unit | `uv run pytest tests/unit/test_metadata.py -x -q` | ✅ | ✅ green |
+| 11-02-02 | 02 | 1 | META-02 | — | N/A | unit | `uv run pytest tests/unit/test_metadata.py -x -q` | ✅ | ✅ green |
+| 11-02-03 | 02 | 2 | META-03 | — | N/A | unit | `uv run pytest tests/unit/test_metadata.py -x -q -k Catalog` | ✅ | ✅ green |
+| 11-02-04 | 02 | 2 | META-04 | — | N/A | unit | `uv run pytest tests/unit/test_metadata.py -x -q` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -75,3 +75,16 @@ created: 2026-04-14
 - [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** approved 2026-04-14
+
+---
+
+## Validation Audit 2026-05-06
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 (all requirements already covered) |
+| Path corrections | 5 (added `unit/` prefix, remapped META-03 to test_metadata.py) |
+| Resolved | 5 (marked ✅ green) |
+| Escalated | 0 |
+
+Verified via `uv run pytest tests/unit/test_databricks_dialect.py tests/unit/test_metadata.py -q` — 111 passed.
