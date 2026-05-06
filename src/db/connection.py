@@ -158,6 +158,7 @@ class ConnectionManager:
         connection_timeout: int = 30,
         tenant_id: str | None = None,
         query_timeout: int = 30,
+        dialect: DialectStrategy | None = None,
     ) -> Connection:
         """Create a database connection and return Connection object.
 
@@ -173,6 +174,10 @@ class ConnectionManager:
             tenant_id: Azure AD tenant ID (only for azure_ad_integrated auth)
             query_timeout: Per-statement query timeout in seconds. 0 = no timeout,
                 5-300 = timeout in seconds. (default: 30)
+            dialect: Optional DialectStrategy instance. If None (default), a fresh
+                MssqlDialect() is instantiated. Accepting it lets callers avoid
+                duplicate dialect construction and removes latent coupling
+                (WIRING-03).
 
         Returns:
             Connection object with connection metadata
@@ -195,7 +200,7 @@ class ConnectionManager:
             return self._connections[connection_id]
 
         # Create engine via dialect, test connection, and store metadata
-        dialect = MssqlDialect()
+        dialect = dialect if dialect is not None else MssqlDialect()
         start_time = time.time()
         try:
             engine = dialect.create_engine(
