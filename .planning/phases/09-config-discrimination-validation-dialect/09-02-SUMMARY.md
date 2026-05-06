@@ -30,6 +30,7 @@ metrics:
   completed: 2026-04-14
   tasks: 2
   files: 9
+requirements-completed: [VALID-01, VALID-02, VALID-03]
 ---
 
 # Phase 09 Plan 02: Dialect-Aware Query Validation Summary

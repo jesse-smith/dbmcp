@@ -27,6 +27,7 @@ metrics:
   completed: 2026-04-14T15:41:25Z
   tasks: 2
   files: 5
+requirements-completed: [DIAL-01, DIAL-05]
 ---
 
 # Phase 8 Plan 01: Dialect Protocol & Registry Summary

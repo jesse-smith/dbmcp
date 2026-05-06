@@ -60,7 +60,7 @@ Plans:
 **Depends on**: Phase 8
 **Requirements**: CONF-01, CONF-02, VALID-01, VALID-02, VALID-03
 **Success Criteria** (what must be TRUE):
-  1. TOML config with `dialect` field correctly routes to dialect-specific config models; omitting `dialect` defaults to "mssql" (backward compatible)
+  1. TOML config requires an explicit `dialect` field (per D-02 in 09-CONTEXT.md) and correctly routes to dialect-specific config models; omitting `dialect` is a validation error
   2. Typed config models validate dialect-specific fields and reject invalid combinations
   3. Query validation accepts a dialect parameter and parses with the correct sqlglot dialect
   4. Safe procedure list returns MSSQL sp_ procedures for MSSQL and empty list for other dialects
