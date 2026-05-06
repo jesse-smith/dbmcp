@@ -505,3 +505,34 @@ class TestRegistryIntegration:
 
         result = get_dialect("mssql")
         assert result is MssqlDialect
+
+
+class TestMssqlDialectSampleQueries:
+    """MSSQL dialect builds TOP/TABLESAMPLE/ROW_NUMBER sample queries."""
+
+    def test_build_sample_query_top_emits_top_n(self):
+        from src.models.schema import SamplingMethod
+        dialect = MssqlDialect()
+        sql = dialect.build_sample_query(
+            SamplingMethod.TOP, "[dbo].[T]", "*", 5
+        )
+        assert "SELECT TOP (5) * FROM [dbo].[T]" in sql
+
+    def test_build_sample_query_tablesample_emits_tablesample_rows(self):
+        from src.models.schema import SamplingMethod
+        dialect = MssqlDialect()
+        sql = dialect.build_sample_query(
+            SamplingMethod.TABLESAMPLE, "[dbo].[T]", "*", 5
+        )
+        assert "TOP (5)" in sql
+        assert "TABLESAMPLE (5 ROWS)" in sql
+
+    def test_build_sample_query_modulo_uses_row_number_with_top(self):
+        from src.models.schema import SamplingMethod
+        dialect = MssqlDialect()
+        sql = dialect.build_sample_query(
+            SamplingMethod.MODULO, "[dbo].[T]", "*", 5
+        )
+        assert "TOP (5)" in sql
+        assert "ROW_NUMBER() OVER" in sql
+        assert "ORDER BY (SELECT NULL)" in sql

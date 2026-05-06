@@ -914,3 +914,37 @@ class TestTruncationConfig:
         # String should NOT be truncated (700 < 1000 limit)
         assert rows[0]["Description"] == text_700
         assert "Description" not in truncated_cols
+
+
+class TestQueryServiceDialectDelegation:
+    """QueryService delegates sample-query SQL generation to the dialect."""
+
+    def _make_stub(self, sentinel="STUB_SQL"):
+        stub = MagicMock()
+        stub.build_sample_query = MagicMock(return_value=sentinel)
+        stub.quote_identifier = lambda ident: f"[{ident}]"
+        return stub
+
+    def test_build_top_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_top_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.TOP, "[dbo].[T]", "*", 5
+        )
+
+    def test_build_tablesample_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_tablesample_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.TABLESAMPLE, "[dbo].[T]", "*", 5
+        )
+
+    def test_build_modulo_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_modulo_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.MODULO, "[dbo].[T]", "*", 5
+        )
