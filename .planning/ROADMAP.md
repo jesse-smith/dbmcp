@@ -156,7 +156,10 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 **Goal:** Close every gap identified in `.planning/v2.0-MILESTONE-AUDIT.md` so the v2.0 milestone audit is clean. Two categories: (1) integration wiring — thread dialect through `connect_database`, `get_sample_data`, and `ConnectionManager.connect()` MSSQL path; (2) tech debt — ROADMAP Phase 9 text, REQUIREMENTS TEST-03 wording, phase SUMMARY `requirements-completed` frontmatter reconciliation for phases 8-13, and `src/metrics.py` ruff warning.
 **Requirements**: META-01, META-05, VALID-01, VALID-02 (integration-boundary satisfaction)
 **Depends on:** Phase 13
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 13.1 to break down)
+- [ ] 13.1-01-PLAN.md — WIRING-01: thread dialect into connect_database's MetadataService + schema_count regression test
+- [ ] 13.1-02-PLAN.md — WIRING-02: thread dialect into get_sample_data's MetadataService + QueryService
+- [ ] 13.1-03-PLAN.md — WIRING-03: accept optional dialect in ConnectionManager.connect() MSSQL path
+- [ ] 13.1-04-PLAN.md — Tech debt cleanup: TD-01 ROADMAP, TD-02 REQUIREMENTS, TD-03 SUMMARY frontmatter reconciliation, TD-04 ruff verification
