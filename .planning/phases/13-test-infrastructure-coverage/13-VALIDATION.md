@@ -1,9 +1,9 @@
 ---
 phase: 13
 slug: test-infrastructure-coverage
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: active
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-27
 ---
 
@@ -40,7 +40,11 @@ created: 2026-04-27
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| {N}-01-01 | 01 | 1 | TEST-02 | — | N/A (test infrastructure) | infra | `uv run pytest --collect-only tests/unit/test_column_stats.py -q \| grep -E '\\[(mssql\|databricks\|generic)\\]' \| wc -l` | planner fills | ⬜ pending |
+| 13-01-01 | 01 | 1 | TEST-02 | — | N/A (test infrastructure) | infra | `uv run pytest tests/unit/test_column_stats.py tests/unit/test_pk_discovery.py tests/unit/test_fk_candidates.py tests/unit/test_metadata.py -q` (exercises conftest fixtures) | ✅ | ✅ green |
+| 13-02-01 | 02 | 2 | TEST-02 | — | N/A (test infrastructure) | infra | `uv run pytest --collect-only tests/unit/test_column_stats.py -q \| grep -cE '\\[(mssql\|databricks\|generic)\\]'` → 21 | ✅ | ✅ green |
+| 13-02-02 | 02 | 2 | TEST-02 | — | N/A | infra | `uv run pytest tests/unit/test_pk_discovery.py tests/unit/test_fk_candidates.py -q` | ✅ | ✅ green |
+| 13-03-01 | 03 | 2 | TEST-02 | — | N/A | infra | `uv run pytest tests/unit/test_metadata.py -q -k SharedMetadataBehavior` | ✅ | ✅ green |
+| 13-04-01 | 04 | 3 | TEST-03 | — | N/A | gate | `grep '^fail_under = 85' pyproject.toml` + `uv run pytest --cov=src` (enforced by pytest-cov) | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -48,9 +52,9 @@ created: 2026-04-27
 
 ## Wave 0 Requirements
 
-- [ ] `tests/conftest.py` — add `ALL_DIALECTS`, `DialectTestContext`, `dialect`, `dialect_inspector` fixtures (shared infrastructure; every migrated test depends on these).
-- [ ] `tests/fixtures/sqlite_schema.py` — Python-driven SQLite schema builder used by `dialect_inspector`.
-- [ ] `pyproject.toml` — register the `dialects(*names)` marker in `[tool.pytest.ini_options].markers`.
+- [x] `tests/conftest.py` — `ALL_DIALECTS`, `DialectTestContext`, `dialect`, `dialect_inspector` fixtures (Plan 13-01).
+- [x] `tests/fixtures/sqlite_schema.py` — Python-driven SQLite schema builder (Plan 13-01).
+- [x] `pyproject.toml` — `dialects(*names)` marker registered in `[tool.pytest.ini_options].markers` (Plan 13-01).
 
 All three are prerequisites for migration tasks and should land in Wave 1 (not Wave 0 in the GSD sense — pytest is already installed and configured). "Wave 0" here means: the fixture + marker must exist before any test-file migration runs.
 
@@ -68,12 +72,24 @@ All three are prerequisites for migration tasks and should land in Wave 1 (not W
 
 ## Validation Sign-Off
 
-- [ ] All migration tasks have `<automated>` verify commands producing the three dialect-suffixed node IDs.
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify.
-- [ ] Wave 1 fixture task precedes all migration tasks (`depends_on`).
-- [ ] No watch-mode flags.
-- [ ] Feedback latency < 60s.
-- [ ] Coverage floor task runs LAST (after all migrations pass) to avoid transient drops.
-- [ ] `nyquist_compliant: true` set in frontmatter after planner populates the per-task table.
+- [x] All migration tasks have `<automated>` verify commands producing the three dialect-suffixed node IDs.
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify.
+- [x] Wave 1 fixture task precedes all migration tasks (`depends_on`).
+- [x] No watch-mode flags.
+- [x] Feedback latency < 60s.
+- [x] Coverage floor task runs LAST (after all migrations pass) to avoid transient drops.
+- [x] `nyquist_compliant: true` set in frontmatter.
 
-**Approval:** pending
+**Approval:** approved 2026-05-06
+
+---
+
+## Validation Audit 2026-05-06
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 5 per-task rows populated (TEST-02 × 4 + TEST-03 × 1), all ✅ green |
+| Escalated | 0 |
+
+Verified via `uv run pytest tests/unit/test_column_stats.py tests/unit/test_pk_discovery.py tests/unit/test_fk_candidates.py tests/unit/test_metadata.py -q` (202 passed, 37 skipped) and `uv run pytest --collect-only tests/unit/test_column_stats.py -q | grep -cE '\[(mssql|databricks|generic)\]'` → 21. `fail_under = 85` confirmed in pyproject.toml.
