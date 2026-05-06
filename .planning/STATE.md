@@ -5,7 +5,7 @@ milestone_name: Multi-Dialect Support
 status: milestone_complete
 stopped_at: Phase 13.1 context gathered
 last_updated: "2026-05-06T20:45:38.011Z"
-last_activity: 2026-05-06 -- Phase 13.1 execution started
+last_activity: 2026-05-06 -- Completed quick task 260506-n8s: dialect-aware sample query SQL
 progress:
   total_phases: 6
   completed_phases: 7
@@ -111,6 +111,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-o1k | Fix MSSQL driver override — URL-supplied driver query param wins over dialect default | 2026-05-05 | 40358bc,bcc3360 | [260505-o1k-fix-mssql-driver-override-url-supplied-d](./quick/260505-o1k-fix-mssql-driver-override-url-supplied-d/) |
 | 260505-o6n | Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url — mirrors MSSQL fix) | 2026-05-05 | b50268f,10e56a6 | [260505-o6n-fix-databricksdialect-url-parsing-parse-](./quick/260505-o6n-fix-databricksdialect-url-parsing-parse-/) |
 | 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
+| 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
 
 ## Session Continuity
 
