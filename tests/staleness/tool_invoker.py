@@ -269,6 +269,8 @@ def _get_sample_data_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect"),
+        patch("src.mcp_server.query_tools.MetadataService"),
         patch("src.mcp_server.query_tools.QueryService", return_value=mock_query_svc),
     ):
         yield

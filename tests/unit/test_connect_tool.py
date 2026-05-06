@@ -375,3 +375,125 @@ class TestConnectWithConfigDatabricks:
 
         kwargs = dialect.create_engine.call_args.kwargs
         assert kwargs["token"] == ""
+
+
+# ---------------------------------------------------------------------------
+# WIRING-01 regression: dialect threaded into one-shot MetadataService
+# ---------------------------------------------------------------------------
+
+
+class TestConnectDatabaseThreadsDialectIntoMetadataService:
+    """Regression tests for WIRING-01 (META-01 integration boundary).
+
+    Before the fix, connect_database's one-shot MetadataService was constructed
+    as `MetadataService(engine)` — without the resolved dialect. For generic
+    SQLAlchemy URLs (e.g., postgresql://...), engine.dialect.name differs from
+    the "generic" registry key, so auto-infer yielded None and schema_count
+    was degraded.
+    """
+
+    async def test_url_path_threads_dialect_kwarg_into_metadata_service(self):
+        """One-shot MetadataService receives dialect= from resolve_dialect_from_url."""
+        from src.config import AppConfig
+        from src.models.schema import Connection
+
+        mock_config = AppConfig()
+        mock_conn = Connection(
+            connection_id="cid-wiring01",
+            server="h",
+            database="db",
+            dialect_name="generic",
+        )
+        mock_engine = MagicMock(name="engine")
+        # Simulate engine.dialect.name NOT matching the registry key for "generic"
+        mock_engine.dialect.name = "postgresql"
+
+        fake_dialect = MagicMock(name="resolved_dialect")
+        fake_dialect.name = "generic"
+
+        mock_metadata_svc = MagicMock()
+        mock_metadata_svc.list_schemas.return_value = ["s1", "s2"]
+
+        with (
+            patch("src.mcp_server.schema_tools.get_config", return_value=mock_config),
+            patch(
+                "src.mcp_server.schema_tools.resolve_dialect_from_url",
+                return_value=fake_dialect,
+            ),
+            patch("src.mcp_server.schema_tools.get_connection_manager") as mock_gcm,
+            patch(
+                "src.mcp_server.schema_tools.MetadataService",
+                return_value=mock_metadata_svc,
+            ) as MockMS,
+            patch("src.mcp_server.schema_tools.Path") as mock_path,
+        ):
+            mock_cm = MagicMock()
+            mock_cm.connect_with_url.return_value = mock_conn
+            mock_cm.get_engine.return_value = mock_engine
+            mock_gcm.return_value = mock_cm
+
+            mock_cache = MagicMock()
+            mock_cache.exists.return_value = False
+            mock_path.return_value.__truediv__ = MagicMock(return_value=mock_cache)
+
+            await connect_database(sqlalchemy_url="postgresql://u:p@h/db")
+
+        # Assert: MetadataService was constructed with dialect=fake_dialect
+        MockMS.assert_called_once_with(mock_engine, dialect=fake_dialect)
+
+    async def test_schema_count_correct_for_generic_url_with_mismatched_engine_dialect(self):
+        """schema_count reflects list_schemas count when dialect is threaded explicitly.
+
+        Even when engine.dialect.name ("postgresql") does not match the "generic"
+        registry key, the response surfaces the real schema count because the
+        resolved dialect is passed into MetadataService (not auto-inferred).
+        """
+        from src.config import AppConfig
+        from src.models.schema import Connection
+
+        mock_config = AppConfig()
+        mock_conn = Connection(
+            connection_id="cid-wiring01b",
+            server="h",
+            database="db",
+            dialect_name="generic",
+        )
+        mock_engine = MagicMock(name="engine")
+        mock_engine.dialect.name = "postgresql"
+
+        fake_dialect = MagicMock(name="resolved_dialect")
+        fake_dialect.name = "generic"
+
+        mock_metadata_svc = MagicMock()
+        mock_metadata_svc.list_schemas.return_value = ["s1", "s2", "s3"]
+
+        with (
+            patch("src.mcp_server.schema_tools.get_config", return_value=mock_config),
+            patch(
+                "src.mcp_server.schema_tools.resolve_dialect_from_url",
+                return_value=fake_dialect,
+            ),
+            patch("src.mcp_server.schema_tools.get_connection_manager") as mock_gcm,
+            patch(
+                "src.mcp_server.schema_tools.MetadataService",
+                return_value=mock_metadata_svc,
+            ) as MockMS,
+            patch("src.mcp_server.schema_tools.Path") as mock_path,
+        ):
+            mock_cm = MagicMock()
+            mock_cm.connect_with_url.return_value = mock_conn
+            mock_cm.get_engine.return_value = mock_engine
+            mock_gcm.return_value = mock_cm
+
+            mock_cache = MagicMock()
+            mock_cache.exists.return_value = False
+            mock_path.return_value.__truediv__ = MagicMock(return_value=mock_cache)
+
+            result = await connect_database(sqlalchemy_url="postgresql://u:p@h/db")
+
+        # Construction: dialect was threaded through explicitly
+        MockMS.assert_called_once_with(mock_engine, dialect=fake_dialect)
+        # Behavior: schema_count equals len(list_schemas) — not degraded
+        data = _decode(result)
+        assert data["status"] == "success"
+        assert data["schema_count"] == 3
