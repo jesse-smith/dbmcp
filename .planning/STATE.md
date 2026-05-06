@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Multi-Dialect Support
-status: milestone_complete
-stopped_at: Completed 13-04-PLAN.md
-last_updated: "2026-05-05T15:45:00.000Z"
-last_activity: 2026-05-05 - Completed quick task 260505-own: Apply connect_timeout default + retry cap to DatabricksDialect
+status: in_progress
+stopped_at: Phase 13.1 context gathered
+last_updated: "2026-05-06T19:43:47.315Z"
+last_activity: "2026-04-28 - Completed quick task 260428-mwr: Fix execute_query row materialization + cross-catalog column fetch"
 progress:
   total_phases: 6
-  completed_phases: 7
+  completed_phases: 6
   total_plans: 16
   completed_plans: 16
-  percent: 117
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-13)
 
 Phase: 13
 Plan: Not started
-Status: Milestone complete
+Status: in_progress
 Last activity: 2026-04-28 - Completed quick task 260428-mwr: Fix execute_query row materialization + cross-catalog column fetch
 
 Progress: [██████████] 100%
@@ -65,6 +65,10 @@ Progress: [██████████] 100%
 | Phase 13 P04 | 2 min | 1 tasks | 1 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 13.1 inserted after Phase 13 (URGENT) — Close v2.0 gap: thread dialect through schema_tools/query_tools entry points (WIRING-01, WIRING-02); fix WIRING-03; fix VALID-01 and VALID-02 issues
 
 ### Decisions
 
@@ -109,8 +113,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 ## Session Continuity
 
-Last session: 2026-04-27T18:24:46.189Z
-Stopped at: Completed 13-04-PLAN.md
-Resume file: None
+Last session: --stopped-at
+Stopped at: Phase 13.1 context gathered
+Resume file: --resume-file
 
 **Planned Phase:** 13 (test-infrastructure-coverage) — 4 plans — 2026-04-27T17:05:36.697Z
