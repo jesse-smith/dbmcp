@@ -1,7 +1,9 @@
 # Phase 13.1 Deferred Items
 
 
-## From 13.1-02 (WIRING-02 get_sample_data dialect threading)
+## Resolved
+
+### From 13.1-02 (WIRING-02 get_sample_data dialect threading)
 
 **test_get_sample_data_mcp_tool** — `tests/integration/test_sample_data.py:155+`
 - Marked @pytest.mark.skip with rationale after WIRING-02 fix.
@@ -15,3 +17,9 @@
 - Follow-up: have GenericDialect provide dialect-correct TOP/LIMIT sampling
   queries (or move sample-SQL generation into DialectStrategy). Out of scope
   for 13.1-02 (source fix is 3 lines + regression test).
+
+**Resolved 2026-05-06 (quick 260506-n8s)**: DialectStrategy now exposes
+`build_sample_query`; QueryService delegates. MSSQL emits TOP, Databricks and
+Generic emit LIMIT. The integration test above has been unskipped and passes
+against the sqlite-flavored GenericDialect path. See the GREEN commit from
+task 2 of the 260506-n8s plan.

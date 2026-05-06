@@ -156,15 +156,6 @@ class TestSampleDataIntegration:
 class TestSampleDataMCPTool:
     """Integration tests for get_sample_data MCP tool."""
 
-    @pytest.mark.skip(
-        reason="Pre-existing fragile test: uses SQLite engine but QueryService._build_top_query "
-        "emits SQL Server 'SELECT TOP' whenever a dialect is registered (any dialect != None). "
-        "Before WIRING-02 the test worked by accident because QueryService(engine) with SQLite "
-        "auto-inferred dialect=None (sqlite not in registry). After WIRING-02 the connection "
-        "manager requires a registered dialect, so this test needs a proper GenericDialect "
-        "sample-query path that emits LIMIT for SQLite — architectural follow-up in query.py "
-        "dialect dispatch, out of scope for WIRING-02."
-    )
     async def test_get_sample_data_mcp_tool(self, example_db_path):
         """Test the MCP tool end-to-end."""
         from sqlalchemy import create_engine
