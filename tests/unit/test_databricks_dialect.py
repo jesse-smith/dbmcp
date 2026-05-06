@@ -537,3 +537,40 @@ class TestDatabricksDialectRegistration:
 
         dialect = resolve_dialect_from_url("databricks://token:x@host")
         assert isinstance(dialect, DatabricksDialect)
+
+
+class TestDatabricksDialectSampleQueries:
+    """Databricks dialect builds LIMIT-based sample queries (never TOP/TABLESAMPLE)."""
+
+    def _make(self):
+        from src.db.dialects.databricks import DatabricksDialect
+        return DatabricksDialect()
+
+    def test_build_sample_query_top_emits_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = self._make().build_sample_query(
+            SamplingMethod.TOP, "`main`.`t`", "*", 5
+        )
+        assert "SELECT * FROM `main`.`t`" in sql
+        assert "LIMIT 5" in sql
+        assert "TOP (" not in sql
+        assert "TABLESAMPLE" not in sql
+
+    def test_build_sample_query_tablesample_falls_back_to_rand_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = self._make().build_sample_query(
+            SamplingMethod.TABLESAMPLE, "`main`.`t`", "*", 5
+        )
+        assert "ORDER BY RAND()" in sql
+        assert "LIMIT 5" in sql
+        assert "TABLESAMPLE" not in sql
+        assert "TOP (" not in sql
+
+    def test_build_sample_query_modulo_uses_row_number_with_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = self._make().build_sample_query(
+            SamplingMethod.MODULO, "`main`.`t`", "*", 5
+        )
+        assert "ROW_NUMBER() OVER" in sql
+        assert "LIMIT 5" in sql
+        assert "TOP (" not in sql

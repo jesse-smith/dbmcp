@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
 from src.logging_config import get_logger
+from src.models.schema import SamplingMethod
 
 logger = get_logger(__name__)
 
@@ -71,6 +72,33 @@ class DatabricksDialect:
     def quote_identifier(self, identifier: str) -> str:
         """Quote using Databricks backticks."""
         return f"`{identifier}`"
+
+    def build_sample_query(
+        self,
+        method: SamplingMethod,
+        full_table_name: str,
+        column_sql: str,
+        sample_size: int,
+    ) -> str:
+        """Build Databricks sample-data query (LIMIT-based; no TOP/TABLESAMPLE)."""
+        if method == SamplingMethod.TOP:
+            return f"SELECT {column_sql} FROM {full_table_name} LIMIT {sample_size}"
+        if method == SamplingMethod.TABLESAMPLE:
+            return (
+                f"SELECT {column_sql} FROM {full_table_name} "
+                f"ORDER BY RAND() LIMIT {sample_size}"
+            )
+        if method == SamplingMethod.MODULO:
+            return f"""
+            SELECT {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY 1) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {full_table_name}
+            ) _sampled
+            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
+            LIMIT {sample_size}
+            """
+        raise ValueError(f"Unknown sampling method: {method}")
 
     @staticmethod
     def _kwargs_from_url(sqlalchemy_url: str, original_kwargs: dict) -> dict:

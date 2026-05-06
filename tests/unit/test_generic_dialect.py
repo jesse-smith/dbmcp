@@ -90,3 +90,45 @@ class TestUrlSchemeMapping:
 
     def test_unknown_scheme_not_in_mapping(self):
         assert "oracle" not in _URL_SCHEME_TO_SQLGLOT
+
+
+class TestGenericDialectSampleQueries:
+    """Generic dialect builds LIMIT-based sample queries (never TOP/TABLESAMPLE)."""
+
+    def test_build_sample_query_top_emits_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = GenericDialect().build_sample_query(
+            SamplingMethod.TOP, '"public"."t"', "*", 5
+        )
+        assert 'SELECT * FROM "public"."t"' in sql
+        assert "LIMIT 5" in sql
+        assert "TOP (" not in sql
+        assert "TABLESAMPLE" not in sql
+
+    def test_build_sample_query_tablesample_uses_random_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = GenericDialect().build_sample_query(
+            SamplingMethod.TABLESAMPLE, '"public"."t"', "*", 5
+        )
+        assert "ORDER BY RANDOM()" in sql
+        assert "LIMIT 5" in sql
+        assert "TABLESAMPLE" not in sql
+        assert "TOP (" not in sql
+
+    def test_build_sample_query_modulo_uses_row_number_with_limit(self):
+        from src.models.schema import SamplingMethod
+        sql = GenericDialect().build_sample_query(
+            SamplingMethod.MODULO, '"public"."t"', "*", 5
+        )
+        assert "ROW_NUMBER() OVER" in sql
+        assert "LIMIT 5" in sql
+        assert "TOP (" not in sql
+
+    def test_build_sample_query_modulo_sqlite_uses_rowid(self):
+        from src.models.schema import SamplingMethod
+        sql = GenericDialect(sqlglot_dialect_name="sqlite").build_sample_query(
+            SamplingMethod.MODULO, "t", "*", 5
+        )
+        assert "ROW_NUMBER() OVER" in sql
+        assert "ORDER BY ROWID" in sql
+        assert "LIMIT 5" in sql

@@ -45,6 +45,11 @@ class _StubDialect:
     def safe_operational_commands(self) -> frozenset[str]:
         return frozenset()
 
+    def build_sample_query(
+        self, method, full_table_name: str, column_sql: str, sample_size: int
+    ) -> str:
+        return f"SELECT {column_sql} FROM {full_table_name} LIMIT {sample_size}"
+
 
 class _IncompleteDialect:
     """Non-conforming stub missing quote_identifier."""
