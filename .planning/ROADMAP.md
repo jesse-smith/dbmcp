@@ -150,3 +150,13 @@ Phases execute in numeric order: 8 → 9 → 10 → 11 → 12 → 13
 | 11. DatabricksDialect | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 12. Analysis Module Adaptation | v2.0 | 2/2 | Complete    | 2026-04-15 |
 | 13. Test Infrastructure & Coverage | v2.0 | 4/4 | Complete    | 2026-04-27 |
+
+### Phase 13.1: v2.0 cleanup — close wiring gaps (WIRING-01/02/03, VALID-01/02) and tech debt (ROADMAP/REQUIREMENTS text, SUMMARY frontmatter, metrics.py ruff) (INSERTED)
+
+**Goal:** Close every gap identified in `.planning/v2.0-MILESTONE-AUDIT.md` so the v2.0 milestone audit is clean. Two categories: (1) integration wiring — thread dialect through `connect_database`, `get_sample_data`, and `ConnectionManager.connect()` MSSQL path; (2) tech debt — ROADMAP Phase 9 text, REQUIREMENTS TEST-03 wording, phase SUMMARY `requirements-completed` frontmatter reconciliation for phases 8-13, and `src/metrics.py` ruff warning.
+**Requirements**: META-01, META-05, VALID-01, VALID-02 (integration-boundary satisfaction)
+**Depends on:** Phase 13
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 13.1 to break down)
