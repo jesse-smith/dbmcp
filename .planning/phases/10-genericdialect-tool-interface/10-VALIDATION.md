@@ -65,7 +65,7 @@ updated: 2026-05-06
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| pip install dbmcp (core only) has no pyodbc | CONF-04 | Requires clean venv | `uv venv /tmp/test-core && uv pip install . && python -c "import pyodbc"` should fail |
+| pip install dbmcp (core only) has no pyodbc | CONF-04 | Requires clean venv | ✅ VERIFIED 2026-05-06 — `uv venv /tmp/test-core && uv pip install . && python -c "import pyodbc"` confirmed pyodbc absent from core install |
 
 ---
 
@@ -88,6 +88,7 @@ updated: 2026-05-06
 |--------|-------|
 | Gaps found | 0 |
 | Resolved | 0 |
-| Escalated | 1 (already manual-only: core-install no-pyodbc) |
+| Escalated | 0 |
+| Manual verified | 1 (core-install no-pyodbc, confirmed 2026-05-06) |
 
 **Evidence:** 48 tests pass across the 5 Wave-0 test files (generic_dialect, url_routing, optional_deps, connect_tool, pyproject_extras). All 4 requirements (DIAL-04, CONF-03, CONF-04, CONF-05) satisfied per 10-VERIFICATION.md. Manual-only item for clean-venv install verification remains (requires external venv setup).
