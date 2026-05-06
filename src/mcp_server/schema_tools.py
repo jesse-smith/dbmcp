@@ -167,7 +167,7 @@ async def connect_database(
             )
 
         engine = conn_manager.get_engine(connection.connection_id)
-        metadata_svc = MetadataService(engine)
+        metadata_svc = MetadataService(engine, dialect=dialect)
         schemas = metadata_svc.list_schemas(connection_id=connection.connection_id)
 
         cache_dir = Path("docs") / connection.connection_id
