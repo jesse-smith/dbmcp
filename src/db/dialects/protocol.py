@@ -5,9 +5,12 @@ Uses structural subtyping (typing.Protocol) so implementations don't
 need to explicitly inherit -- they just need to implement the interface.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from sqlalchemy.engine import Engine
+
+if TYPE_CHECKING:
+    from src.models.schema import SamplingMethod
 
 
 @runtime_checkable
@@ -97,5 +100,25 @@ class DialectStrategy(Protocol):
 
         Returns:
             Quoted identifier (e.g., '[name]' for MSSQL, '"name"' for generic).
+        """
+        ...
+
+    def build_sample_query(
+        self,
+        method: "SamplingMethod",
+        full_table_name: str,
+        column_sql: str,
+        sample_size: int,
+    ) -> str:
+        """Build a dialect-correct sample-data query for the given sampling method.
+
+        Args:
+            method: SamplingMethod enum value (TOP, TABLESAMPLE, or MODULO).
+            full_table_name: Fully qualified, already-quoted table name.
+            column_sql: Column selection SQL fragment (e.g. "*" or a list).
+            sample_size: Number of rows to return.
+
+        Returns:
+            Dialect-correct SQL query string.
         """
         ...

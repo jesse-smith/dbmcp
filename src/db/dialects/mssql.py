@@ -27,7 +27,7 @@ from sqlalchemy.pool import QueuePool
 
 from src.db.dialects.azure_auth import SQL_COPT_SS_ACCESS_TOKEN, AzureTokenProvider
 from src.logging_config import get_logger
-from src.models.schema import AuthenticationMethod
+from src.models.schema import AuthenticationMethod, SamplingMethod
 
 logger = get_logger(__name__)
 
@@ -98,6 +98,32 @@ class MssqlDialect:
     def quote_identifier(self, identifier: str) -> str:
         """Quote using SQL Server square brackets."""
         return f"[{identifier.replace(']', ']]')}]"
+
+    def build_sample_query(
+        self,
+        method: SamplingMethod,
+        full_table_name: str,
+        column_sql: str,
+        sample_size: int,
+    ) -> str:
+        """Build MSSQL sample-data query using TOP / TABLESAMPLE / ROW_NUMBER."""
+        if method == SamplingMethod.TOP:
+            return f"SELECT TOP ({sample_size}) {column_sql} FROM {full_table_name}"
+        if method == SamplingMethod.TABLESAMPLE:
+            return (
+                f"SELECT TOP ({sample_size}) {column_sql} FROM {full_table_name} "
+                f"TABLESAMPLE ({sample_size} ROWS)"
+            )
+        if method == SamplingMethod.MODULO:
+            return f"""
+            SELECT TOP ({sample_size}) {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {full_table_name}
+            ) _sampled
+            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
+            """
+        raise ValueError(f"Unknown sampling method: {method}")
 
     def create_engine(self, **kwargs) -> Engine:
         """Create a SQLAlchemy Engine with MSSQL-specific ODBC configuration.

@@ -169,79 +169,34 @@ class QueryService:
             sampled_at=datetime.now(),
         )
 
-    def _build_top_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build SELECT TOP N query (fast, not representative).
+    def _sampling_dialect(self) -> DialectStrategy:
+        """Return the dialect used for sample-query generation.
 
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
+        Falls back to a sqlite-flavored GenericDialect when no dialect is
+        configured, preserving the historical SQLite test path.
         """
-        if self._dialect is None:
-            # SQLite uses LIMIT
-            return f"SELECT {column_sql} FROM {table_name} LIMIT {sample_size}"
-        else:
-            # SQL Server uses TOP
-            return f"SELECT TOP ({sample_size}) {column_sql} FROM {table_name}"
+        if self._dialect is not None:
+            return self._dialect
+        from src.db.dialects.generic import GenericDialect
+        return GenericDialect(sqlglot_dialect_name="sqlite")
+
+    def _build_top_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
+        """Delegate TOP sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.TOP, table_name, column_sql, sample_size
+        )
 
     def _build_tablesample_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build TABLESAMPLE query (statistical sampling).
-
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
-        """
-        if self._dialect is None:
-            # SQLite doesn't support TABLESAMPLE, fall back to RANDOM()
-            return f"SELECT {column_sql} FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
-        else:
-            # SQL Server TABLESAMPLE requires percentage or ROWS
-            # We use ROWS for more predictable sample size
-            return f"SELECT TOP ({sample_size}) {column_sql} FROM {table_name} TABLESAMPLE ({sample_size} ROWS)"
+        """Delegate TABLESAMPLE sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.TABLESAMPLE, table_name, column_sql, sample_size
+        )
 
     def _build_modulo_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build modulo-based deterministic sampling query.
-
-        Uses ROW_NUMBER to assign sequential numbers, then selects rows
-        where row_number % interval = 0 to get evenly spaced samples.
-        This is deterministic and repeatable for the same data.
-
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
-        """
-        if self._dialect is None:
-            # SQLite: use ROWID for deterministic evenly-spaced sampling
-            return f"""
-            SELECT {column_sql} FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY ROWID) AS _rn,
-                       COUNT(*) OVER () AS _total
-                FROM {table_name}
-            ) _sampled
-            WHERE _rn % MAX((_total / {sample_size}), 1) = 0
-            LIMIT {sample_size}
-            """
-        else:
-            # SQL Server: use ROW_NUMBER with modulo for evenly-spaced sampling
-            return f"""
-            SELECT TOP ({sample_size}) {column_sql} FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS _rn,
-                       COUNT(*) OVER () AS _total
-                FROM {table_name}
-            ) _sampled
-            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
-            """
+        """Delegate MODULO sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.MODULO, table_name, column_sql, sample_size
+        )
 
     def _sanitize_identifier(self, identifier: str) -> str:
         """Sanitize SQL identifier to prevent injection.

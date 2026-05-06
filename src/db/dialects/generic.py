@@ -10,6 +10,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.engine import Engine
 
 from src.logging_config import get_logger
+from src.models.schema import SamplingMethod
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,34 @@ class GenericDialect:
     def quote_identifier(self, identifier: str) -> str:
         """Quote using ANSI SQL double-quotes."""
         return f'"{identifier}"'
+
+    def build_sample_query(
+        self,
+        method: SamplingMethod,
+        full_table_name: str,
+        column_sql: str,
+        sample_size: int,
+    ) -> str:
+        """Build generic SQL sample-data query (LIMIT + RANDOM() + ROW_NUMBER)."""
+        if method == SamplingMethod.TOP:
+            return f"SELECT {column_sql} FROM {full_table_name} LIMIT {sample_size}"
+        if method == SamplingMethod.TABLESAMPLE:
+            return (
+                f"SELECT {column_sql} FROM {full_table_name} "
+                f"ORDER BY RANDOM() LIMIT {sample_size}"
+            )
+        if method == SamplingMethod.MODULO:
+            order_by = "ROWID" if self._sqlglot_dialect == "sqlite" else "1"
+            return f"""
+            SELECT {column_sql} FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY {order_by}) AS _rn,
+                       COUNT(*) OVER () AS _total
+                FROM {full_table_name}
+            ) _sampled
+            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
+            LIMIT {sample_size}
+            """
+        raise ValueError(f"Unknown sampling method: {method}")
 
     def create_engine(self, **kwargs) -> Engine:
         """Create a SQLAlchemy Engine from any supported URL.
