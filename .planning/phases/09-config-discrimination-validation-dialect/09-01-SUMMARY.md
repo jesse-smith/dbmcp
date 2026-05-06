@@ -24,6 +24,7 @@ metrics:
   files: 2
   tests_added: 20
   tests_total: 658
+requirements-completed: [CONF-01, CONF-02]
 ---
 
 # Phase 09 Plan 01: Per-Dialect Config Discrimination Summary

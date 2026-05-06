@@ -38,6 +38,7 @@ metrics:
   completed: 2026-04-27
   tasks: 3
   files: 3
+requirements-completed: [TEST-02]
 ---
 
 # Phase 13 Plan 02: Dialect Fixture In-Place Migration Summary
