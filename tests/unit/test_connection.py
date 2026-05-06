@@ -1036,3 +1036,47 @@ class TestClassifyDbError:
         exc = self._make_sqlalchemy_error(None, "Some random error")
         category, guidance = _classify_db_error(exc)
         assert category == "unknown"
+
+
+class TestConnectDialectInjection:
+    """WIRING-03 regression: ConnectionManager.connect() accepts an optional
+    dialect kwarg and uses it when supplied, otherwise defaults to MssqlDialect().
+    """
+
+    def test_connect_uses_caller_supplied_dialect_when_provided(self, monkeypatch):
+        """When dialect= is passed, caller's dialect is used for create_engine
+        and stored in self._dialects — MssqlDialect() is NOT re-instantiated."""
+        cm = ConnectionManager()
+
+        fake_engine = _make_mock_engine()
+        custom_dialect = MagicMock(name="custom_dialect")
+        custom_dialect.name = "custom"
+        custom_dialect.create_engine.return_value = fake_engine
+
+        # Patch _test_connection to no-op so we don't touch a DB
+        monkeypatch.setattr(cm, "_test_connection", lambda *a, **kw: None)
+
+        conn = cm.connect(
+            server="srv",
+            database="db",
+            username="u",
+            password="p",
+            dialect=custom_dialect,
+        )
+
+        assert custom_dialect.create_engine.called
+        assert cm._dialects[conn.connection_id] is custom_dialect
+
+    def test_connect_defaults_to_mssql_dialect_when_not_provided(self, monkeypatch):
+        """Backward-compat: omitting dialect= still instantiates MssqlDialect."""
+        cm = ConnectionManager()
+        fake_engine = _make_mock_engine()
+        monkeypatch.setattr(cm, "_test_connection", lambda *a, **kw: None)
+
+        with patch("src.db.connection.MssqlDialect") as MockMssql:
+            MockMssql.return_value.create_engine.return_value = fake_engine
+            MockMssql.return_value.name = "mssql"
+
+            cm.connect(server="srv", database="db", username="u", password="p")
+
+            assert MockMssql.call_count == 1
