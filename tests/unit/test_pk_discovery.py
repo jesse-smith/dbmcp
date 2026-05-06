@@ -6,6 +6,8 @@ structural candidate analysis, and type filtering.
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.analysis.pk_discovery import DEFAULT_PK_TYPE_FILTER, PKDiscovery
 
 # ---------------------------------------------------------------------------
@@ -439,3 +441,234 @@ class TestDefaultSchema:
 
         # Verify schema_name was used in queries
         assert discovery.schema_name == "sales"
+
+
+# ---------------------------------------------------------------------------
+# PK Inspector shape builder (dialect fixtures come from tests/conftest.py)
+# ---------------------------------------------------------------------------
+
+def _mock_inspector_for_pk(
+    pk_columns=None,
+    unique_constraints=None,
+    columns=None,
+    pk_name=None,
+):
+    """Create a mock Inspector with PK/UNIQUE/columns data."""
+    insp = MagicMock()
+
+    pk_info = {"constrained_columns": pk_columns or [], "name": pk_name}
+    insp.get_pk_constraint.return_value = pk_info
+
+    insp.get_unique_constraints.return_value = unique_constraints or []
+
+    insp.get_columns.return_value = columns or []
+
+    return insp
+
+
+# ---------------------------------------------------------------------------
+# Inspector-based constraint discovery
+# ---------------------------------------------------------------------------
+
+class TestInspectorConstraintDiscovery:
+    """Tests for Inspector-based PK/UNIQUE constraint discovery (non-MSSQL)."""
+
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_pk_discovered_via_inspector(self, dialect):
+        """PK discovered via Inspector for non-MSSQL dialects (generic/databricks)."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
+                {"name": "name", "type": MagicMock(__str__=lambda s: "VARCHAR"), "nullable": True},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "id"
+        assert candidates[0].data_type == "INTEGER"
+        assert candidates[0].is_constraint_backed is True
+        assert candidates[0].constraint_type == "PRIMARY KEY"
+        assert candidates[0].is_unique is True
+        assert candidates[0].is_non_null is True
+
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_unique_discovered_via_inspector(self, dialect):
+        """UNIQUE constraint discovered via Inspector for non-MSSQL dialects."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=[],
+            unique_constraints=[{"column_names": ["email"], "name": "uq_email"}],
+            columns=[
+                {"name": "email", "type": MagicMock(__str__=lambda s: "VARCHAR"), "nullable": True},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "email"
+        assert candidates[0].is_constraint_backed is True
+        assert candidates[0].constraint_type == "UNIQUE"
+        assert candidates[0].is_non_null is False
+
+    @pytest.mark.dialects('databricks')
+    def test_databricks_constraints_have_enforced_false(self, dialect):
+        """Databricks constraints have constraint_enforced=False."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            unique_constraints=[{"column_names": ["code"], "name": "uq_code"}],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "BIGINT"), "nullable": False},
+                {"name": "code", "type": MagicMock(__str__=lambda s: "STRING"), "nullable": True},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "main", "products", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert len(candidates) == 2
+        for c in candidates:
+            assert c.constraint_enforced is False
+
+    @pytest.mark.dialects('generic')
+    def test_generic_constraints_have_enforced_true(self, dialect):
+        """Generic dialect constraints have constraint_enforced=True."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert len(candidates) == 1
+        assert candidates[0].constraint_enforced is True
+
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_inspector_column_listing_for_structural(self, dialect):
+        """Inspector-based column listing works for structural candidates."""
+        inspector = _mock_inspector_for_pk(
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
+                {"name": "status", "type": MagicMock(__str__=lambda s: "VARCHAR"), "nullable": True},
+            ],
+        )
+        conn = MagicMock()
+
+        # uniqueness check for "id" (only non-null int column)
+        uniqueness_row = MagicMock()
+        uniqueness_row.__getitem__ = lambda self, idx: [100, 100][idx]
+        conn.execute.return_value = _mock_result([uniqueness_row])
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_structural_candidates(
+            type_filter=[],
+            exclude_columns=set(),
+        )
+
+        # "id" passes (non-null, unique), "status" excluded (nullable)
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "id"
+
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_type_filter_with_inspector_string_types(self, dialect):
+        """Type filter works with SQLAlchemy type string representation."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        # Filter for "integer" should match "INTEGER" (case-insensitive)
+        candidates = discovery.get_constraint_candidates(type_filter=["integer"])
+
+        assert len(candidates) == 1
+        assert candidates[0].is_pk_type is True
+
+    @pytest.mark.dialects('generic', 'databricks')
+    def test_type_filter_excludes_non_matching_inspector(self, dialect):
+        """Type filter correctly excludes non-matching types from Inspector."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "INTEGER"), "nullable": False},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(conn, "public", "users", dialect=dialect.dialect, inspector=inspector)
+        candidates = discovery.get_constraint_candidates(type_filter=["varchar"])
+
+        assert len(candidates) == 1
+        assert candidates[0].is_pk_type is False
+
+
+# ---------------------------------------------------------------------------
+# Dialect backward compatibility
+# ---------------------------------------------------------------------------
+
+class TestDialectBackwardCompat:
+    """Tests for backward compat: dialect=None uses INFORMATION_SCHEMA."""
+
+    def test_dialect_none_uses_information_schema(self):
+        """dialect=None uses INFORMATION_SCHEMA queries (existing behavior)."""
+        conn = MagicMock()
+        pk_rows = [("order_id", "int", "PRIMARY KEY")]
+        uq_rows = []
+        conn.execute.side_effect = [
+            _mock_result(pk_rows),
+            _mock_result(uq_rows),
+        ]
+
+        discovery = PKDiscovery(conn, "dbo", "orders")
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
+
+        # Verify it used connection.execute (INFORMATION_SCHEMA path)
+        assert conn.execute.call_count == 2
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "order_id"
+
+    @pytest.mark.dialects('mssql')
+    def test_mssql_dialect_uses_information_schema(self, dialect):
+        """MSSQL dialect uses INFORMATION_SCHEMA queries."""
+        conn = MagicMock()
+        pk_rows = [("order_id", "int", "PRIMARY KEY")]
+        uq_rows = []
+        conn.execute.side_effect = [
+            _mock_result(pk_rows),
+            _mock_result(uq_rows),
+        ]
+
+        discovery = PKDiscovery(conn, "dbo", "orders", dialect=dialect.dialect)
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
+
+        assert conn.execute.call_count == 2
+        assert len(candidates) == 1
+
+    def test_constraint_enforced_none_for_mssql(self):
+        """constraint_enforced is None for MSSQL (backward compat)."""
+        conn = MagicMock()
+        pk_rows = [("order_id", "int", "PRIMARY KEY")]
+        uq_rows = []
+        conn.execute.side_effect = [
+            _mock_result(pk_rows),
+            _mock_result(uq_rows),
+        ]
+
+        discovery = PKDiscovery(conn, "dbo", "orders")
+        candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
+
+        assert candidates[0].constraint_enforced is None

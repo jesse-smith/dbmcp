@@ -10,12 +10,18 @@ Performance logging (T105) tracks query times against NFR-001 (<30s for 1000 tab
 import time
 from datetime import datetime
 
+# Avoid circular import at module level; use TYPE_CHECKING for annotations only.
+from typing import TYPE_CHECKING
+
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.logging_config import get_logger
 from src.models.schema import Column, Index, Schema, Table, TableType
+
+if TYPE_CHECKING:
+    from src.db.dialects.protocol import DialectStrategy
 
 logger = get_logger(__name__)
 
@@ -36,15 +42,27 @@ class MetadataService:
         dialect_name: Database dialect (e.g., 'mssql', 'sqlite', 'postgresql')
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, dialect: "DialectStrategy | None" = None):
         """Initialize metadata service.
 
         Args:
             engine: SQLAlchemy engine
+            dialect: Optional dialect strategy. Auto-inferred from engine if None.
         """
         self.engine = engine
         self._inspector = None
         self.dialect_name = engine.dialect.name
+
+        self._dialect: DialectStrategy | None
+        if dialect is not None:
+            self._dialect = dialect
+        else:
+            from src.db.dialects.registry import get_dialect
+            try:
+                dialect_cls = get_dialect(self.dialect_name)
+                self._dialect = dialect_cls()
+            except ValueError:
+                self._dialect = None
 
     @property
     def inspector(self):
@@ -58,7 +76,7 @@ class MetadataService:
         """Check if connected to SQL Server."""
         return self.dialect_name == "mssql"
 
-    def list_schemas(self, connection_id: str = "") -> list[Schema]:
+    def list_schemas(self, connection_id: str = "", catalog: str | None = None) -> list[Schema]:
         """List all schemas with table and view counts.
 
         Uses SQL Server DMVs for efficiency when available, falls back to
@@ -66,13 +84,36 @@ class MetadataService:
 
         Args:
             connection_id: Optional connection ID for schema_id generation
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. When omitted on a Databricks connection, the
+                configured default catalog (from the engine URL) is used.
+                Ignored for non-Databricks dialects.
 
         Returns:
             List of Schema objects sorted by table count descending
         """
         start_time = time.time()
 
-        if self.is_mssql:
+        # Databricks: always use SHOW SCHEMAS IN <catalog>. When catalog is not
+        # passed, fall back to the engine URL's configured catalog. If that
+        # catalog doesn't exist on the workspace, fall back to listing
+        # available catalogs via SHOW CATALOGS so the caller can discover
+        # what to pass.
+        if self._dialect and self._dialect.name == "databricks":
+            if catalog:
+                result = self._list_schemas_databricks(connection_id, catalog)
+            else:
+                default_catalog = self._databricks_default_catalog()
+                try:
+                    result = self._list_schemas_databricks(connection_id, default_catalog)
+                except SQLAlchemyError as exc:
+                    logger.info(
+                        f"Default Databricks catalog '{default_catalog}' not "
+                        f"accessible ({exc.__class__.__name__}); falling back "
+                        f"to SHOW CATALOGS for discovery."
+                    )
+                    result = self._list_databricks_catalogs(connection_id)
+        elif self._dialect and self._dialect.has_fast_row_counts:
             result = self._list_schemas_mssql(connection_id)
         else:
             result = self._list_schemas_generic(connection_id)
@@ -118,6 +159,97 @@ class MetadataService:
                 ))
 
         logger.debug(f"Found {len(schemas)} schemas (SQL Server)")
+        return schemas
+
+    def _list_databricks_catalogs(self, connection_id: str) -> list[Schema]:
+        """Fallback discovery path: list catalogs via SHOW CATALOGS.
+
+        Used when no catalog was passed to list_schemas and the engine's
+        configured default catalog isn't accessible. Each catalog is returned
+        as a pseudo-Schema with zero counts; the caller is expected to pick
+        one and re-call list_schemas with catalog=<name>.
+        """
+        schemas: list[Schema] = []
+        with self.engine.connect() as conn:
+            for row in conn.execute(text("SHOW CATALOGS")).fetchall():
+                catalog_name = row[0]
+                schema_id = (
+                    f"{connection_id}_catalog_{catalog_name}"
+                    if connection_id
+                    else f"catalog_{catalog_name}"
+                )
+                schemas.append(Schema(
+                    schema_id=schema_id,
+                    connection_id=connection_id,
+                    schema_name=catalog_name,
+                    table_count=0,
+                    view_count=0,
+                    last_scanned=datetime.now(),
+                ))
+        logger.debug(f"Listed {len(schemas)} Databricks catalogs as discovery fallback")
+        return schemas
+
+    def _databricks_default_catalog(self) -> str:
+        """Return the engine's configured default Databricks catalog.
+
+        The DatabricksDialect.create_engine embeds catalog in the SQLAlchemy URL
+        query params. Falls back to 'main' if the URL doesn't surface one.
+        """
+        try:
+            return self.engine.url.query.get("catalog", "main")
+        except AttributeError:
+            return "main"
+
+    def _list_schemas_databricks(self, connection_id: str, catalog: str) -> list[Schema]:
+        """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries.
+
+        After collecting the schema list, performs a single grouped query against
+        `<catalog>.information_schema.tables` to populate table_count/view_count
+        per schema. If the information_schema query fails (e.g. permissions), the
+        schemas are still returned with zero counts.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to prevent
+        SQL injection (per T-11-04 security requirement).
+        """
+        schemas: list[Schema] = []
+        quoted_catalog = self._dialect.quote_identifier(catalog)
+
+        with self.engine.connect() as conn:
+            schema_rows = conn.execute(
+                text(f"SHOW SCHEMAS IN {quoted_catalog}")
+            ).fetchall()
+
+            counts: dict[str, tuple[int, int]] = {}
+            try:
+                counts_rows = conn.execute(text(
+                    f"SELECT table_schema, "
+                    f"SUM(CASE WHEN table_type = 'VIEW' THEN 0 ELSE 1 END) AS table_count, "
+                    f"SUM(CASE WHEN table_type = 'VIEW' THEN 1 ELSE 0 END) AS view_count "
+                    f"FROM {quoted_catalog}.information_schema.tables "
+                    f"GROUP BY table_schema"
+                )).fetchall()
+                for row in counts_rows:
+                    counts[row[0]] = (int(row[1] or 0), int(row[2] or 0))
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    f"Databricks information_schema counts unavailable for "
+                    f"catalog={catalog}: {exc}. Falling back to zero counts."
+                )
+
+            for row in schema_rows:
+                schema_name = row[0]
+                schema_id = f"{connection_id}_{schema_name}" if connection_id else schema_name
+                table_count, view_count = counts.get(schema_name, (0, 0))
+                schemas.append(Schema(
+                    schema_id=schema_id,
+                    connection_id=connection_id,
+                    schema_name=schema_name,
+                    table_count=table_count,
+                    view_count=view_count,
+                    last_scanned=datetime.now(),
+                ))
+
+        logger.debug(f"Found {len(schemas)} schemas (Databricks catalog={catalog})")
         return schemas
 
     def _list_schemas_generic(self, connection_id: str = "") -> list[Schema]:
@@ -180,6 +312,7 @@ class MetadataService:
         offset: int = 0,
         object_type: str | None = None,
         connection_id: str = "",
+        catalog: str | None = None,
     ) -> tuple[list[Table], dict]:
         """List tables with row counts and metadata.
 
@@ -196,6 +329,8 @@ class MetadataService:
             offset: Number of tables to skip for pagination (T132)
             object_type: Filter by type - 'table', 'view', or None for all (T133)
             connection_id: Connection ID for table_id generation
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. Ignored for non-Databricks dialects.
 
         Returns:
             Tuple of (List of Table objects, pagination metadata dict)
@@ -203,7 +338,13 @@ class MetadataService:
         """
         start_time = time.time()
 
-        if self.is_mssql:
+        # Databricks with explicit catalog: use raw SQL for cross-catalog query
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            result, pagination = self._list_tables_databricks(
+                schema_name or "default", catalog, name_pattern,
+                sort_by, sort_order, limit, offset, connection_id
+            )
+        elif self._dialect and self._dialect.has_fast_row_counts:
             result, pagination = self._list_tables_mssql(
                 schema_name, name_pattern, min_row_count,
                 sort_by, sort_order, limit, offset, object_type, connection_id
@@ -231,12 +372,95 @@ class MetadataService:
         pattern = name_pattern.replace("%", "*").replace("_", "?")
         return fnmatch.fnmatch(name, pattern)
 
+    def _list_tables_databricks(
+        self,
+        schema_name: str,
+        catalog: str,
+        name_pattern: str | None,
+        sort_by: str,
+        sort_order: str,
+        limit: int,
+        offset: int,
+        connection_id: str,
+    ) -> tuple[list[Table], dict]:
+        """Databricks table listing using SHOW TABLES IN for cross-catalog queries.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to prevent
+        SQL injection (per T-11-04 security requirement).
+        """
+        tables: list[Table] = []
+        quoted_catalog = self._dialect.quote_identifier(catalog)
+        quoted_schema = self._dialect.quote_identifier(schema_name)
+
+        with self.engine.connect() as conn:
+            result = conn.execute(
+                text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
+            )
+            for row in result.fetchall():
+                # SHOW TABLES returns (database, tableName, isTemporary)
+                table_name = row[1] if len(row) > 1 else row[0]
+
+                if not self._matches_name_pattern(table_name, name_pattern):
+                    continue
+
+                table_id = f"{catalog}.{schema_name}.{table_name}"
+                tables.append(Table(
+                    table_id=table_id,
+                    schema_id=schema_name,
+                    table_name=table_name,
+                    table_type=TableType.TABLE,
+                    row_count=None,  # Not available from SHOW TABLES
+                    row_count_updated=datetime.now(),
+                    has_primary_key=False,
+                    last_modified=None,
+                    access_denied=False,
+                ))
+
+        # Sort
+        reverse = sort_order.lower() == "desc"
+        if sort_by == "name":
+            tables.sort(key=lambda t: t.table_name, reverse=reverse)
+
+        # Pagination
+        total_count = len(tables)
+        effective_limit = min(max(limit, 1), 1000)
+        effective_offset = max(offset, 0)
+        tables = tables[effective_offset:effective_offset + effective_limit]
+
+        pagination = {
+            "total_count": total_count,
+            "offset": effective_offset,
+            "limit": effective_limit,
+            "has_more": (effective_offset + len(tables)) < total_count,
+        }
+
+        logger.debug(f"Found {len(tables)} tables (Databricks catalog={catalog}.{schema_name})")
+        return tables, pagination
+
+    def _should_use_three_level_table_ids(self, catalog: str | None) -> bool:
+        """Determine if table IDs should use three-level format (catalog.schema.table).
+
+        Three-level IDs are used for Databricks when a catalog is explicitly provided.
+
+        Args:
+            catalog: Optional catalog name
+
+        Returns:
+            True if three-level IDs should be used
+        """
+        return (
+            catalog is not None
+            and self._dialect is not None
+            and self._dialect.name == "databricks"
+        )
+
     def _collect_objects_from_schema(
         self,
         schema: str | None,
         table_type: TableType,
         name_pattern: str | None,
         min_row_count: int | None,
+        catalog: str | None = None,
     ) -> list[Table]:
         """Collect tables or views from a single schema.
 
@@ -245,6 +469,7 @@ class MetadataService:
             table_type: TABLE or VIEW
             name_pattern: SQL LIKE pattern for name filtering
             min_row_count: Minimum row count threshold (tables only)
+            catalog: Optional catalog for three-level Databricks table IDs (D-11)
 
         Returns:
             List of matching Table objects
@@ -256,6 +481,8 @@ class MetadataService:
             names = self.inspector.get_table_names(schema=schema)
         else:
             names = self.inspector.get_view_names(schema=schema)
+
+        use_three_level = self._should_use_three_level_table_ids(catalog)
 
         results: list[Table] = []
         for name in names:
@@ -269,8 +496,13 @@ class MetadataService:
 
             has_pk = self._has_primary_key(name, schema) if is_table else False
 
+            if use_three_level:
+                table_id = f"{catalog}.{display_schema}.{name}"
+            else:
+                table_id = f"{display_schema}.{name}"
+
             results.append(Table(
-                table_id=f"{display_schema}.{name}",
+                table_id=table_id,
                 schema_id=display_schema,
                 table_name=name,
                 table_type=table_type,
@@ -632,6 +864,7 @@ class MetadataService:
         schema_name: str = "dbo",
         include_indexes: bool = True,
         include_relationships: bool = True,
+        catalog: str | None = None,
     ) -> dict:
         """Get complete table schema including columns, indexes, and FKs.
 
@@ -642,11 +875,16 @@ class MetadataService:
             schema_name: Schema name (default: 'dbo')
             include_indexes: Include index information
             include_relationships: Include declared foreign keys
+            catalog: Optional Databricks catalog name. Overrides the connection's
+                default catalog. Ignored for non-Databricks dialects.
 
         Returns:
             Dictionary with complete table metadata
         """
-        columns = self.get_columns(table_name, schema_name)
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            columns = self._get_databricks_columns(table_name, schema_name, catalog)
+        else:
+            columns = self.get_columns(table_name, schema_name)
 
         result = {
             "table_name": table_name,
@@ -668,7 +906,9 @@ class MetadataService:
             ],
         }
 
-        if include_indexes:
+        # D-13: Gate index section on dialect.supports_indexes
+        # When supports_indexes is False, "indexes" key is absent entirely
+        if include_indexes and (not self._dialect or self._dialect.supports_indexes):
             indexes = self.get_indexes(table_name, schema_name)
             result["indexes"] = [
                 {
@@ -695,18 +935,202 @@ class MetadataService:
                 for fk in fks
             ]
 
+        # Databricks-specific table properties via DESCRIBE EXTENDED (D-07)
+        if self._dialect and self._dialect.name == "databricks":
+            dte_catalog = catalog or "main"  # Fall back to default catalog
+            dte_props = self._parse_databricks_table_properties(
+                table_name, schema_name, dte_catalog
+            )
+            # Optionally log or surface error to user
+            if "_describe_extended_error" in dte_props:
+                logger.debug(f"Could not retrieve extended properties: {dte_props['_describe_extended_error']}")
+                dte_props.pop("_describe_extended_error")  # Don't include in response
+            # Merge DTE properties into result (only present keys)
+            result.update(dte_props)
+            # Add catalog to response for Databricks (D-11)
+            if catalog:
+                result["catalog"] = catalog
+
         return result
 
-    def table_exists(self, table_name: str, schema_name: str = "dbo") -> bool:
+    def _get_databricks_columns(
+        self, table_name: str, schema_name: str, catalog: str
+    ) -> list[Column]:
+        """Fetch columns for a cross-catalog Databricks table via DESCRIBE TABLE.
+
+        SQLAlchemy Inspector is bound to the engine's default catalog and silently
+        returns [] for tables in other catalogs.  This method issues a plain
+        DESCRIBE TABLE using the fully-qualified three-part name, which works
+        regardless of which catalog the connection was opened against.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to
+        prevent SQL injection (T-mwr-02).
+
+        Args:
+            table_name: Table name
+            schema_name: Schema (database) name
+            catalog: Databricks catalog name
+
+        Returns:
+            List of Column objects.  Empty list on any error.
+        """
+        try:
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_schema = self._dialect.quote_identifier(schema_name)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            qualified = f"{quoted_catalog}.{quoted_schema}.{quoted_table}"
+            table_id = f"{catalog}.{schema_name}.{table_name}"
+
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"DESCRIBE TABLE {qualified}"))
+                rows = result.fetchall()
+
+            columns: list[Column] = []
+            for idx, row in enumerate(rows, start=1):
+                col_name = (row[0] or "").strip()
+                data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+                # Stop at blank separator or any section marker (starts with "#")
+                if not col_name or col_name.startswith("#"):
+                    break
+
+                columns.append(Column(
+                    column_id=f"{table_id}.{col_name}",
+                    table_id=table_id,
+                    column_name=col_name,
+                    ordinal_position=idx,
+                    data_type=data_type,
+                    is_primary_key=False,
+                    is_foreign_key=False,
+                ))
+
+            return columns
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch columns via DESCRIBE TABLE for "
+                f"{catalog}.{schema_name}.{table_name}: {type(e).__name__}: {e}"
+            )
+            return []
+
+    def _parse_databricks_table_properties(
+        self, table_name: str, schema_name: str, catalog: str
+    ) -> dict:
+        """Parse DESCRIBE TABLE EXTENDED for Databricks-specific properties.
+
+        Returns dict with optional keys: owner, storage_format, table_type_detail,
+        created_time, location, partition_columns. On failure, returns dict with
+        '_describe_extended_error' key containing error message.
+
+        All identifiers are backtick-quoted via dialect.quote_identifier() to
+        prevent SQL injection (T-11-04).
+
+        Args:
+            table_name: Table name
+            schema_name: Schema name
+            catalog: Catalog name
+
+        Returns:
+            Dictionary of parsed properties. Dict with '_describe_extended_error' key on failure.
+        """
+        try:
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_schema = self._dialect.quote_identifier(schema_name)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            qualified = f"{quoted_catalog}.{quoted_schema}.{quoted_table}"
+
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"DESCRIBE TABLE EXTENDED {qualified}"))
+                rows = result.fetchall()
+
+            props: dict = {}
+            partition_cols: list[str] = []
+            in_partition_section = False
+            in_detail_section = False
+
+            for row in rows:
+                col_name = (row[0] or "").strip()
+                data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+                # Section markers
+                if col_name.startswith("# Partition Information"):
+                    in_partition_section = True
+                    in_detail_section = False
+                    continue
+                elif col_name.startswith("# Detailed Table Information"):
+                    in_partition_section = False
+                    in_detail_section = True
+                    continue
+                elif col_name.startswith("#"):
+                    continue  # Skip header rows
+                elif not col_name and not data_type:
+                    in_partition_section = False
+                    # Don't reset detail section -- it continues to end
+                    continue
+
+                if in_partition_section and col_name:
+                    partition_cols.append(col_name)
+
+                if in_detail_section:
+                    key_map = {
+                        "Owner": "owner",
+                        "Provider": "storage_format",
+                        "Type": "table_type_detail",
+                        "Created Time": "created_time",
+                        "Location": "location",
+                    }
+                    if col_name in key_map:
+                        props[key_map[col_name]] = data_type
+
+            if partition_cols:
+                props["partition_columns"] = partition_cols
+
+            return props
+
+        except Exception as e:
+            # T-11-06: Never let DTE parsing failure break get_table_schema
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.warning(
+                f"Failed to parse DESCRIBE EXTENDED for {catalog}.{schema_name}.{table_name}: {error_msg}"
+            )
+            # Return error indicator so caller can optionally surface it
+            return {"_describe_extended_error": error_msg}
+
+    def table_exists(
+        self,
+        table_name: str,
+        schema_name: str = "dbo",
+        catalog: str | None = None,
+    ) -> bool:
         """Check if a table exists.
 
         Args:
             table_name: Table name
             schema_name: Schema name
+            catalog: Optional Databricks catalog. When provided and the dialect
+                is Databricks, uses `SHOW TABLES IN <catalog>.<schema>` for a
+                cross-catalog check. Ignored for other dialects.
 
         Returns:
             True if table exists
         """
+        if catalog and self._dialect and self._dialect.name == "databricks":
+            try:
+                quoted_catalog = self._dialect.quote_identifier(catalog)
+                quoted_schema = self._dialect.quote_identifier(schema_name)
+                with self.engine.connect() as conn:
+                    result = conn.execute(
+                        text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
+                    )
+                    # SHOW TABLES rows: (database/schema, tableName, isTemporary)
+                    for row in result.fetchall():
+                        # tableName is index 1 per Databricks SHOW TABLES contract
+                        if len(row) >= 2 and row[1] == table_name:
+                            return True
+                return False
+            except SQLAlchemyError:
+                return False
+
         try:
             tables = self.inspector.get_table_names(schema=schema_name)
             return table_name in tables

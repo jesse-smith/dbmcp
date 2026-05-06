@@ -1,119 +1,176 @@
 # Feature Landscape
 
-**Domain:** Concern handling for Python MCP database server (SQLAlchemy + pyodbc + SQL Server)
-**Researched:** 2026-03-06
+**Domain:** Multi-dialect database exploration MCP tool (extending SQL Server-only to Databricks + generic SQLAlchemy)
+**Researched:** 2026-04-13
 
 ## Table Stakes
 
-Features users expect. Missing = product feels incomplete or fragile.
+Features users expect from any multi-dialect database exploration tool. Missing = product feels broken or unusable with the new dialect.
 
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| Specific exception handling | Bare `except Exception` hides bugs, makes debugging impossible; 25 instances across codebase | Medium | None (existing exception types from sqlalchemy, pyodbc, azure.identity) | SQLAlchemy raises `OperationalError`, `ProgrammingError`, `InterfaceError`; pyodbc raises `pyodbc.Error` subtypes; azure-identity raises `CredentialUnavailableError`, `ClientAuthenticationError`. The MCP tool layer should catch known types and only use bare Exception as a true last-resort sentinel. |
-| Dead code removal (metrics.py) | Unused module creates confusion about codebase intent; no imports reference it | Low | None | `src/metrics.py` is imported by nothing. Zero references outside its own docstring. Safe to delete. |
-| Type ignore cleanup | `# type: ignore` on Query._columns/_rows/_total_rows_available hides a design smell (ad-hoc attribute injection on a dataclass) | Low-Medium | None | Fix is either: (a) add those fields to the Query dataclass with defaults, or (b) return a separate result container alongside Query. Option (b) is cleaner -- a `QueryResult` dataclass holding columns/rows/total_rows_available, returned as a tuple from `execute_query`. |
-| Test coverage to 70% per module | Below 70% signals untested code paths, especially in metadata.py (heavy exception handling) and MCP tool layer | Medium-High | pytest-cov (already installed) | The MCP tool layer uses `asyncio.to_thread` wrapping sync functions -- test the sync inner functions directly, not through the async wrapper. metadata.py has ~13 bare except blocks that need exercising. |
-| MCP session cleanup | Connections leak if LLM client disconnects without calling disconnect; `ConnectionManager` has no session lifecycle hook | Medium | FastMCP session/lifecycle events | FastMCP supports server lifecycle context managers. Wire `disconnect_all()` to session/server shutdown. |
+| Feature | Why Expected | Complexity | Depends On | Notes |
+|---------|--------------|------------|------------|-------|
+| Schema listing across dialects | Core navigation; users need to browse structure first | Low | DialectStrategy protocol | Databricks: `information_schema.SCHEMATA` or Inspector. MSSQL: existing DMV path. Generic: Inspector. |
+| Table listing with row counts | Core navigation; existing tool already does this for MSSQL | Med | Schema listing, dialect-aware row count | Databricks row counts need `DESCRIBE TABLE EXTENDED` or `ANALYZE TABLE`; no DMV equivalent. Generic: `COUNT(*)` fallback (already implemented). |
+| Column metadata retrieval | Users expect `get_table_schema` to work on any connected database | Low | DialectStrategy protocol | SQLAlchemy Inspector handles most of this. Databricks Inspector uses `DESCRIBE TABLE EXTENDED` under the hood. `information_schema.COLUMNS` available in Unity Catalog (31 fields including COMMENT, FULL_DATA_TYPE, PARTITION_ORDINAL_POSITION). |
+| Query execution with validation | Core value prop of dbmcp; must work on non-MSSQL dialects | Med | sqlglot dialect mapping | sqlglot already in stack. Must pass correct dialect for transpilation/validation. Databricks dialect = `databricks` in sqlglot. |
+| Three-level namespace support (catalog.schema.table) | Databricks uses catalog.schema.table; users will expect it | Med | Config model, metadata layer | MSSQL is database.schema.table (similar structure but different semantics). Must map Databricks catalogs to the connection-level concept. |
+| Identifier validation per dialect | Security feature; must not regress when adding dialects | Med | Metadata-based validation, dialect-aware quoting | MSSQL uses `[brackets]`, Databricks uses `backticks`. SQLAlchemy handles quoting but raw SQL in analysis tools needs dialect-aware escaping. |
+| TOML config for Databricks connections | Users configure MSSQL via TOML today; Databricks must work the same way | Low | Config model | Databricks needs: host, http_path, catalog, schema, auth (token or OAuth). Discriminated by `dialect` field. |
+| Sample data retrieval | `get_sample_data` is a core tool; must work everywhere | Low | Dialect-aware LIMIT syntax | MSSQL uses `TOP N`, Databricks/generic use `LIMIT N`. sqlglot can handle transpilation, or use dialect-specific SQL. |
 
 ## Differentiators
 
-Features that set the product apart. Not expected, but valuable.
+Features that set this tool apart from generic database connectors. Not expected but valuable for LLM agents.
 
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| Azure AD token refresh in connection pool | Current code acquires a token once at connection creation via the `creator` callable. Azure AD tokens expire after ~60-75 minutes. Long-running sessions silently break when pool returns a stale connection. | Medium | azure-identity (already installed) | The `creator` function in `_create_engine` already calls `provider.get_token()` per physical connection, which is good. But SQLAlchemy's pool reuses physical connections -- `pool_pre_ping` only tests connectivity (SELECT 1), not token validity. Solution: set `pool_recycle` to ~3000s (under 60-min expiry), so pooled connections are recycled before tokens expire. Optionally cache `AccessToken.expires_on` and force reconnect when approaching expiry. |
-| Type handler registry for serialization | Current `_truncate_value` in query.py handles types inline with if/elif chains (datetime, Decimal, bytes, etc.). `_pre_serialize` in serialization.py has a parallel chain. Adding a new type requires editing two places. | Medium | None | Pattern: a registry dict mapping `type -> callable` that both query result processing and TOON serialization consult. Register handlers at module load. Enables extending for `uuid.UUID`, `memoryview`, `bytearray`, custom SQL types without touching core logic. |
-| SQL identifier validation against metadata | Current `_sanitize_identifier` uses regex `[a-zA-Z0-9_\s]+` -- rejects valid SQL Server identifiers (e.g., names with hyphens, unicode chars) and cannot verify the column actually exists | Medium | MetadataService (already exists) | Pattern: accept identifier if it matches a known column/table from metadata cache, OR is bracket-quoted. This prevents injection AND handles weird-but-valid names. Requires threading metadata context into QueryService. |
-| Configuration file for connections and defaults | Currently all config is passed via MCP tool parameters at call time; no way to set defaults, connection presets, or customize SP allowlist without code changes | Medium | tomllib (stdlib in 3.11+) | TOML is the Python standard (PEP 680). Pattern: `dbmcp.toml` in project root or `~/.config/dbmcp/config.toml`. Sections: `[defaults]` (query_timeout, row_limit, pool_recycle), `[connections.name]` (server, database, auth), `[validation]` (additional safe_procedures). Config is optional -- all current behavior works without a file. |
-| sqlglot version pinning with edge case fixtures | sqlglot API changes between major versions (e.g., Execute vs Command for EXEC between v25 and v29); current range `>=26,<30` is wide | Low-Medium | None | Pin more tightly to the currently-installed minor version. Add test fixtures for known parsing edge cases: DBCC commands, multi-statement batches, EXEC with output params, nested CTEs. These act as regression canaries when bumping sqlglot. |
+| Feature | Value Proposition | Complexity | Depends On | Notes |
+|---------|-------------------|------------|------------|-------|
+| Databricks column statistics via ANALYZE TABLE | Native stats (min, max, nulls, distinct, avg_len, histogram) are precomputed; much faster than running aggregate queries | Med | Databricks dialect, DESCRIBE EXTENDED parsing | `ANALYZE TABLE ... FOR ALL COLUMNS` computes stats. `DESCRIBE EXTENDED table column` retrieves them. Predictive Optimization auto-runs this on Unity Catalog managed tables. Can fall back to Tier 2 aggregate queries if stats unavailable. |
+| Databricks table metadata from DESCRIBE EXTENDED | Rich metadata: owner, creation time, last access, storage format (Delta/Parquet), table type (MANAGED/EXTERNAL), location | Low | Databricks dialect | JSON output available in DBR 16.2+ (`DESCRIBE EXTENDED ... AS JSON`). Valuable for LLM context about table provenance. |
+| PK/FK discovery with informational constraint awareness | Databricks PK/FK constraints exist but are NOT enforced. Tool should surface this distinction clearly. | Med | Existing PK/FK analysis tools, dialect-aware constraint querying | `information_schema.TABLE_CONSTRAINTS` has `ENFORCED` column (always 'NO' for PK/FK in Databricks). Must communicate "informational only" to LLM consumers. Structural PK discovery (uniqueness checks) remains valuable as a complement. |
+| Partition-aware metadata | Databricks tables are often partitioned; surfacing partition columns helps LLM write efficient queries | Low | DESCRIBE EXTENDED or information_schema.COLUMNS.PARTITION_ORDINAL_POSITION | Partition awareness is a Databricks-specific optimization hint that generic tools miss. |
+| Unity Catalog tag metadata | Databricks Unity Catalog supports tags on catalogs, schemas, tables, and columns via `*_TAGS` information_schema views | Low | Databricks dialect | Tags carry business context (PII classification, data domain, ownership) that helps LLMs understand data semantics. |
+| Dialect-agnostic analysis fallbacks | When dialect-specific stats aren't available, fall back gracefully to standard SQL aggregates | Med | Tier 2/3 query strategy | Three-tier approach: Tier 1 (Inspector), Tier 2 (standard SQL via sqlglot), Tier 3 (dialect-specific optimizations). This is the architectural differentiator. |
+| Cross-dialect type normalization | Consistent type representation regardless of backend | Med | Type registry, dialect mapping | Databricks types (STRING, LONG, DOUBLE, TIMESTAMP_NTZ) differ from MSSQL (nvarchar, bigint, float, datetime2). Normalizing for LLM consumers reduces confusion. |
 
 ## Anti-Features
 
-Features to explicitly NOT build.
+Features to explicitly NOT build. These seem useful but are traps.
 
 | Anti-Feature | Why Avoid | What to Do Instead |
 |--------------|-----------|-------------------|
-| Pydantic migration | PROJECT.md explicitly marks this out of scope; dataclasses work fine for this scale. Pydantic adds import overhead and dependency weight for no benefit here. | Keep dataclasses. Fix type issues by adding proper fields or companion types. |
-| Custom exception middleware/framework | Over-engineering for a tool with 9 endpoints. Exception handling should be specific but simple -- not an abstract framework. | Map specific exceptions to error responses at the tool boundary. A simple helper function per error category is sufficient. |
-| Configuration GUI/TUI | This is a headless MCP server consumed by LLMs. No human interacts with it directly at runtime. | TOML config file with clear defaults and comments. |
-| Retry logic for Azure AD tokens | Token refresh on expiry is correct; automatic retry with backoff adds complexity and can mask auth misconfiguration. | Fail fast on auth errors with actionable messages (already done well in azure_auth.py). Use pool_recycle for preemptive refresh. |
-| Query result caching | Explicitly out of scope per PROJECT.md; adds stale data risk and memory pressure for unclear benefit. | Keep stateless: every query hits the database. |
-| Audit logging | Explicitly out of scope per PROJECT.md; future milestone. | Defer entirely. |
+| Write operations for any dialect | Violates core security model. Read-only is the entire value proposition. | Keep strict read-only validation. Even Databricks `ANALYZE TABLE` is a write-ish operation (writes stats); consider carefully whether to auto-trigger it or only read existing stats. |
+| Auto-triggering ANALYZE TABLE | Runs compute on user's cluster, costs money, may be slow on large tables. Side effect that violates read-only principle. | Read existing stats from DESCRIBE EXTENDED. If stats are stale/missing, report that and let the user decide. |
+| Full Unity Catalog cross-catalog queries | Querying across catalogs adds massive complexity to identifier validation and metadata caching. | Scope to one catalog per connection (the one specified in the connection string). Users can create multiple connections for multiple catalogs. |
+| Databricks-specific SQL in generic tools | Leaking Databricks SQL syntax into the generic path creates maintenance burden and breaks other dialects. | Keep dialect-specific SQL isolated in DialectStrategy implementations. Generic path uses only SQLAlchemy Inspector + standard SQL. |
+| Index metadata for Databricks | Databricks does not have traditional B-tree indexes. Delta tables use data skipping, Z-ordering, and liquid clustering instead. | For `get_table_schema`, omit index section for Databricks or replace with "optimization hints" (partition columns, clustering info). Do not pretend indexes exist. |
+| Enforced constraint semantics for Databricks PK/FK | Treating Databricks PK/FK as enforced would mislead LLM agents into wrong assumptions about data integrity. | Always surface the `informational_only` flag. Structural PK discovery (actual uniqueness checks) is more reliable for Databricks. |
+| Histogram data from ANALYZE TABLE | Column histograms are internal optimizer artifacts, not meaningful for LLM consumers. Complex to parse and serialize. | Surface min/max/nulls/distinct from ANALYZE TABLE stats. Skip histogram serialization. |
 
 ## Feature Dependencies
 
 ```
-Dead code removal -------> (none, independent)
-Exception specificity ---> (none, but benefits from test coverage to verify no regressions)
-Type ignore cleanup -----> (none, independent; creates QueryResult type)
-Test coverage -----------> Exception specificity (tests validate correct exceptions caught)
-                       --> Type ignore cleanup (tests validate new QueryResult type)
-                       --> MCP session cleanup (tests validate cleanup behavior)
-Azure AD token refresh --> (none, independent change to pool_recycle + token caching)
-MCP session cleanup -----> (none, but test coverage should cover it)
-Identifier validation ---> MetadataService (already exists, need to thread context)
-Type handler registry ---> Type ignore cleanup (registry replaces inline chains)
-                       --> Serialization module (refactor _pre_serialize)
-Config file -------------> (none, but influences defaults for pool_recycle, query_timeout, SP allowlist)
-sqlglot pinning ---------> (none, independent; add test fixtures)
-```
+DialectStrategy protocol
+  -> MssqlDialect (preserves existing behavior)
+  -> DatabricksDialect (new)
+  -> GenericDialect (new fallback)
 
-Key ordering constraint: do refactoring (exception specificity, type cleanup) BEFORE writing tests. Writing tests against code you plan to refactor wastes effort.
+Discriminated TOML config
+  -> Databricks connection params (host, http_path, catalog, token/OAuth)
+  -> connect_database tool simplification
+
+Three-level namespace (catalog.schema.table)
+  -> Schema listing for Databricks
+  -> Table listing for Databricks
+  -> Identifier validation for Databricks
+
+SQLAlchemy Inspector (Tier 1)
+  -> get_columns, get_pk_constraint, get_foreign_keys (all dialects)
+  -> Databricks Inspector uses DESCRIBE TABLE EXTENDED internally
+
+Standard SQL analysis (Tier 2)
+  -> Column stats (COUNT, COUNT DISTINCT, MIN, MAX, AVG, STDEV)
+  -> PK discovery (uniqueness checks)
+  -> FK candidate search (value overlap)
+  -> sqlglot transpilation for dialect differences
+
+Dialect-specific optimizations (Tier 3)
+  -> MSSQL: DMV queries (sys.dm_db_partition_stats for row counts)
+  -> Databricks: DESCRIBE EXTENDED for precomputed stats
+  -> Databricks: information_schema for constraint metadata
+  -> Databricks: Partition/clustering metadata
+```
 
 ## MVP Recommendation
 
-Prioritize (Phase 1 -- cleanup and safety):
-1. **Dead code removal** -- 15 minutes, zero risk, cleans up codebase
-2. **Exception specificity** -- highest impact on debuggability; the 25 bare-except blocks in metadata.py and MCP tools mask real errors
-3. **Type ignore cleanup** -- small scope, introduces QueryResult container type
-4. **MCP session cleanup** -- prevents connection leaks in production
+Prioritize (must-have for v2.0):
 
-Prioritize (Phase 2 -- hardening):
-5. **Test coverage to 70%** -- validates Phase 1 changes and catches regressions; do after refactoring so tests cover final code
-6. **Azure AD token refresh** -- prevents silent auth failures in long sessions
-7. **sqlglot pinning + edge case fixtures** -- prevents surprise breakage on dependency updates
+1. **DialectStrategy protocol + MSSQL migration** - Refactor existing code behind strategy interface. Zero behavior change for MSSQL users. This gates everything else.
+2. **Discriminated TOML config + connect_database simplification** - Users need to connect before anything else works. Databricks connection params are different enough to require typed config.
+3. **Databricks schema/table/column listing via Inspector** - The databricks-sqlalchemy dialect implements reflection via DESCRIBE TABLE EXTENDED internally. Lean on Inspector for Tier 1.
+4. **Query execution with dialect-aware validation** - Pass sqlglot dialect explicitly. Databricks query validation must work correctly.
+5. **GenericDialect fallback** - Inspector-only path for PostgreSQL, MySQL, SQLite, etc. No custom SQL. This is cheap if the strategy pattern is right.
 
-Defer (Phase 3 -- infrastructure):
-8. **Identifier validation against metadata** -- requires threading metadata context; moderate scope
-9. **Type handler registry** -- nice-to-have extensibility; current inline approach works
-10. **Configuration file** -- lowest urgency; current parameter-passing works; most impactful for the SP allowlist customization
+Defer to post-MVP:
 
-**Rationale:** Clean up first (dead code, exceptions, types), then prove it with tests, then add infrastructure. Config file is last because it only improves developer experience, not correctness or safety.
+- **Databricks ANALYZE TABLE stats reading**: Requires parsing DESCRIBE EXTENDED column-level output. Valuable but not blocking. Fall back to Tier 2 aggregate queries initially.
+- **Unity Catalog tags**: Nice-to-have enrichment, not core functionality.
+- **Partition-aware metadata**: Low effort but not needed for basic functionality.
+- **Cross-dialect type normalization**: Current type registry handles MSSQL. Databricks types need mapping but SQLAlchemy already normalizes somewhat.
 
-## Complexity Estimates
+## Databricks-Specific Capabilities Reference
 
-| Feature | Lines Changed (est.) | Test Effort | Risk |
-|---------|---------------------|-------------|------|
-| Dead code removal | ~5 (delete file, remove any stale refs) | None needed | Negligible |
-| Exception specificity | ~100-150 (25 blocks to refine) | Medium (verify each exception path) | Low -- narrowing catches is safe |
-| Type ignore cleanup | ~30-50 (new dataclass + refactor execute_query return) | Low-Medium | Low -- internal refactor |
-| MCP session cleanup | ~15-25 (lifecycle hook + test) | Low | Low |
-| Test coverage to 70% | ~300-500 (new test cases) | High (this IS the test effort) | Negligible |
-| Azure AD token refresh | ~20-30 (pool_recycle tuning + token expiry check) | Medium (mock token expiry) | Low |
-| sqlglot pinning | ~5 (pyproject.toml) + ~100 (edge case fixtures) | Medium | Low |
-| Identifier validation | ~50-80 (metadata-aware validation) | Medium | Medium -- behavior change |
-| Type handler registry | ~80-120 (registry + migration of inline handlers) | Medium | Low-Medium |
-| Config file | ~150-200 (TOML loader + schema + integration) | Medium | Low |
+### Metadata Sources Available
 
-## Exception Specificity Detail
+| Source | What It Provides | Access Method |
+|--------|-----------------|---------------|
+| `information_schema.TABLES` | table_type (MANAGED/EXTERNAL/VIEW), owner, created, last_altered, data_source_format, storage_path | SQL query |
+| `information_schema.COLUMNS` | 31 fields including FULL_DATA_TYPE, COMMENT, PARTITION_ORDINAL_POSITION, IS_NULLABLE | SQL query |
+| `information_schema.TABLE_CONSTRAINTS` | PK/FK/CHECK constraints with ENFORCED='NO' for PK/FK | SQL query |
+| `information_schema.KEY_COLUMN_USAGE` | Which columns participate in PK/FK constraints | SQL query |
+| `information_schema.REFERENTIAL_CONSTRAINTS` | FK relationship details (referenced table/columns) | SQL query |
+| `DESCRIBE TABLE EXTENDED` | Column schema + table properties (owner, location, format, stats) | SQL command |
+| `DESCRIBE EXTENDED table column` | Column-level stats from ANALYZE TABLE (min, max, nulls, distinct, avg_len) | SQL command |
+| `SHOW COLUMNS` | Column names only (minimal utility vs. DESCRIBE/information_schema) | SQL command |
+| SQLAlchemy Inspector | get_columns, get_pk_constraint, get_table_names (uses DESCRIBE internally) | Python API |
 
-Breakdown of the 25 `except Exception` blocks by module and what they should catch:
+### Column Statistics from ANALYZE TABLE
 
-**metadata.py (13 blocks):** Most are around SQL Server DMV queries that can fail with permission errors or connectivity issues. Replace with `sqlalchemy.exc.OperationalError` (connection lost), `sqlalchemy.exc.ProgrammingError` (permission denied / invalid query), `pyodbc.Error` (driver-level failures).
+When `ANALYZE TABLE ... FOR ALL COLUMNS` has been run (or Predictive Optimization has auto-run it), `DESCRIBE EXTENDED table column` returns:
 
-**MCP tool layer (9 blocks across schema_tools, query_tools, analysis_tools):** These are the outermost boundary. Pattern: catch `ValueError` (validation), `ConnectionError` (auth/connect), `sqlalchemy.exc.SQLAlchemyError` (any DB operation), then bare `Exception` only as final sentinel with `logger.exception()`. Already partially done in some tools (connect_database catches ConnectionError and ValueError specifically).
+| Statistic | Description | Equivalent to Current MSSQL Approach |
+|-----------|-------------|--------------------------------------|
+| `min` | Minimum value | Same as current MIN() aggregate |
+| `max` | Maximum value | Same as current MAX() aggregate |
+| `num_nulls` | Null count | Same as current SUM(CASE WHEN ... IS NULL) |
+| `distinct_count` | Approximate distinct count | Same as current COUNT(DISTINCT) |
+| `avg_col_len` | Average column length | Same as current AVG(LEN()) for strings |
+| `max_col_len` | Maximum column length | Same as current MAX(LEN()) for strings |
+| `histogram` | Internal optimizer histogram | No current equivalent; skip for LLM consumers |
 
-**query.py (3 blocks):** `_run_query` catches Exception for query execution errors -- should catch `sqlalchemy.exc.OperationalError` (timeout, connection lost), `sqlalchemy.exc.ProgrammingError` (syntax error), `sqlalchemy.exc.ResourceClosedError` (result set issues). The `_get_total_row_count` swallows Exception silently -- acceptable for best-effort count, but should at minimum catch `sqlalchemy.exc.SQLAlchemyError`.
+### Namespace Mapping
 
-**connection.py (1 block):** Already specific (`ConnectionError` re-raise + generic Exception -> ConnectionError wrapping). Good pattern, no change needed.
+| Concept | MSSQL | Databricks | Generic SQLAlchemy |
+|---------|-------|------------|-------------------|
+| Top level | Server/Database (connection-scoped) | Catalog (Unity Catalog) | Database (connection-scoped) |
+| Mid level | Schema (dbo, etc.) | Schema | Schema (public, etc.) |
+| Object level | Table/View | Table/View | Table/View |
+| Qualified name | `[schema].[table]` | `` `catalog`.`schema`.`table` `` | `"schema"."table"` |
+| Quote character | `[]` | `` ` `` | `""` (standard SQL) |
+
+### Constraint Behavior
+
+| Aspect | MSSQL | Databricks |
+|--------|-------|------------|
+| PK enforced | Yes | No (informational only) |
+| FK enforced | Yes | No (informational only) |
+| CHECK enforced | Yes | Yes |
+| NOT NULL enforced | Yes | Yes |
+| Unique enforced | Yes | No (informational, tied to PK) |
+| PK/FK in information_schema | Yes | Yes (TABLE_CONSTRAINTS, KEY_COLUMN_USAGE) |
+| PK/FK aid query optimizer | N/A (enforced) | Yes (optimizer uses them for join reordering) |
+
+## Complexity Assessment
+
+| Feature Area | Estimated Complexity | Risk Level | Rationale |
+|-------------|---------------------|------------|-----------|
+| DialectStrategy protocol | Med | Low | Well-understood pattern; existing code already has is_mssql branching |
+| MSSQL migration to strategy | Med | Low | Extracting existing code into strategy impl; behavior must not change |
+| Databricks connection/config | Low | Low | Standard TOML config pattern; databricks-sql-connector is mature (v4.2.5) |
+| Inspector-based metadata | Low | Med | databricks-sqlalchemy inspector support is not fully documented; may hit gaps |
+| Query validation per dialect | Med | Med | sqlglot dialect mapping is well-supported but edge cases exist |
+| Analysis tools adaptation | High | Med | Column stats, PK discovery, FK search all contain MSSQL-specific SQL that needs dialect alternatives |
+| Identifier validation | Med | Med | Different quoting, different system schemas, different metadata sources |
+| GenericDialect fallback | Low | Low | Inspector-only, no custom SQL; simplest path |
 
 ## Sources
 
-- Codebase analysis: all `src/` modules read directly (connection.py, query.py, validation.py, metadata.py, azure_auth.py, serialization.py, metrics.py, server.py, schema_tools.py, query_tools.py, analysis_tools.py)
-- PROJECT.md: active requirements, out-of-scope items, constraints
-- SQLAlchemy exception hierarchy: `sqlalchemy.exc` module -- OperationalError, ProgrammingError, InterfaceError, DisconnectionError, InvalidRequestError, ResourceClosedError
-- pyodbc exception hierarchy: PEP 249 DB-API 2.0 -- DatabaseError > DataError, OperationalError, IntegrityError, InternalError, ProgrammingError, NotSupportedError
-- azure-identity exceptions: `CredentialUnavailableError`, `ClientAuthenticationError` from `azure.core.exceptions`
-- Azure AD token lifetime: default 60-75 minutes for access tokens (Microsoft identity platform documentation)
-- Python 3.11 tomllib: PEP 680, stdlib read-only TOML parser
-- FastMCP lifecycle: server context managers for startup/shutdown hooks
+- Databricks INFORMATION_SCHEMA docs: https://docs.databricks.com/en/sql/language-manual/sql-ref-information-schema.html (HIGH confidence)
+- Databricks COLUMNS schema: https://docs.databricks.com/en/sql/language-manual/information-schema/columns.html (HIGH confidence)
+- Databricks TABLE_CONSTRAINTS: https://docs.databricks.com/en/sql/language-manual/information-schema/table_constraints.html (HIGH confidence)
+- Databricks TABLES schema: https://docs.databricks.com/en/sql/language-manual/information-schema/tables.html (HIGH confidence)
+- Databricks DESCRIBE TABLE EXTENDED: https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-aux-describe-table.html (HIGH confidence)
+- Databricks ANALYZE TABLE: https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-aux-analyze-table.html (HIGH confidence)
+- Databricks constraints: https://docs.databricks.com/en/tables/constraints.html (HIGH confidence)
+- databricks-sqlalchemy on DeepWiki: https://deepwiki.com/databricks/databricks-sqlalchemy (MEDIUM confidence - reflection support inferred, not fully documented)
+- databricks-sql-connector v4.2.5: https://github.com/databricks/databricks-sql-python (HIGH confidence)
+- Existing dbmcp codebase: column_stats.py, pk_discovery.py, fk_candidates.py, metadata.py (HIGH confidence - direct code review)

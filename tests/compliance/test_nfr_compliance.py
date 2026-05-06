@@ -177,43 +177,36 @@ class TestNFR004ReadOnlyEnforcement:
     blocked by default. Only SELECT queries are allowed.
     """
 
-    @pytest.fixture
-    def mock_engine(self):
-        """Create mock engine for query testing."""
-        engine = MagicMock()
-        engine.dialect.name = "sqlite"
-        return engine
-
-    def test_select_allowed(self, mock_engine):
+    def test_select_allowed(self):
         """NFR-004: SELECT queries must be allowed."""
-        result = validate_query("SELECT * FROM users")
+        result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
 
-    def test_insert_blocked(self, mock_engine):
+    def test_insert_blocked(self):
         """NFR-004: INSERT queries must be blocked by default."""
-        result = validate_query("INSERT INTO users VALUES (1)")
+        result = validate_query("INSERT INTO users VALUES (1)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_update_blocked(self, mock_engine):
+    def test_update_blocked(self):
         """NFR-004: UPDATE queries must be blocked by default."""
-        result = validate_query("UPDATE users SET name='x'")
+        result = validate_query("UPDATE users SET name='x'", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_delete_blocked(self, mock_engine):
+    def test_delete_blocked(self):
         """NFR-004: DELETE queries must be blocked by default."""
-        result = validate_query("DELETE FROM users WHERE id=1")
+        result = validate_query("DELETE FROM users WHERE id=1", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DML
 
-    def test_ddl_blocked(self, mock_engine):
+    def test_ddl_blocked(self):
         """NFR-004: DDL (CREATE, DROP, ALTER) must be blocked."""
-        result = validate_query("CREATE TABLE t (id INT)")
+        result = validate_query("CREATE TABLE t (id INT)", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.DDL
 
-    def test_query_type_detection_blocks_writes(self, mock_engine):
+    def test_query_type_detection_blocks_writes(self):
         """NFR-004: Write queries must be detected and blocked."""
         write_queries = [
             "INSERT INTO users VALUES (1)",
@@ -224,7 +217,7 @@ class TestNFR004ReadOnlyEnforcement:
         ]
 
         for query in write_queries:
-            result = validate_query(query)
+            result = validate_query(query, dialect="tsql")
             assert result.is_safe is False, f"Write query should be blocked: {query}"
 
 
@@ -267,8 +260,9 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_SecretPassword!@#$"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = SQLAlchemyError("Connection refused")
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.side_effect = SQLAlchemyError("Connection refused")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -286,10 +280,8 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_SuccessPass!456"
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -300,7 +292,7 @@ class TestNFR005CredentialSecurity:
 
             mock_engine_instance = MagicMock()
             mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+            mock_dialect.create_engine.return_value = mock_engine_instance
 
             manager.connect(
                 server="localhost",
@@ -317,8 +309,9 @@ class TestNFR005CredentialSecurity:
         manager = ConnectionManager()
         secret_password = "NFR005_ODBCPass#789"
 
-        with patch("src.db.connection.create_engine") as mock_engine:
-            mock_engine.side_effect = SQLAlchemyError("Test error")
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
+            mock_dialect.create_engine.side_effect = SQLAlchemyError("Test error")
 
             with pytest.raises(ConnectionError):
                 manager.connect(
@@ -339,10 +332,8 @@ class TestNFR005CredentialSecurity:
         """NFR-005: Connection ID must not include password in hash."""
         manager = ConnectionManager()
 
-        with (
-            patch("src.db.connection.create_engine") as mock_engine,
-            patch("src.db.connection.event"),
-        ):
+        with patch("src.db.connection.MssqlDialect") as MockDialect:
+            mock_dialect = MockDialect.return_value
             mock_connection = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = MagicMock(
@@ -353,7 +344,7 @@ class TestNFR005CredentialSecurity:
 
             mock_engine_instance = MagicMock()
             mock_engine_instance.connect.return_value.__enter__.return_value = mock_connection
-            mock_engine.return_value = mock_engine_instance
+            mock_dialect.create_engine.return_value = mock_engine_instance
 
             # Same credentials, different passwords should produce same ID
             conn1 = manager.connect(
@@ -365,6 +356,7 @@ class TestNFR005CredentialSecurity:
 
             manager._engines.clear()
             manager._connections.clear()
+            manager._dialects.clear()
 
             conn2 = manager.connect(
                 server="localhost",

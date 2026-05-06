@@ -4,12 +4,17 @@ This module provides methods for executing queries, sampling table data,
 and handling data truncation for large or binary values.
 """
 
+from __future__ import annotations
+
 import hashlib
 import re
 import time
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.db.dialects.protocol import DialectStrategy
 
 import sqlglot
 from sqlalchemy import text
@@ -42,16 +47,33 @@ class QueryService:
         engine: SQLAlchemy engine for database connection
     """
 
-    def __init__(self, engine: Engine, metadata_service: MetadataService | None = None):
+    def __init__(
+        self,
+        engine: Engine,
+        metadata_service: MetadataService | None = None,
+        dialect: DialectStrategy | None = None,
+    ):
         """Initialize query service.
 
         Args:
             engine: SQLAlchemy engine
             metadata_service: Optional MetadataService for metadata-based
                 identifier validation. When None, falls back to regex validation.
+            dialect: Optional dialect strategy. Auto-inferred from engine if None.
         """
         self.engine = engine
         self._metadata_service = metadata_service
+
+        self._dialect: DialectStrategy | None
+        if dialect is not None:
+            self._dialect = dialect
+        else:
+            from src.db.dialects.registry import get_dialect
+            try:
+                dialect_cls = get_dialect(engine.dialect.name)
+                self._dialect = dialect_cls()
+            except ValueError:
+                self._dialect = None
 
     def get_sample_data(
         self,
@@ -90,14 +112,11 @@ class QueryService:
             column_sql = ", ".join(sanitized_columns)
 
         # Build query based on sampling method
-        dialect_name = self.engine.dialect.name
-
-        if dialect_name == "sqlite":
-            # SQLite doesn't use schema prefixes in the same way
+        if self._dialect is None:
+            # SQLite/test mode doesn't use schema prefixes
             full_table_name = table_name
         else:
-            # SQL Server uses [schema].[table]
-            full_table_name = f"[{schema_name}].[{table_name}]"
+            full_table_name = f"{self._dialect.quote_identifier(schema_name)}.{self._dialect.quote_identifier(table_name)}"
 
         if sampling_method == SamplingMethod.TOP:
             query = self._build_top_query(full_table_name, column_sql, sample_size)
@@ -150,86 +169,34 @@ class QueryService:
             sampled_at=datetime.now(),
         )
 
-    def _build_top_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build SELECT TOP N query (fast, not representative).
+    def _sampling_dialect(self) -> DialectStrategy:
+        """Return the dialect used for sample-query generation.
 
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
+        Falls back to a sqlite-flavored GenericDialect when no dialect is
+        configured, preserving the historical SQLite test path.
         """
-        # Detect database dialect
-        dialect_name = self.engine.dialect.name
+        if self._dialect is not None:
+            return self._dialect
+        from src.db.dialects.generic import GenericDialect
+        return GenericDialect(sqlglot_dialect_name="sqlite")
 
-        if dialect_name == "sqlite":
-            # SQLite uses LIMIT
-            return f"SELECT {column_sql} FROM {table_name} LIMIT {sample_size}"
-        else:
-            # SQL Server uses TOP
-            return f"SELECT TOP ({sample_size}) {column_sql} FROM {table_name}"
+    def _build_top_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
+        """Delegate TOP sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.TOP, table_name, column_sql, sample_size
+        )
 
     def _build_tablesample_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build TABLESAMPLE query (statistical sampling).
-
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
-        """
-        dialect_name = self.engine.dialect.name
-
-        if dialect_name == "sqlite":
-            # SQLite doesn't support TABLESAMPLE, fall back to RANDOM()
-            return f"SELECT {column_sql} FROM {table_name} ORDER BY RANDOM() LIMIT {sample_size}"
-        else:
-            # SQL Server TABLESAMPLE requires percentage or ROWS
-            # We use ROWS for more predictable sample size
-            return f"SELECT TOP ({sample_size}) {column_sql} FROM {table_name} TABLESAMPLE ({sample_size} ROWS)"
+        """Delegate TABLESAMPLE sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.TABLESAMPLE, table_name, column_sql, sample_size
+        )
 
     def _build_modulo_query(self, table_name: str, column_sql: str, sample_size: int) -> str:
-        """Build modulo-based deterministic sampling query.
-
-        Uses ROW_NUMBER to assign sequential numbers, then selects rows
-        where row_number % interval = 0 to get evenly spaced samples.
-        This is deterministic and repeatable for the same data.
-
-        Args:
-            table_name: Fully qualified table name
-            column_sql: Column selection SQL
-            sample_size: Number of rows
-
-        Returns:
-            SQL query string
-        """
-        dialect_name = self.engine.dialect.name
-
-        if dialect_name == "sqlite":
-            # SQLite: use ROWID for deterministic evenly-spaced sampling
-            return f"""
-            SELECT {column_sql} FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY ROWID) AS _rn,
-                       COUNT(*) OVER () AS _total
-                FROM {table_name}
-            ) _sampled
-            WHERE _rn % MAX((_total / {sample_size}), 1) = 0
-            LIMIT {sample_size}
-            """
-        else:
-            # SQL Server: use ROW_NUMBER with modulo for evenly-spaced sampling
-            return f"""
-            SELECT TOP ({sample_size}) {column_sql} FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS _rn,
-                       COUNT(*) OVER () AS _total
-                FROM {table_name}
-            ) _sampled
-            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
-            """
+        """Delegate MODULO sample-query SQL to the active dialect."""
+        return self._sampling_dialect().build_sample_query(
+            SamplingMethod.MODULO, table_name, column_sql, sample_size
+        )
 
     def _sanitize_identifier(self, identifier: str) -> str:
         """Sanitize SQL identifier to prevent injection.
@@ -247,14 +214,11 @@ class QueryService:
         if not re.match(r'^[a-zA-Z0-9_\s]+$', identifier):
             raise ValueError(f"Invalid identifier: {identifier}")
 
-        dialect_name = self.engine.dialect.name
-
-        if dialect_name == "sqlite":
-            # SQLite doesn't require brackets, use as-is
+        if self._dialect is None:
+            # SQLite/test mode doesn't require quoting
             return identifier
         else:
-            # SQL Server uses brackets
-            return f"[{identifier}]"
+            return self._dialect.quote_identifier(identifier)
 
     def _validate_identifier(self, identifier: str, valid_names: list[str], context: str) -> str:
         """Validate an identifier against a list of known valid names.
@@ -278,10 +242,9 @@ class QueryService:
         if actual_name is None:
             raise ValueError(f"Column '{identifier}' does not exist in {context}")
 
-        dialect_name = self.engine.dialect.name
-        if dialect_name == "sqlite":
+        if self._dialect is None:
             return actual_name
-        return f"[{actual_name}]"
+        return self._dialect.quote_identifier(actual_name)
 
     def _get_validated_columns(
         self, columns: list[str], table_name: str, schema_name: str
@@ -354,7 +317,8 @@ class QueryService:
             return QueryType.OTHER
 
         try:
-            statements = sqlglot.parse(query_text, dialect="tsql")
+            sqlglot_dialect = self._dialect.sqlglot_dialect if self._dialect else "tsql"
+            statements = sqlglot.parse(query_text, dialect=sqlglot_dialect)
         except sqlglot.errors.ParseError:
             return QueryType.OTHER
 
@@ -423,10 +387,8 @@ class QueryService:
         if not is_direct_select and not is_cte_select:
             return query_text
 
-        dialect_name = self.engine.dialect.name
-
-        # SQLite: Add LIMIT clause if not present
-        if dialect_name == "sqlite":
+        # SQLite/test mode: Add LIMIT clause if not present
+        if self._dialect is None:
             if " LIMIT " not in query_text.upper():
                 return f"{query_text} LIMIT {row_limit}"
             return query_text
@@ -529,7 +491,20 @@ class QueryService:
             raise ValueError("row_limit must be between 1 and 10000")
 
         query_id = str(uuid.uuid4())
-        validation = validate_query(query_text, allow_write=allow_write)
+        dialect_str = self._dialect.sqlglot_dialect if self._dialect else "tsql"
+        safe_procs = (
+            self._dialect.safe_procedures if self._dialect else frozenset()
+        ) | get_config().allowed_stored_procedures
+        safe_ops = (
+            self._dialect.safe_operational_commands if self._dialect else frozenset()
+        )
+        validation = validate_query(
+            query_text,
+            dialect=dialect_str,
+            safe_procedures=safe_procs,
+            safe_operational_commands=safe_ops,
+            allow_write=allow_write,
+        )
         query_type = self.parse_query_type(query_text)
 
         if not validation.is_safe:
@@ -627,6 +602,14 @@ class QueryService:
                 result = conn.execute(text(executed_query))
 
                 if query_type == QueryType.SELECT:
+                    return self._process_select_results(result, conn, original_query, row_limit)
+
+                # Databricks SHOW/DESCRIBE/EXPLAIN are result-producing reads —
+                # they return rows but are not SELECT queries.  Materialise them
+                # through _process_select_results and skip the commit (read-only).
+                query_verb = executed_query.strip().upper().split()[0] if executed_query.strip() else ""
+                safe_ops = self._dialect.safe_operational_commands if self._dialect is not None else frozenset()
+                if query_verb in safe_ops:
                     return self._process_select_results(result, conn, original_query, row_limit)
 
                 rows_affected = result.rowcount if result.rowcount >= 0 else 0

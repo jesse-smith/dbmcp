@@ -7,14 +7,23 @@ Discovers potential FK relationships for a source column by:
 4. Optional value overlap via SQL INTERSECT
 5. Applying result limit
 
-Returns FKCandidateResult with raw metadata only — no scoring or interpretation.
+Returns FKCandidateResult with raw metadata only -- no scoring or interpretation.
 """
+
+import fnmatch
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from src.analysis._sql import transpile_query
 from src.analysis.pk_discovery import PKDiscovery
 from src.models.analysis import FKCandidateData, FKCandidateResult
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Inspector
+
+    from src.db.dialects.protocol import DialectStrategy
 
 
 class FKCandidateSearch:
@@ -26,6 +35,7 @@ class FKCandidateSearch:
     - Structural metadata collection per candidate
     - Optional value overlap via SQL INTERSECT
     - Result limiting with was_limited flag
+    - Dialect-aware: Inspector for generic/Databricks, INFORMATION_SCHEMA for MSSQL
     """
 
     def __init__(
@@ -35,12 +45,24 @@ class FKCandidateSearch:
         source_table: str,
         source_column: str,
         source_data_type: str,
+        dialect: "DialectStrategy | None" = None,
+        inspector: "Inspector | None" = None,
     ):
         self.connection = connection
         self.source_schema = source_schema
         self.source_table = source_table
         self.source_column = source_column
         self.source_data_type = source_data_type
+        self._dialect = dialect
+        self._inspector = inspector
+
+    def _use_inspector(self) -> bool:
+        """Whether to use Inspector-based paths instead of MSSQL SQL."""
+        return (
+            self._inspector is not None
+            and self._dialect is not None
+            and self._dialect.name != "mssql"
+        )
 
     def get_target_tables(
         self,
@@ -49,6 +71,8 @@ class FKCandidateSearch:
         target_table_pattern: str | None = None,
     ) -> list[tuple[str, str]]:
         """Resolve which target tables to search.
+
+        Uses Inspector for non-MSSQL dialects, INFORMATION_SCHEMA for MSSQL/None.
 
         Args:
             target_schema: Filter to this schema. Defaults to source schema.
@@ -60,8 +84,22 @@ class FKCandidateSearch:
         """
         schema = target_schema or self.source_schema
 
+        if self._use_inspector():
+            return self._get_target_tables_inspector(
+                schema, target_tables, target_table_pattern
+            )
+        return self._get_target_tables_mssql(
+            schema, target_tables, target_table_pattern
+        )
+
+    def _get_target_tables_mssql(
+        self,
+        schema: str,
+        target_tables: list[str] | None,
+        target_table_pattern: str | None,
+    ) -> list[tuple[str, str]]:
+        """Use INFORMATION_SCHEMA for table listing (MSSQL/default)."""
         if target_tables is not None:
-            # Filter by explicit list
             query = text("""
                 SELECT TABLE_SCHEMA, TABLE_NAME
                 FROM INFORMATION_SCHEMA.TABLES
@@ -75,7 +113,6 @@ class FKCandidateSearch:
                 "table_list": ",".join(target_tables),
             }
         elif target_table_pattern is not None:
-            # Filter by LIKE pattern
             query = text("""
                 SELECT TABLE_SCHEMA, TABLE_NAME
                 FROM INFORMATION_SCHEMA.TABLES
@@ -89,7 +126,6 @@ class FKCandidateSearch:
                 "table_pattern": target_table_pattern,
             }
         else:
-            # All tables in schema
             query = text("""
                 SELECT TABLE_SCHEMA, TABLE_NAME
                 FROM INFORMATION_SCHEMA.TABLES
@@ -101,6 +137,37 @@ class FKCandidateSearch:
 
         result = self.connection.execute(query, params)
         tables = [(row[0], row[1]) for row in result.fetchall()]
+
+        # Exclude source table
+        tables = [
+            (s, t) for s, t in tables
+            if not (s == self.source_schema and t == self.source_table)
+        ]
+
+        return tables
+
+    def _get_target_tables_inspector(
+        self,
+        schema: str,
+        target_tables: list[str] | None,
+        target_table_pattern: str | None,
+    ) -> list[tuple[str, str]]:
+        """Use Inspector for table listing (generic/Databricks)."""
+        all_table_names = self._inspector.get_table_names(schema=schema)
+
+        if target_tables is not None:
+            target_set = set(target_tables)
+            table_names = [t for t in all_table_names if t in target_set]
+        elif target_table_pattern is not None:
+            # Convert SQL LIKE pattern to fnmatch glob pattern
+            glob_pattern = target_table_pattern.replace("%", "*").replace("_", "?")
+            table_names = [
+                t for t in all_table_names if fnmatch.fnmatch(t, glob_pattern)
+            ]
+        else:
+            table_names = all_table_names
+
+        tables = [(schema, t) for t in sorted(table_names)]
 
         # Exclude source table
         tables = [
@@ -131,6 +198,8 @@ class FKCandidateSearch:
                 connection=self.connection,
                 schema_name=target_schema,
                 table_name=target_table,
+                dialect=self._dialect,
+                inspector=self._inspector,
             )
             pk_candidates = discovery.find_candidates()
             return [
@@ -142,7 +211,20 @@ class FKCandidateSearch:
                 for c in pk_candidates
             ]
 
-        # All columns
+        # All columns: use Inspector for non-MSSQL, INFORMATION_SCHEMA for MSSQL
+        if self._use_inspector():
+            columns = self._inspector.get_columns(
+                target_table, schema=target_schema
+            )
+            return [
+                {
+                    "column_name": c["name"],
+                    "data_type": str(c["type"]),
+                    "is_nullable": c.get("nullable", True),
+                }
+                for c in columns
+            ]
+
         query = text("""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -184,7 +266,46 @@ class FKCandidateSearch:
             Dict with target_is_primary_key, target_is_unique,
             target_is_nullable, target_has_index.
         """
-        # Check constraints (PK and UNIQUE)
+        # Constraints: use Inspector for non-MSSQL, INFORMATION_SCHEMA for MSSQL
+        if self._use_inspector():
+            is_primary_key, is_unique = self._get_constraints_inspector(
+                target_schema, target_table, target_column
+            )
+        else:
+            is_primary_key, is_unique = self._get_constraints_mssql(
+                target_schema, target_table, target_column
+            )
+
+        # Index check: gated by supports_indexes (D-13)
+        has_index: bool | None = None
+        if self._dialect is None or self._dialect.supports_indexes:
+            if self._use_inspector():
+                # Generic: Inspector.get_indexes()
+                indexes = self._inspector.get_indexes(
+                    target_table, schema=target_schema
+                )
+                has_index = any(
+                    target_column in idx.get("column_names", [])
+                    for idx in indexes
+                )
+            else:
+                # MSSQL: sys.indexes DMV (existing query)
+                has_index = self._check_index_mssql(
+                    target_schema, target_table, target_column
+                )
+        # When supports_indexes=False (Databricks), has_index stays None
+
+        return {
+            "target_is_primary_key": is_primary_key,
+            "target_is_unique": is_unique,
+            "target_is_nullable": target_is_nullable,
+            "target_has_index": has_index,
+        }
+
+    def _get_constraints_mssql(
+        self, schema: str, table: str, column: str
+    ) -> tuple[bool, bool]:
+        """Use INFORMATION_SCHEMA for constraint checks (MSSQL/default)."""
         constraint_query = text("""
             SELECT tc.CONSTRAINT_TYPE
             FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
@@ -199,9 +320,9 @@ class FKCandidateSearch:
         constraint_result = self.connection.execute(
             constraint_query,
             {
-                "schema_name": target_schema,
-                "table_name": target_table,
-                "column_name": target_column,
+                "schema_name": schema,
+                "table_name": table,
+                "column_name": column,
             },
         )
         constraint_rows = constraint_result.fetchall()
@@ -210,8 +331,28 @@ class FKCandidateSearch:
         is_unique = any(
             r[0] in ("PRIMARY KEY", "UNIQUE") for r in constraint_rows
         )
+        return is_primary_key, is_unique
 
-        # Check indexes
+    def _get_constraints_inspector(
+        self, schema: str, table: str, column: str
+    ) -> tuple[bool, bool]:
+        """Use Inspector for constraint checks (generic/Databricks)."""
+        pk_info = self._inspector.get_pk_constraint(table, schema=schema)
+        is_primary_key = column in (pk_info.get("constrained_columns") or [])
+
+        unique_constraints = self._inspector.get_unique_constraints(
+            table, schema=schema
+        )
+        is_unique = is_primary_key or any(
+            column in uc.get("column_names", [])
+            for uc in unique_constraints
+        )
+        return is_primary_key, is_unique
+
+    def _check_index_mssql(
+        self, schema: str, table: str, column: str
+    ) -> bool:
+        """Use sys.indexes DMV for index check (MSSQL)."""
         index_query = text("""
             SELECT i.name
             FROM sys.indexes i
@@ -228,19 +369,12 @@ class FKCandidateSearch:
         index_result = self.connection.execute(
             index_query,
             {
-                "schema_name": target_schema,
-                "table_name": target_table,
-                "column_name": target_column,
+                "schema_name": schema,
+                "table_name": table,
+                "column_name": column,
             },
         )
-        has_index = len(index_result.fetchall()) > 0
-
-        return {
-            "target_is_primary_key": is_primary_key,
-            "target_is_unique": is_unique,
-            "target_is_nullable": target_is_nullable,
-            "target_has_index": has_index,
-        }
+        return len(index_result.fetchall()) > 0
 
     def compute_overlap(
         self,
@@ -250,7 +384,7 @@ class FKCandidateSearch:
     ) -> dict:
         """Compute value overlap between source and target columns.
 
-        Uses SQL INTERSECT for exact count.
+        Uses SQL INTERSECT for exact count. SQL is transpiled for non-MSSQL.
 
         Args:
             target_schema: Target schema name.
@@ -265,19 +399,21 @@ class FKCandidateSearch:
         target_table_q = f"[{target_schema}].[{target_table}]"
 
         # Get source distinct count
-        src_count_query = text(f"""
+        src_count_sql = f"""
             SELECT COUNT(DISTINCT [{self.source_column}])
             FROM {source_table}
             WHERE [{self.source_column}] IS NOT NULL
-        """)
+        """
+        src_count_query = text(transpile_query(src_count_sql, self._dialect))
         src_result = self.connection.execute(src_count_query)
-        src_distinct = src_result.fetchall()[0][0]
+        src_row = src_result.fetchone()
+        src_distinct = src_row[0] if src_row else 0
 
         if src_distinct == 0:
             return {"overlap_count": None, "overlap_percentage": None}
 
         # Count intersection via INTERSECT
-        overlap_query = text(f"""
+        overlap_sql = f"""
             SELECT COUNT(*) FROM (
                 SELECT [{self.source_column}] FROM {source_table}
                     WHERE [{self.source_column}] IS NOT NULL
@@ -285,9 +421,11 @@ class FKCandidateSearch:
                 SELECT [{target_column}] FROM {target_table_q}
                     WHERE [{target_column}] IS NOT NULL
             ) AS overlap
-        """)
+        """
+        overlap_query = text(transpile_query(overlap_sql, self._dialect))
         overlap_result = self.connection.execute(overlap_query)
-        overlap_count = overlap_result.fetchall()[0][0]
+        overlap_row = overlap_result.fetchone()
+        overlap_count = overlap_row[0] if overlap_row else 0
 
         overlap_percentage = (overlap_count / src_distinct) * 100.0
 

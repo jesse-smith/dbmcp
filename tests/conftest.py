@@ -6,11 +6,17 @@ This module provides fixtures for:
 - Sample data for unit tests
 """
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.inspection import inspect as sa_inspect
 
 from src.db.connection import ConnectionManager
+from src.db.dialects import get_dialect
+from src.db.dialects.protocol import DialectStrategy
 from src.models.schema import (
     AuthenticationMethod,
     Column,
@@ -20,6 +26,69 @@ from src.models.schema import (
     Table,
     TableType,
 )
+from tests.fixtures.sqlite_schema import load_sqlite_schema
+
+# =============================================================================
+# Dialect Fixtures (Phase 13)
+# =============================================================================
+
+ALL_DIALECTS = ("mssql", "databricks", "generic")
+
+
+@dataclass
+class DialectTestContext:
+    """Bundle of dialect strategy and execution surface for parametrized tests."""
+
+    name: str
+    dialect: DialectStrategy
+    engine: object        # MagicMock(spec=Engine) by default; real Engine in dialect_inspector
+    connection: object    # MagicMock; wired to engine.connect().__enter__() for MagicMock path
+    inspector: object     # MagicMock by default; real SQLAlchemy Inspector in dialect_inspector (generic)
+
+
+@pytest.fixture(params=ALL_DIALECTS, ids=ALL_DIALECTS)
+def dialect(request) -> DialectTestContext:
+    """Parametrized dialect fixture yielding a real DialectStrategy + MagicMock
+    execution surface. Node IDs: test_X[mssql] / test_X[databricks] / test_X[generic].
+
+    Opt-out via @pytest.mark.dialects('mssql', ...): non-listed dialects skip."""
+    name = request.param
+    marker = request.node.get_closest_marker("dialects")
+    if marker and name not in marker.args:
+        pytest.skip(f"dialect={name} excluded by @pytest.mark.dialects{marker.args}")
+
+    dialect_obj = get_dialect(name)()  # real strategy instance
+    engine = MagicMock(spec=Engine)
+    connection = MagicMock()
+    inspector = MagicMock()
+    engine.connect.return_value.__enter__.return_value = connection
+    engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+    return DialectTestContext(
+        name=name, dialect=dialect_obj, engine=engine,
+        connection=connection, inspector=inspector,
+    )
+
+
+@pytest.fixture
+def dialect_inspector(dialect):
+    """Augments `dialect` with a real SQLAlchemy Inspector + in-memory SQLite
+    for the generic dialect only. mssql/databricks keep the MagicMock inspector
+    (SQLite cannot impersonate sys.indexes or DESCRIBE EXTENDED)."""
+    if dialect.name != "generic":
+        yield dialect
+        return
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    load_sqlite_schema(engine)
+    connection = engine.connect()
+    try:
+        inspector = sa_inspect(engine)
+        yield DialectTestContext(
+            name=dialect.name, dialect=dialect.dialect,
+            engine=engine, connection=connection, inspector=inspector,
+        )
+    finally:
+        connection.close()
+        engine.dispose()
 
 # =============================================================================
 # Mock Connection Fixtures
@@ -31,7 +100,7 @@ def mock_engine():
     """Create a mock SQLAlchemy engine."""
     engine = MagicMock()
     engine.connect.return_value.__enter__ = MagicMock()
-    engine.connect.return_value.__exit__ = MagicMock()
+    engine.connect.return_value.__exit__ = MagicMock(return_value=False)
     return engine
 
 
@@ -313,13 +382,6 @@ def mock_inspector(sample_columns, sample_indexes):
 # =============================================================================
 # Integration Test Markers
 # =============================================================================
-
-
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests requiring database"
-    )
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow running"
-    )
+# Markers (integration, slow, performance, dialects) are registered in
+# pyproject.toml under [tool.pytest.ini_options].markers — that registration
+# is authoritative. No pytest_configure hook needed here.

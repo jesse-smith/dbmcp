@@ -98,8 +98,11 @@ def _connect_database_success_mocks():
     conn = _mock_connection()
     schemas = [_mock_schema()]
 
+    mock_dialect = MagicMock()
+
     with (
-        patch.object(get_connection_manager(), "connect", return_value=conn),
+        patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=mock_dialect),
+        patch.object(get_connection_manager(), "connect_with_url", return_value=conn),
         patch.object(get_connection_manager(), "get_engine") as mock_engine,
     ):
         mock_metadata_svc = MagicMock()
@@ -120,10 +123,13 @@ def _connect_database_error_mocks():
     """Mocks for connect_database error path."""
     from src.db.connection import ConnectionError
 
-    with patch.object(
-        get_connection_manager(),
-        "connect",
-        side_effect=ConnectionError("Test connection error"),
+    with (
+        patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "connect_with_url",
+            side_effect=ConnectionError("Test connection error"),
+        ),
     ):
         yield
 
@@ -137,6 +143,7 @@ def _list_schemas_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -162,6 +169,7 @@ def _list_tables_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -221,6 +229,7 @@ def _get_table_schema_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -234,6 +243,7 @@ def _get_table_schema_error_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -259,6 +269,8 @@ def _get_sample_data_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
+        patch.object(get_connection_manager(), "get_dialect"),
+        patch("src.mcp_server.query_tools.MetadataService"),
         patch("src.mcp_server.query_tools.QueryService", return_value=mock_query_svc),
     ):
         yield
@@ -350,13 +362,15 @@ def _get_column_info_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check
-    mock_result = MagicMock()
-    mock_result.scalar.return_value = 1
-    mock_conn.execute.return_value = mock_result
+    # Mock Inspector for dialect-agnostic table existence check
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["TestTable"]
+    mock_inspector.get_view_names.return_value = []
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.ColumnStatsCollector", return_value=mock_collector),
     ):
         yield
@@ -395,13 +409,15 @@ def _find_pk_candidates_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check
-    mock_result = MagicMock()
-    mock_result.scalar.return_value = 1
-    mock_conn.execute.return_value = mock_result
+    # Mock Inspector for table existence check
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["TestTable"]
+    mock_inspector.get_view_names.return_value = []
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.PKDiscovery", return_value=mock_discovery),
     ):
         yield
@@ -450,29 +466,20 @@ def _find_fk_candidates_success_mocks():
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=None)
 
-    # Mock table existence check (scalar returns 1)
-    mock_table_result = MagicMock()
-    mock_table_result.scalar.return_value = 1
-
-    # Mock column existence check (fetchone returns a row with data_type)
-    mock_col_row = MagicMock()
-    mock_col_row.__getitem__ = MagicMock(return_value="INT")
-    mock_col_result = MagicMock()
-    mock_col_result.fetchone.return_value = mock_col_row
-
-    # Return different results for different queries
-    call_count = {"n": 0}
-
-    def mock_execute(query, params=None):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return mock_table_result  # Table existence check
-        return mock_col_result  # Column existence check
-
-    mock_conn.execute = mock_execute
+    # Mock Inspector for table/column existence checks
+    mock_col_type = MagicMock()
+    mock_col_type.__str__ = MagicMock(return_value="INT")
+    mock_inspector = MagicMock()
+    mock_inspector.get_table_names.return_value = ["orders"]
+    mock_inspector.get_view_names.return_value = []
+    mock_inspector.get_columns.return_value = [
+        {"name": "customer_id", "type": mock_col_type, "nullable": False},
+    ]
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
+        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.FKCandidateSearch", return_value=mock_search),
     ):
         yield
@@ -498,8 +505,8 @@ TOOL_CONFIGS = [
     {
         "name": "connect_database",
         "fn": connect_database,
-        "success_args": {"server": "testserver", "database": "testdb"},
-        "error_args": {"server": "testserver", "database": "testdb"},
+        "success_args": {"sqlalchemy_url": "sqlite:///test.db"},
+        "error_args": {"sqlalchemy_url": "sqlite:///test.db"},
         "success_mocks": _connect_database_success_mocks,
         "error_mocks": _connect_database_error_mocks,
     },

@@ -1,187 +1,174 @@
 # Project Research Summary
 
-**Project:** dbmcp v1.1 Concern Handling
-**Domain:** Internal quality improvements for Python MCP database server (SQLAlchemy + pyodbc + SQL Server)
-**Researched:** 2026-03-06
+**Project:** dbmcp v2.0 Multi-Dialect Support
+**Domain:** Multi-dialect database MCP server (SQL Server + Databricks + generic SQLAlchemy)
+**Researched:** 2026-04-13
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The dbmcp v1.1 milestone is a hardening and internal quality pass on an existing, working MCP server with 9 tools and 506 tests. The codebase has accumulated 25 broad `except Exception` blocks, a dead metrics module, duplicated type-conversion pipelines, no configuration file, and an Azure AD token refresh gap that causes silent failures after 60-90 minutes of idle time. None of these concerns require new dependencies -- the entire milestone is achievable with stdlib additions (`tomllib`, `time`, `uuid`) and better use of existing libraries (`sqlalchemy.exc`, `sqlalchemy.event`, `azure.core.credentials.AccessToken`).
+dbmcp can be extended to support Databricks and arbitrary SQLAlchemy databases with a dialect strategy pattern that keeps per-dialect code small (~150-200 lines each). The key enablers are already in the stack: databricks-sqlalchemy 2.0.9 implements all 6 Inspector methods dbmcp uses, sqlglot 30.4.2 already supports the `databricks` dialect for parsing/validation/transpilation, and the existing MetadataService already has a dual-path pattern (`is_mssql`/generic) that maps cleanly to the strategy interface.
 
-The recommended approach is cleanup-first: remove dead code, narrow exception handling, and fix type ignore smells before adding new capabilities. This ordering is critical because writing tests against code you plan to refactor wastes effort, and narrowing exceptions changes error messages that existing tests assert on. The identifier validation and type handler registry introduce cross-module coupling changes that are easier to reason about once exception flows are clean. The config file and Azure AD token lifecycle changes are infrastructure that benefits from a stable foundation.
+The recommended approach is a three-tier query strategy: Tier 1 (SQLAlchemy Inspector) for universal metadata, Tier 2 (standard SQL via sqlglot transpilation) for analysis queries, and Tier 3 (dialect-specific) for optimized paths like DMV row counts (MSSQL) and DESCRIBE EXTENDED stats (Databricks). The DialectStrategy protocol with MssqlDialect, DatabricksDialect, and GenericDialect implementations keeps dialect knowledge out of the tool layer.
 
-The primary risks are (1) cascading test failures from error message changes when narrowing exceptions (30+ tests assert on error message content), (2) Azure AD token expiry on pooled connections that only manifests in long-running production sessions, and (3) the type handler registry conflicting with the existing dual type-conversion pipeline. All three are well-understood and have clear prevention strategies documented in the pitfalls research. The zero-new-dependencies constraint eliminates supply chain risk entirely.
+The highest-risk areas are: (1) analysis modules containing 15+ SQL Server-only constructs that need rewriting/transpiling, (2) the breaking `connect_database` interface change (mitigatable by supporting both old and new params), and (3) databricks-sqlalchemy Inspector raising non-SQLAlchemy exceptions that current handlers miss. Build order should extract MSSQL behind the protocol first (pure refactor, all tests pass), then add config discrimination, then GenericDialect, then Databricks, then analysis adaptation, then interface simplification.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new dependencies are required. The entire v1.1 milestone uses existing libraries and stdlib modules. See [STACK.md](STACK.md) for full details.
+Two new dependencies for Databricks; zero for generic dialect support. Users bring their own SQLAlchemy driver.
 
-**Core technologies (no changes):**
-- **SQLAlchemy 2.0.47** (`sqlalchemy.exc` for specific exceptions, `sqlalchemy.event` for pool checkout listener) -- already installed
-- **azure-identity 1.25.2** (`AccessToken.expires_on` for token expiry tracking) -- already installed
-- **tomllib** (stdlib since Python 3.11) -- config file parsing with zero new dependencies
+**New dependencies:**
 
-**One dependency change:**
-- **sqlglot**: tighten from `>=26.0.0,<30.0.0` to `>=29.0.0,<30.0.0` -- codebase uses v29+ expression types (`exp.Execute`, `exp.ExecuteSql`)
+- `databricks-sqlalchemy>=2.0.0`: SQLAlchemy dialect implementing all Inspector methods (get_schema_names, get_table_names, get_columns, get_pk_constraint, get_foreign_keys, get_indexes stub). Requires SQLAlchemy >=2.0.21 (safe bump).
+- `databricks-sql-connector>=4.0.0`: Thrift-based DBAPI driver. Heavy transitive deps (pandas mandatory ~40MB). Only affects `databricks` extra users.
+
+**Stack changes:**
+
+- SQLAlchemy floor bump to >=2.0.21 (from >=2.0.0) -- required by databricks-sqlalchemy
+- pyodbc and azure-identity move to `mssql` optional extra
+- Databricks packages go in `databricks` optional extra
+- Core deps become dialect-agnostic (SQLAlchemy + sqlglot + mcp + toon-format)
 
 ### Expected Features
 
-See [FEATURES.md](FEATURES.md) for full analysis with complexity estimates.
-
 **Must have (table stakes):**
-- Specific exception handling (25 broad catches hide real bugs)
-- Dead code removal (metrics.py has zero consumers)
-- Type ignore cleanup (monkey-patched attributes on Query dataclass)
-- MCP session cleanup (connections leak on client disconnect)
-- Test coverage to 70% per module (validates all changes)
+
+- Schema/table/column listing across all dialects (Inspector-based)
+- Query execution with dialect-aware sqlglot validation
+- Sample data retrieval with dialect-appropriate LIMIT/TOP syntax
+- TOML config for Databricks connections (host, http_path, catalog, token)
+- Identifier quoting per dialect (brackets/backticks/double-quotes)
+- Three-level namespace support for Databricks (catalog.schema.table)
+- Backward-compatible MSSQL config (existing TOML works unchanged)
 
 **Should have (differentiators):**
-- Azure AD token refresh in connection pool (prevents silent auth failures after 60-90 min)
-- Type handler registry (eliminates duplicated isinstance chains, handles uuid.UUID and bytes)
-- Configuration file (TOML, enables SP allowlist customization and pool tuning)
-- sqlglot version pinning with edge case test fixtures
 
-**Defer (v2+):**
-- SQL identifier validation against metadata (moderate coupling change, needs QueryService refactor)
-- Pydantic migration (explicitly out of scope per PROJECT.md)
-- Query result caching, audit logging (explicitly out of scope)
+- Databricks column stats from DESCRIBE EXTENDED (precomputed, fast)
+- Databricks table metadata (owner, format, managed/external, creation time)
+- PK/FK discovery with informational-constraint awareness (Databricks PKs are not enforced)
+- Partition-aware metadata for Databricks tables
+- Dialect-agnostic analysis fallbacks (Tier 2 standard SQL when Tier 3 unavailable)
+
+**Defer:**
+
+- Unity Catalog tag metadata (nice enrichment, not core)
+- Cross-catalog queries (scope to one catalog per connection)
+- Auto-triggering ANALYZE TABLE (violates read-only; read existing stats only)
+- Histogram data from ANALYZE TABLE (optimizer artifact, not useful for LLMs)
 
 ### Architecture Approach
 
-The existing architecture is sound: FastMCP entry point, async tool handlers wrapping sync service layer via `asyncio.to_thread`, SQLAlchemy engine pool, TOON serialization. Changes are internal quality improvements that do not alter the component boundaries or request flow. See [ARCHITECTURE.md](ARCHITECTURE.md) for full component map.
+Single DialectStrategy protocol with a registry, three implementations, and a tier fallback chain (Tier 3 -> Tier 2 -> Tier 1). MetadataService delegates to dialect for optimized queries, falls back to Inspector. ConnectionManager stores dialect alongside engine. All dialect-specific code lives in `src/db/dialects/`. MCP tools remain dialect-agnostic.
 
-**New components:**
-1. **Config loader** (`src/config.py`) -- TOML parsing, validation, defaults; loaded lazily in `main()`, not at import time
-2. **Type handler registry** (extend `src/serialization.py` or new `src/type_handlers.py`) -- centralized type-to-serializer mapping replacing dual isinstance chains
+**Major components:**
 
-**Modified components (exception narrowing):**
-3. **metadata.py** -- 10+ broad catches narrowed to `sqlalchemy.exc.OperationalError`, `ProgrammingError`, `NoSuchTableError`
-4. **MCP tool handlers** -- layered catches: specific DB errors first, `Exception` retained as final safety net
-5. **connection.py / azure_auth.py** -- pool checkout event for token expiry, `atexit` handler for cleanup
-
-**Removed components:**
-6. **metrics.py** -- zero imports, zero usage, safe to delete
+1. `src/db/dialect.py` -- DialectStrategy protocol + registry
+2. `src/db/dialects/{mssql,databricks,generic}.py` -- Per-dialect implementations
+3. `src/db/connection.py` (modified) -- Stores (Engine, DialectStrategy) tuples, delegates engine creation
+4. `src/db/metadata.py` (modified) -- Tier 3/Tier 1 fallback via dialect delegation
+5. `src/db/validation.py` (modified) -- Accepts dialect parameter for sqlglot parsing
+6. `src/analysis/` (modified) -- Dialect-aware quoting and SQL generation
 
 ### Critical Pitfalls
 
-See [PITFALLS.md](PITFALLS.md) for all 12 pitfalls with detailed prevention strategies.
-
-1. **Error message assertion drift** -- Narrowing exceptions changes `type(e).__name__` in error messages; 30+ tests assert on these strings. Mitigation: audit test assertions first, change one module at a time, keep tool-layer catch-all.
-2. **Azure AD token expiry on pooled connections** -- `pool_pre_ping` may not detect expired tokens (error code not recognized as disconnect). Mitigation: set `pool_recycle=1800` (under 60-min token lifetime), add `checkout` event listener, cache `AccessToken.expires_on`.
-3. **Type handler registry triple-conversion** -- Adding a registry alongside existing `_truncate_value` and `_pre_serialize` creates three conversion layers. Mitigation: make registry additive for new types first; map existing type flow end-to-end before unifying.
-4. **Config file startup failure** -- Malformed config at import time crashes the server silently. Mitigation: config is optional, load lazily in `main()`, never fail on missing file.
-5. **SP allowlist security bypass** -- User-editable config could add `xp_cmdshell` to allowlist. Mitigation: hardcoded system SPs are non-overridable base; maintain explicit denylist of dangerous procedures.
+1. **Inspector returns different shapes per dialect** -- databricks-sqlalchemy may raise TypeError/NotImplementedError (not SQLAlchemyError). Add capability flags to DialectStrategy; widen exception handling.
+2. **Three-level namespace (catalog.schema.table)** -- Entire codebase assumes two-level. Scope to one catalog per connection in v2.0; add catalog to data model for future.
+3. **15+ SQL Server-only constructs in analysis modules** -- Bracket quoting, `sys.*` DMVs, `DATEDIFF`, `LEN`, `STRING_SPLIT`, `TOP N`. Use sqlglot transpilation for Tier 2; dialect-specific Tier 3 for the rest.
+4. **Hardcoded `dialect="tsql"` in validation** -- Blocks all non-MSSQL query execution. Must parameterize early.
+5. **Breaking connect_database interface** -- Support both old and new params; old SQL Server params internally construct MSSQL URL. Deprecate old params, don't remove.
 
 ## Implications for Roadmap
 
-Based on combined research, the work groups into four phases with clear dependency ordering.
+### Phase 1: Dialect Protocol + MSSQL Extraction
 
-### Phase 1: Cleanup and Safety Net
+**Rationale:** Establish the abstraction without changing behavior. All 607+ tests pass unchanged.
+**Delivers:** DialectStrategy protocol, MssqlDialect, dialect registry, ConnectionManager/MetadataService refactored to accept dialect
+**Addresses:** Foundation for everything; identifier quoting abstraction
+**Avoids:** Pitfall 1 (Inspector shapes), Pitfall 9 (quoting)
 
-**Rationale:** Refactoring must happen before test writing. Dead code and broad exceptions create noise that obscures real issues. This phase has zero new features -- it makes the existing codebase honest about its error handling.
+### Phase 2: Config Discrimination + Validation Dialect
 
-**Delivers:** Clean exception hierarchy, no dead code, proper QueryResult type, session cleanup via atexit.
+**Rationale:** Users need to configure connections before anything works. Validation blocks query execution.
+**Delivers:** Discriminated TOML config (dialect field), typed config models, validation accepts dialect param
+**Addresses:** Config table stakes, query execution unblocking
+**Avoids:** Pitfall 4 (validation mismatch), Pitfall 10 (SQL Server-shaped config)
 
-**Addresses features:** Dead code removal, exception specificity, type ignore cleanup, MCP session cleanup.
+### Phase 3: GenericDialect + Tool Interface
 
-**Avoids pitfalls:** Error message assertion drift (Pitfall 2) by auditing test assertions first and changing one module at a time. Metrics removal safety (Pitfall 1) by searching all file types. Session cleanup scope (Pitfall 10) by using atexit, not session events.
+**Rationale:** Proves the abstraction with zero new dependencies. SQLite test coverage validates the generic path.
+**Delivers:** GenericDialect implementation, sqlalchemy_url support in connect_database, optional dependency groups
+**Addresses:** Generic dialect table stakes, package restructuring
+**Avoids:** Pitfall 5 (breaking interface -- additive change), Pitfall 12 (import crashes -- lazy imports)
 
-**Estimated scope:** ~200-250 lines changed across 8 files; ~15-25 test assertion updates.
+### Phase 4: DatabricksDialect
 
-### Phase 2: Validation and Testing
+**Rationale:** Priority second dialect. Built on stable foundation from phases 1-3.
+**Delivers:** DatabricksDialect with engine construction, token auth, catalog awareness, Tier 3 optimizations
+**Addresses:** Databricks connection, metadata, query execution
+**Avoids:** Pitfall 2 (namespace), Pitfall 6 (non-SQLAlchemy exceptions), Pitfall 7 (connection lifecycle)
 
-**Rationale:** Tests should cover the final code shape, not pre-refactored code. This phase proves Phase 1 changes are correct and adds regression protection. sqlglot pinning and edge case fixtures belong here because they are test-focused.
+### Phase 5: Analysis Module Adaptation
 
-**Delivers:** 70%+ coverage per module, sqlglot pinned to v29 with edge case fixtures, validated error recovery paths.
-
-**Addresses features:** Test coverage to 70%, sqlglot version pinning + fixtures.
-
-**Avoids pitfalls:** Hollow test coverage (Pitfall 9) by focusing on behavioral coverage of error/exception paths. Version-locked fixtures (Pitfall 8) by testing at SQL level, not AST level.
-
-**Estimated scope:** ~400-600 lines of new tests; pyproject.toml version pin change.
-
-### Phase 3: Infrastructure Additions
-
-**Rationale:** New capabilities layered on a clean, well-tested foundation. Config file enables future customization. Type handler registry eliminates duplication. Azure AD token refresh prevents production failures. These are independent of each other but all benefit from clean exception handling.
-
-**Delivers:** TOML config file support, type handler registry, Azure AD token proactive refresh.
-
-**Addresses features:** Configuration file, type handler registry, Azure AD token refresh.
-
-**Avoids pitfalls:** Config startup failure (Pitfall 6) with lazy loading and optional config. SP allowlist bypass (Pitfall 7) with non-overridable base + denylist. Triple-conversion conflict (Pitfall 5) by making registry additive. Token expiry (Pitfall 3) with pool_recycle + checkout event.
-
-**Estimated scope:** ~250-350 lines across 5 files; 2 new modules (config.py, type_handlers.py or extension of serialization.py).
-
-### Phase 4 (Stretch): Identifier Validation
-
-**Rationale:** Deferred because it requires threading MetadataService into QueryService, which is a coupling change that benefits from stable foundations. Lower urgency -- the existing bracket-quoting prevents injection; this adds correctness.
-
-**Delivers:** Metadata-validated identifiers in get_sample_data, support for special-character column names.
-
-**Addresses features:** SQL identifier validation against metadata.
-
-**Avoids pitfalls:** Over-restrictive validation (Pitfall 4) by validating against DB metadata, not regex patterns.
-
-**Estimated scope:** ~50-80 lines in query.py + metadata.py; test fixtures with adversarial column names.
+**Rationale:** Highest MSSQL-specific SQL density. Deferred until dialect infrastructure is stable.
+**Delivers:** Dialect-aware column stats, PK discovery, FK candidates across all dialects
+**Addresses:** Databricks-optimized stats/reflections differentiator
+**Avoids:** Pitfall 3 (hardcoded syntax), Pitfall 11 (empty results), Pitfall 13 (transpilation gaps)
 
 ### Phase Ordering Rationale
 
-- **Phase 1 before Phase 2:** Refactoring before testing prevents test-rewrite churn. Exception narrowing changes error messages that tests assert on -- doing both simultaneously doubles the debugging effort.
-- **Phase 2 before Phase 3:** Tests provide a safety net for the infrastructure additions. Config loading, type registry, and pool event changes are all testable changes that should have coverage.
-- **Phase 3 items are independent:** Config file, type registry, and Azure AD refresh can be developed in any order within the phase. They share no code dependencies.
-- **Phase 4 is optional for v1.1:** Identifier validation is the only feature requiring cross-service coupling changes. It can slip to v1.2 without impacting the milestone goals.
+- Extract-then-extend: MSSQL extraction first preserves test safety net
+- Config before code: TOML discrimination enables new dialects without code changes
+- Generic before Databricks: Proves abstraction with zero external deps
+- Analysis last: Depends on all other layers being stable; highest-effort change
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 3 (Azure AD token refresh):** The interaction between `pool_pre_ping`, `checkout` events, and Azure AD error codes needs integration testing against a real Azure AD connection. Unit tests with mocked tokens can validate the logic, but the error code recognition gap (Pitfall 3) can only be confirmed with a live Azure environment.
-- **Phase 4 (Identifier validation):** The MetadataService integration into QueryService needs design decisions about caching (should metadata be fetched per-query or cached per-session?).
 
-Phases with standard patterns (skip deeper research):
-- **Phase 1 (Cleanup):** Exception narrowing is mechanical -- the specific exception types are documented in STACK.md with verified imports. Dead code removal is trivially safe.
-- **Phase 2 (Testing):** Standard pytest patterns. The test suite structure is well-established.
-- **Phase 3 (Config file and type registry):** TOML loading via tomllib is stdlib and well-documented. Type registry is a standard Python pattern.
+- **Phase 4 (Databricks):** OAuth M2M auth via connect_args needs integration testing; Inspector behavior with MAP/STRUCT/ARRAY columns unknown
+- **Phase 5 (Analysis):** sqlglot transpilation coverage for specific analysis query patterns needs empirical validation
+
+Phases with standard patterns (skip research-phase):
+
+- **Phase 1 (Protocol):** Well-understood Protocol pattern; direct code extraction
+- **Phase 2 (Config):** Standard discriminated union; backward-compatible defaults
+- **Phase 3 (Generic):** Inspector-only path; minimal new code
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All findings verified against installed versions; zero new dependencies |
-| Features | HIGH | Based on direct codebase analysis of all src/ modules and PROJECT.md constraints |
-| Architecture | HIGH | Component map verified by reading every source file; request flow traced end-to-end |
-| Pitfalls | HIGH | All 12 pitfalls grounded in specific code locations with line-level evidence; 506-test suite inspected for assertion patterns |
+| Stack | HIGH | Versions verified on PyPI; sqlglot dialect tested locally |
+| Features | HIGH | Based on direct codebase analysis + official Databricks docs |
+| Architecture | HIGH | Follows existing dual-path pattern; direct codebase inspection |
+| Pitfalls | HIGH (MSSQL), MEDIUM (Databricks) | MSSQL risks from code review; Databricks risks from docs + GitHub issues |
 
 **Overall confidence:** HIGH
 
-All four research outputs are based on direct codebase inspection rather than external documentation or inference. The codebase is small enough (11 source modules, 506 tests) that exhaustive analysis was feasible.
-
 ### Gaps to Address
 
-- **Azure AD token error code behavior:** Whether `pool_pre_ping` detects expired Azure AD tokens depends on how SQL Server reports the error and whether SQLAlchemy's `is_disconnect()` recognizes that error code. This needs live testing against an Azure AD-authenticated SQL Server instance. Workaround: `pool_recycle` as primary defense makes this gap non-blocking.
-- **FastMCP lifecycle hooks:** STACK.md and PITFALLS.md both note that FastMCP does not expose session-level disconnect hooks. The `atexit` approach is confirmed to work for process-lifetime cleanup. If FastMCP adds lifecycle hooks in a future release, the cleanup strategy could be refined.
-- **sqlglot v30 migration path:** Pinning to `>=29.0.0,<30.0.0` is correct for now, but sqlglot does not follow semver. When v30 releases, the dual-path handling (Execute vs Command) may need a third path. The edge case test fixtures in Phase 2 will serve as upgrade canaries.
+- databricks-sqlalchemy Inspector behavior with complex types (MAP, STRUCT, ARRAY, VARIANT) -- test at implementation time
+- OAuth M2M auth via connect_args with Databricks -- mechanism is standard SQLAlchemy but not directly tested
+- sqlglot transpilation for specific analysis query patterns (INTERSECT, STDEV, DATEDIFF equivalents) -- validate empirically in Phase 5
+- Warehouse cold-start latency handling -- configure longer timeouts, document expected behavior
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct codebase analysis of all 11 source modules in `src/`
-- SQLAlchemy 2.0.47 exception hierarchy and pool events (verified via introspection)
-- pyodbc 5.3.0 exception hierarchy (verified via runtime inspection)
-- azure-identity `AccessToken` NamedTuple (verified: `token: str, expires_on: int`)
-- Python 3.13.1 `tomllib` stdlib availability (verified in runtime)
-- sqlglot 29.0.1 expression types (verified: Execute, ExecuteSql, Kill, IfBlock, WhileBlock all present)
-- Test suite: 506 tests, 30+ error message assertions identified
+
+- PyPI: databricks-sqlalchemy 2.0.9, databricks-sql-connector 4.2.5
+- GitHub: databricks-sqlalchemy source (Inspector method implementations)
+- Local: sqlglot 30.4.2 Databricks dialect parsing/transpilation verification
+- Databricks docs: information_schema, DESCRIBE TABLE, ANALYZE TABLE, constraints
+- Direct codebase: all src/ modules inspected for MSSQL-specific patterns
 
 ### Secondary (MEDIUM confidence)
-- Azure AD token lifetime (~60-90 minutes) -- from Microsoft identity platform documentation
-- FastMCP lifecycle capabilities -- verified via introspection; no shutdown hook, use `atexit`
 
-### Tertiary (LOW confidence)
-- `pool_pre_ping` interaction with Azure AD token expiry error codes -- needs live integration testing
+- databricks-sqlalchemy GitHub issues (50+ open -- UUID, INTERVAL, cross-catalog)
+- databricks-sql-connector GitHub issues (pandas dependency, rate limiting)
 
 ---
-*Research completed: 2026-03-06*
+*Research completed: 2026-04-13*
 *Ready for roadmap: yes*

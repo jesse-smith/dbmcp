@@ -585,3 +585,959 @@ class TestErrorPaths:
 
         assert tables == []
         assert pagination["total_count"] == 0
+
+
+# ============================================================================
+# Databricks Catalog Parameter Tests (Phase 11, Plan 02)
+# ============================================================================
+
+
+def _make_databricks_dialect():
+    """Create a mock Databricks dialect for testing."""
+    dialect = MagicMock()
+    type(dialect).name = PropertyMock(return_value="databricks")
+    type(dialect).supports_indexes = PropertyMock(return_value=False)
+    type(dialect).has_fast_row_counts = PropertyMock(return_value=False)
+    dialect.quote_identifier = lambda ident: f"`{ident}`"
+    return dialect
+
+
+def _make_generic_dialect():
+    """Create a mock generic dialect for testing."""
+    dialect = MagicMock()
+    type(dialect).name = PropertyMock(return_value="generic")
+    type(dialect).supports_indexes = PropertyMock(return_value=True)
+    type(dialect).has_fast_row_counts = PropertyMock(return_value=False)
+    return dialect
+
+
+class TestCatalogListSchemas:
+    """Tests for list_schemas with optional catalog parameter."""
+
+    def test_list_schemas_with_catalog_executes_show_schemas(self, test_engine):
+        """Databricks list_schemas with catalog param executes SHOW SCHEMAS IN."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("schema_a",), ("schema_b",)]
+        counts_result = MagicMock()
+        counts_result.fetchall.return_value = []  # no counts available
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            schemas = service.list_schemas(connection_id="test", catalog="analytics")
+
+        # Assert the SHOW SCHEMAS query was issued (first call)
+        first_sql = str(mock_conn.execute.call_args_list[0][0][0])
+        assert "SHOW SCHEMAS IN" in first_sql
+        assert "`analytics`" in first_sql
+        assert len(schemas) == 2  # noqa: PLR2004
+
+    def test_list_schemas_populates_table_and_view_counts(self, test_engine):
+        """Databricks list_schemas joins information_schema.tables for counts."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("playground",), ("empty",)]
+        counts_result = MagicMock()
+        # (schema_name, table_count, view_count)
+        counts_result.fetchall.return_value = [("playground", 5, 2)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            schemas = service.list_schemas(connection_id="t", catalog="bmtct")
+
+        by_name = {s.schema_name: s for s in schemas}
+        assert by_name["playground"].table_count == 5  # noqa: PLR2004
+        assert by_name["playground"].view_count == 2  # noqa: PLR2004
+        assert by_name["empty"].table_count == 0
+        assert by_name["empty"].view_count == 0
+
+        # Counts query must reference information_schema.tables of the catalog
+        counts_sql = str(mock_conn.execute.call_args_list[1][0][0])
+        assert "information_schema" in counts_sql.lower()
+        assert "`bmtct`" in counts_sql
+
+    def test_list_schemas_counts_query_failure_falls_back_to_zero(self, test_engine):
+        """If information_schema query raises, schemas are still returned with 0 counts."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("playground",)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [
+            schemas_result,
+            SQLAlchemyError("no access to information_schema"),
+        ]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            schemas = service.list_schemas(connection_id="t", catalog="bmtct")
+
+        assert len(schemas) == 1
+        assert schemas[0].schema_name == "playground"
+        assert schemas[0].table_count == 0
+        assert schemas[0].view_count == 0
+
+    def test_list_schemas_no_catalog_falls_back_to_show_catalogs(self, test_engine):
+        """If the engine-default catalog is unavailable, list available catalogs."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        catalogs_result = MagicMock()
+        catalogs_result.fetchall.return_value = [("bmtct",), ("other_catalog",)]
+
+        mock_conn = MagicMock()
+        # First: SHOW SCHEMAS IN `main` raises; then SHOW CATALOGS returns list.
+        mock_conn.execute.side_effect = [
+            SQLAlchemyError("NO_SUCH_CATALOG_EXCEPTION"),
+            catalogs_result,
+        ]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "main"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test")
+
+        names = {s.schema_name for s in schemas}
+        assert names == {"bmtct", "other_catalog"}
+
+    def test_list_schemas_without_catalog_uses_engine_default(self, test_engine):
+        """Databricks + no catalog extracts engine URL's catalog and uses SHOW SCHEMAS IN."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas_result = MagicMock()
+        schemas_result.fetchall.return_value = [("default",)]
+        counts_result = MagicMock()
+        counts_result.fetchall.return_value = []
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = [schemas_result, counts_result]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        # Patch engine.url so we have a deterministic configured default.
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "bmtct"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test")
+
+        first_sql = str(mock_conn.execute.call_args_list[0][0][0])
+        assert "SHOW SCHEMAS IN" in first_sql
+        assert "`bmtct`" in first_sql
+        assert len(schemas) == 1
+        assert schemas[0].schema_name == "default"
+
+    def test_list_schemas_catalog_ignored_for_non_databricks(self, test_engine):
+        """catalog parameter ignored for non-Databricks dialects."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        schemas = service.list_schemas(connection_id="test", catalog="anything")
+        assert len(schemas) >= 1
+        assert schemas[0].schema_name == "main"
+
+
+class TestCatalogListTables:
+    """Tests for list_tables with optional catalog parameter."""
+
+    def test_list_tables_with_catalog_executes_show_tables(self, test_engine):
+        """Databricks list_tables with catalog uses SHOW TABLES IN."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("default", "table_a", False),
+            ("default", "table_b", False),
+        ]
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            tables, pagination = service.list_tables(
+                schema_name="default", catalog="analytics"
+            )
+
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "SHOW TABLES IN" in executed_sql
+        assert "`analytics`" in executed_sql
+        assert "`default`" in executed_sql
+
+    def test_list_tables_without_catalog_uses_inspector(self, test_engine):
+        """list_tables without catalog uses existing Inspector path."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        tables, pagination = service.list_tables(schema_name="main")
+        assert len(tables) == 3
+
+    def test_list_tables_catalog_ignored_for_non_databricks(self, test_engine):
+        """catalog parameter ignored for non-Databricks dialects."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        tables, pagination = service.list_tables(
+            schema_name="main", catalog="anything"
+        )
+        assert len(tables) == 3
+
+
+class TestCatalogGetTableSchema:
+    """Tests for get_table_schema with optional catalog parameter."""
+
+    def test_get_table_schema_accepts_catalog_param(self, test_engine):
+        """get_table_schema accepts catalog parameter."""
+        service = MetadataService(test_engine)
+
+        result = service.get_table_schema(
+            table_name="customers",
+            schema_name="main",
+            catalog="analytics",
+        )
+        assert result["table_name"] == "customers"
+
+    def test_get_table_schema_catalog_ignored_for_non_databricks(self, test_engine):
+        """catalog parameter ignored for non-Databricks dialects."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema(
+            table_name="customers",
+            schema_name="main",
+            catalog="anything",
+        )
+        assert result["table_name"] == "customers"
+        assert "owner" not in result
+
+
+class TestCatalogThreeLevelTableId:
+    """Tests for three-level Databricks table_id format (D-11)."""
+
+    def test_databricks_table_id_uses_three_level_format(self, test_engine):
+        """Databricks _collect_objects_from_schema uses catalog.schema.table format."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        tables = service._collect_objects_from_schema(
+            schema=None,
+            table_type=TableType.TABLE,
+            name_pattern=None,
+            min_row_count=None,
+            catalog="analytics",
+        )
+
+        for t in tables:
+            assert t.table_id.count(".") == 2, f"Expected three-level ID, got: {t.table_id}"
+            assert t.table_id.startswith("analytics.")
+
+    def test_non_databricks_table_id_uses_two_level_format(self, test_engine):
+        """Non-Databricks _collect_objects_from_schema uses schema.table format."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        tables = service._collect_objects_from_schema(
+            schema=None,
+            table_type=TableType.TABLE,
+            name_pattern=None,
+            min_row_count=None,
+        )
+
+        for t in tables:
+            assert t.table_id.count(".") == 1, f"Expected two-level ID, got: {t.table_id}"
+
+
+# ============================================================================
+# Index Gating and DESCRIBE EXTENDED Tests (Phase 11, Plan 02 Task 2)
+# ============================================================================
+
+
+class TestIndexGating:
+    """Tests for index gating based on dialect.supports_indexes (D-13).
+
+    NOTE (Phase 13 / Plan 03): `test_indexes_omitted_when_supports_indexes_false`
+    and `test_indexes_present_when_supports_indexes_true` were retired — the
+    same assertion under mssql/databricks/generic is covered by
+    `TestSharedMetadataBehavior.test_get_table_schema_returns_table_schema_object`
+    (index-section presence keyed off dialect.supports_indexes). The two tests
+    kept here cover distinct edge cases (dialect=None backward compat and the
+    include_indexes=False parameter override) that the shared test does not.
+    """
+
+    def test_indexes_present_when_dialect_is_none(self, test_engine):
+        """get_table_schema includes 'indexes' key when dialect is None (backward compat)."""
+        service = MetadataService(test_engine)
+        # SQLite dialect resolves to None via registry (no 'sqlite' dialect registered)
+
+        result = service.get_table_schema("customers", "main")
+        assert "indexes" in result
+
+    def test_indexes_omitted_when_include_indexes_false(self, test_engine):
+        """get_table_schema omits 'indexes' when include_indexes=False regardless of dialect."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main", include_indexes=False)
+        assert "indexes" not in result
+
+
+class TestDescribeExtended:
+    """Tests for _parse_databricks_table_properties DTE parsing."""
+
+    def _make_service_with_mock_engine(self):
+        """Create a MetadataService with mock engine for DTE testing."""
+        mock_engine = MagicMock()
+        dialect = _make_databricks_dialect()
+        service = MetadataService.__new__(MetadataService)
+        service.engine = mock_engine
+        service._inspector = None
+        service.dialect_name = "databricks"
+        service._dialect = dialect
+        return service, mock_engine
+
+    def _mock_dte_rows(self, rows):
+        """Create a mock connection that returns DTE rows."""
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = rows
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        return mock_conn
+
+    def test_extracts_owner(self):
+        """_parse_databricks_table_properties extracts owner from DTE output."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "user@domain.com"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["owner"] == "user@domain.com"
+
+    def test_extracts_storage_format(self):
+        """_parse_databricks_table_properties extracts Provider as storage_format."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Provider", "delta"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["storage_format"] == "delta"
+
+    def test_extracts_table_type_detail(self):
+        """_parse_databricks_table_properties extracts Type as table_type_detail."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Type", "MANAGED"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["table_type_detail"] == "MANAGED"
+
+    def test_extracts_created_time(self):
+        """_parse_databricks_table_properties extracts Created Time."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Created Time", "Wed Jan 15 10:30:00 UTC 2025"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+
+    def test_extracts_location(self):
+        """_parse_databricks_table_properties extracts Location."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("# Detailed Table Information", ""),
+            ("Location", "dbfs:/user/hive/warehouse/my_table"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+
+    def test_extracts_partition_columns(self):
+        """_parse_databricks_table_properties extracts partition_columns list."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+            ("", ""),
+            ("# Partition Information", ""),
+            ("# col_name", "data_type"),
+            ("dt", "date"),
+            ("region", "string"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "user@domain.com"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["partition_columns"] == ["dt", "region"]
+        assert result["owner"] == "user@domain.com"
+
+    def test_returns_empty_dict_when_no_detail_section(self):
+        """_parse_databricks_table_properties returns empty dict when no detail section."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result == {}
+
+    def test_returns_empty_dict_on_sql_error(self):
+        """_parse_databricks_table_properties returns error indicator on SQL failure."""
+        service, engine = self._make_service_with_mock_engine()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.side_effect = SQLAlchemyError("connection lost")
+        engine.connect.return_value = mock_conn
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert "_describe_extended_error" in result
+        assert "SQLAlchemyError: connection lost" in result["_describe_extended_error"]
+
+    def test_omits_partition_columns_when_not_partitioned(self):
+        """_parse_databricks_table_properties omits partition_columns for non-partitioned."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Owner", "admin"),
+            ("Type", "MANAGED"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert "partition_columns" not in result
+        assert result["owner"] == "admin"
+
+    def test_full_dte_output_parsing(self):
+        """Full DESCRIBE TABLE EXTENDED output parsing end-to-end."""
+        service, engine = self._make_service_with_mock_engine()
+        rows = [
+            ("id", "bigint"),
+            ("name", "string"),
+            ("", ""),
+            ("# Partition Information", ""),
+            ("# col_name", "data_type"),
+            ("dt", "date"),
+            ("", ""),
+            ("# Detailed Table Information", ""),
+            ("Database", "my_schema"),
+            ("Table", "my_table"),
+            ("Owner", "user@domain.com"),
+            ("Created Time", "Wed Jan 15 10:30:00 UTC 2025"),
+            ("Type", "MANAGED"),
+            ("Provider", "delta"),
+            ("Location", "dbfs:/user/hive/warehouse/my_table"),
+        ]
+        engine.connect.return_value = self._mock_dte_rows(rows)
+
+        result = service._parse_databricks_table_properties("tbl", "schema", "catalog")
+        assert result["owner"] == "user@domain.com"
+        assert result["storage_format"] == "delta"
+        assert result["table_type_detail"] == "MANAGED"
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+        assert result["partition_columns"] == ["dt"]
+
+
+class TestDatabricksTableProperties:
+    """Tests for DTE properties in get_table_schema response."""
+
+    def test_databricks_get_table_schema_includes_dte_properties(self, test_engine):
+        """Databricks get_table_schema response includes DTE properties."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        # Mock _parse_databricks_table_properties to return test data
+        dte_props = {
+            "owner": "user@domain.com",
+            "storage_format": "delta",
+            "table_type_detail": "MANAGED",
+            "created_time": "Wed Jan 15 10:30:00 UTC 2025",
+            "location": "dbfs:/user/hive/warehouse/my_table",
+            "partition_columns": ["dt"],
+        }
+        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+            result = service.get_table_schema("customers", "main")
+
+        assert result["owner"] == "user@domain.com"
+        assert result["storage_format"] == "delta"
+        assert result["table_type_detail"] == "MANAGED"
+        assert result["created_time"] == "Wed Jan 15 10:30:00 UTC 2025"
+        assert result["location"] == "dbfs:/user/hive/warehouse/my_table"
+        assert result["partition_columns"] == ["dt"]
+
+    def test_non_databricks_get_table_schema_excludes_dte_properties(self, test_engine):
+        """Non-Databricks get_table_schema does NOT include DTE properties."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        result = service.get_table_schema("customers", "main")
+
+        assert "owner" not in result
+        assert "storage_format" not in result
+        assert "table_type_detail" not in result
+
+    def test_databricks_get_table_schema_includes_catalog_in_response(self, test_engine):
+        """Databricks get_table_schema includes catalog in response when provided."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        dte_props = {"owner": "admin"}
+        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+            result = service.get_table_schema("customers", "main", catalog="analytics")
+
+        assert result["catalog"] == "analytics"
+
+    def test_databricks_get_table_schema_no_dte_on_failure(self, test_engine):
+        """Databricks get_table_schema still works when DTE parsing returns empty."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with patch.object(service, "_parse_databricks_table_properties", return_value={}):
+            result = service.get_table_schema("customers", "main")
+
+        assert result["table_name"] == "customers"
+        assert "owner" not in result
+
+
+# ============================================================================
+# Shared dialect-parametrized metadata behavior (Phase 13, Plan 03)
+# ============================================================================
+
+
+def _configure_magicmock_engine_dialect(dialect_ctx):
+    """Give a MagicMock(spec=Engine) the `.dialect.name` attribute MetadataService
+    reads during __init__. No-op for real engines (generic via dialect_inspector).
+
+    Branch on `DialectTestContext.name` rather than sniffing engine type: the
+    fixture contract guarantees `name == "generic"` iff the engine is a real
+    SQLAlchemy Engine.
+    """
+    if dialect_ctx.name == "generic":
+        return  # real Engine — don't touch
+    dialect_ctx.engine.dialect = MagicMock()
+    dialect_ctx.engine.dialect.name = dialect_ctx.name
+
+
+def _build_metadata_service(dialect_ctx):
+    """Build a MetadataService from a DialectTestContext, wiring the mock inspector
+    in place for the non-generic (MagicMock) paths. Generic uses the real engine
+    and the natural lazy inspector."""
+    _configure_magicmock_engine_dialect(dialect_ctx)
+    service = MetadataService(dialect_ctx.engine, dialect=dialect_ctx.dialect)
+    if dialect_ctx.name != "generic":
+        # Pre-populate the lazy inspector cache with the MagicMock inspector.
+        service._inspector = dialect_ctx.inspector
+    return service
+
+
+class TestSharedMetadataBehavior:
+    """Dialect-parametrized shared-behavior tests for MetadataService.
+
+    Uses the `dialect_inspector` fixture so the `generic` path exercises a real
+    SQLAlchemy Inspector against in-memory SQLite, while `mssql`/`databricks`
+    run against MagicMock execution surfaces configured inline.
+
+    Added per Phase 13 / D-08 / D-17 (parallel-add strategy for test_metadata.py).
+    Existing `TestListSchemas`, `TestListTables`, `TestCatalogListSchemas`, etc.
+    are preserved — this class covers only the shared-behavior contract across
+    dialects. Dialect-exclusive behavior (MSSQL DMV SQL shapes, Databricks
+    DESCRIBE EXTENDED, catalog-scoped SHOW TABLES IN) remains in the existing
+    classes above.
+    """
+
+    def test_list_schemas_returns_schema_objects(self, dialect_inspector):
+        """Shared: list_schemas returns Schema objects regardless of dialect."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "mssql":
+            # MSSQL path executes the DMV SQL; stub `conn.execute(...)` rows.
+            mssql_rows = [
+                MagicMock(schema_name="dbo", table_count=3, view_count=1),
+                MagicMock(schema_name="sales", table_count=2, view_count=0),
+            ]
+            mock_result = MagicMock()
+            mock_result.__iter__ = lambda self: iter(mssql_rows)
+            mock_result.fetchall.return_value = mssql_rows
+            dialect_inspector.connection.execute.return_value = mock_result
+            schemas = service.list_schemas(connection_id="c1")
+            names = {s.schema_name for s in schemas}
+            assert names == {"dbo", "sales"}
+            assert all(s.connection_id == "c1" for s in schemas)
+        elif dialect_inspector.name == "databricks":
+            # Databricks without catalog uses the engine's default catalog
+            # (extracted from engine.url.query) and issues SHOW SCHEMAS IN.
+            schemas_result = MagicMock()
+            schemas_result.fetchall.return_value = [("default",)]
+            counts_result = MagicMock()
+            counts_result.fetchall.return_value = []
+            dialect_inspector.connection.execute.side_effect = [
+                schemas_result, counts_result,
+            ]
+            fake_url = MagicMock()
+            fake_url.query = {"catalog": "main"}
+            dialect_inspector.engine.url = fake_url
+            schemas = service.list_schemas(connection_id="c1")
+            assert len(schemas) >= 1
+            assert schemas[0].schema_name == "default"
+            assert schemas[0].connection_id == "c1"
+        else:  # generic — real SQLite
+            schemas = service.list_schemas(connection_id="c1")
+            assert len(schemas) >= 1
+            assert schemas[0].schema_name == "main"
+            assert schemas[0].connection_id == "c1"
+
+    def test_list_tables_returns_table_objects(self, dialect_inspector):
+        """Shared: list_tables returns Table objects for the active dialect."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "mssql":
+            # MSSQL path runs two queries: count + paginated SELECT.
+            count_row = MagicMock()
+            count_row.fetchone.return_value = (2,)
+            data_rows = [
+                MagicMock(
+                    schema_name="dbo", table_name="customers", object_type="U ",
+                    row_count=3, last_modified=None, has_primary_key=1,
+                ),
+                MagicMock(
+                    schema_name="dbo", table_name="orders", object_type="U ",
+                    row_count=2, last_modified=None, has_primary_key=1,
+                ),
+            ]
+            data_result = MagicMock()
+            data_result.__iter__ = lambda self: iter(data_rows)
+            data_result.fetchall.return_value = data_rows
+            dialect_inspector.connection.execute.side_effect = [count_row, data_result]
+            tables, pagination = service.list_tables(schema_name="dbo")
+            names = {t.table_name for t in tables}
+            assert names == {"customers", "orders"}
+            assert pagination["total_count"] == 2
+        elif dialect_inspector.name == "databricks":
+            # Databricks path w/o catalog uses the generic inspector path.
+            dialect_inspector.inspector.get_schema_names.return_value = ["main"]
+            dialect_inspector.inspector.get_table_names.return_value = ["customers", "orders"]
+            dialect_inspector.inspector.get_view_names.return_value = []
+            # Row counts via _get_row_count_generic — patch to avoid real SQL.
+            with patch.object(service, "_get_row_count_generic", return_value=5):
+                tables, pagination = service.list_tables()
+            names = {t.table_name for t in tables}
+            assert names == {"customers", "orders"}
+        else:  # generic — real SQLite
+            tables, pagination = service.list_tables()
+            names = {t.table_name for t in tables}
+            assert "customers" in names
+            assert "orders" in names
+            assert "products" in names
+            assert pagination["total_count"] == 3
+
+    def test_get_table_schema_returns_table_schema_object(self, dialect_inspector):
+        """Shared: get_table_schema returns a dict with columns; index-section
+        presence reflects dialect.supports_indexes (META-04 / D-13)."""
+        service = _build_metadata_service(dialect_inspector)
+
+        if dialect_inspector.name == "generic":
+            result = service.get_table_schema("customers", "main")
+        else:
+            # MagicMock path — configure inspector responses used by get_columns /
+            # get_pk_constraint / get_foreign_keys / get_indexes.
+            insp = dialect_inspector.inspector
+            col_type = MagicMock()
+            col_type.__str__ = lambda self: "INTEGER"
+            insp.get_columns.return_value = [
+                {"name": "id", "type": col_type, "nullable": False,
+                 "autoincrement": True, "default": None},
+            ]
+            insp.get_pk_constraint.return_value = {
+                "name": "pk_customers", "constrained_columns": ["id"],
+            }
+            insp.get_foreign_keys.return_value = []
+            insp.get_indexes.return_value = []
+            # Databricks get_table_schema additionally calls DESCRIBE EXTENDED —
+            # short-circuit it so the shared test stays dialect-agnostic.
+            if dialect_inspector.name == "databricks":
+                with patch.object(service, "_parse_databricks_table_properties",
+                                  return_value={}):
+                    result = service.get_table_schema("customers", "main")
+            else:
+                result = service.get_table_schema("customers", "main")
+
+        # Shared assertions: table metadata shape
+        assert result["table_name"] == "customers"
+        assert result["schema_name"] == "main"
+        assert isinstance(result["columns"], list)
+        assert len(result["columns"]) >= 1
+
+        # Index section presence reflects dialect.supports_indexes (D-13)
+        if dialect_inspector.dialect.supports_indexes:
+            assert "indexes" in result, (
+                f"dialect={dialect_inspector.name} supports_indexes=True but "
+                f"'indexes' key missing from result"
+            )
+        else:
+            assert "indexes" not in result, (
+                f"dialect={dialect_inspector.name} supports_indexes=False but "
+                f"'indexes' key present in result"
+            )
+
+
+# ============================================================================
+# table_exists catalog threading (Test 7 gap #3)
+# ============================================================================
+
+
+class TestTableExistsCatalog:
+    """table_exists must accept an optional catalog param for Databricks."""
+
+    def test_table_exists_databricks_with_catalog_issues_show_tables(self, test_engine):
+        """Databricks table_exists(catalog=X) uses SHOW TABLES IN `X`.`schema`."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("playground", "caboodle_tests", False),
+            ("playground", "other_table", False),
+        ]
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is True
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "SHOW TABLES IN" in executed_sql
+        assert "`bmtct`" in executed_sql
+        assert "`playground`" in executed_sql
+
+    def test_table_exists_databricks_missing_table_returns_false(self, test_engine):
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("playground", "other_table", False),
+        ]
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is False
+
+    def test_table_exists_databricks_sql_error_returns_false(self, test_engine):
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError("boom")
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            result = service.table_exists(
+                "caboodle_tests", schema_name="playground", catalog="bmtct"
+            )
+
+        assert result is False
+
+    def test_table_exists_non_databricks_ignores_catalog(self, test_engine):
+        """Non-Databricks path still uses the inspector and ignores catalog."""
+        service = MetadataService(test_engine)  # no dialect -> inspector path
+
+        with patch.object(
+            type(service), "inspector", new_callable=PropertyMock
+        ) as mock_inspector_prop:
+            mock_insp = MagicMock()
+            mock_insp.get_table_names.return_value = ["foo"]
+            mock_inspector_prop.return_value = mock_insp
+
+            result = service.table_exists("foo", "dbo", catalog="IGNORED")
+
+        assert result is True
+
+
+# ============================================================================
+# Cross-catalog column fetch for Databricks (mwr fix)
+# ============================================================================
+
+
+class TestGetTableSchemaCrossCatalogColumns:
+    """Tests for _get_databricks_columns and cross-catalog get_table_schema.
+
+    When catalog is provided and dialect is Databricks, get_table_schema must
+    use DESCRIBE TABLE (not inspector.get_columns) to fetch columns, because
+    the inspector is bound to the engine's default catalog.
+    """
+
+    def test_cross_catalog_columns_populated_from_describe(self, test_engine):
+        """get_table_schema with catalog returns columns from DESCRIBE TABLE."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [
+            ("id", "int", ""),
+            ("name", "string", ""),
+            ("", "", ""),  # blank separator
+            ("# Detailed Table Information", "", ""),
+            ("Catalog", "bmtct", ""),
+        ]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "playground", catalog="bmtct")
+
+        assert len(result["columns"]) == 2
+        assert result["columns"][0]["column_name"] == "id"
+        assert result["columns"][1]["column_name"] == "name"
+
+    def test_cross_catalog_does_not_call_inspector_get_columns(self, test_engine):
+        """inspector.get_columns is NOT called when catalog is provided + Databricks."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [("id", "int", ""), ("name", "string", "")]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+            patch.object(service, "get_columns") as mock_get_columns,
+        ):
+            service.get_table_schema("t", "playground", catalog="bmtct")
+
+        mock_get_columns.assert_not_called()
+
+    def test_non_databricks_still_calls_inspector_get_columns(self, test_engine):
+        """Non-Databricks path: catalog ignored, inspector.get_columns used."""
+        dialect = _make_generic_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with (
+            patch.object(service, "get_columns", return_value=[]) as mock_get_columns,
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            service.get_table_schema("customers", "main", catalog="ignored")
+
+        mock_get_columns.assert_called_once()
+
+    def test_databricks_no_catalog_falls_through_to_inspector(self, test_engine):
+        """Databricks without explicit catalog uses inspector path (default catalog)."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        with (
+            patch.object(service, "get_columns", return_value=[]) as mock_get_columns,
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            service.get_table_schema("customers", "main")  # no catalog kwarg
+
+        mock_get_columns.assert_called_once()
+
+    def test_describe_rows_stop_at_section_marker(self, test_engine):
+        """Rows after '#' section markers are not parsed as columns."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        describe_rows = [
+            ("id", "int", ""),
+            ("# Partition Information", "", ""),
+            ("dt", "date", ""),  # inside partition section — NOT a column
+        ]
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = describe_rows
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "get_indexes", return_value=[]),
+            patch.object(service, "get_foreign_keys", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "schema", catalog="cat")
+
+        # Only "id" should appear — rows after the "#" section marker are skipped
+        assert len(result["columns"]) == 1
+        assert result["columns"][0]["column_name"] == "id"

@@ -176,8 +176,11 @@ class TestSampleDataMCPTool:
             database="example.db",
             authentication_method=AuthenticationMethod.SQL,
         )
+        from src.db.dialects import GenericDialect
+
         conn_mgr._engines["test_sqlite"] = engine
         conn_mgr._connections["test_sqlite"] = connection
+        conn_mgr._dialects["test_sqlite"] = GenericDialect()
 
         # Call MCP tool
         result_json = await get_sample_data(
@@ -205,3 +208,4 @@ class TestSampleDataMCPTool:
         engine.dispose()
         conn_mgr._engines.pop("test_sqlite", None)
         conn_mgr._connections.pop("test_sqlite", None)
+        conn_mgr._dialects.pop("test_sqlite", None)

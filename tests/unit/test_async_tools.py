@@ -35,11 +35,12 @@ class TestSchemaToolsAsyncWrapping:
                 "status": "success",
                 "connection_id": "abc123",
                 "message": "Connected",
+                "dialect": "generic",
                 "schema_count": 1,
                 "has_cached_docs": False,
             }
 
-            await connect_database(server="localhost", database="testdb")
+            await connect_database(sqlalchemy_url="sqlite:///test.db")
             mock_to_thread.assert_called_once()
 
     async def test_list_schemas_uses_to_thread(self):
@@ -106,6 +107,55 @@ class TestQueryToolsAsyncWrapping:
 
             await get_sample_data(connection_id="test-conn", table_name="test")
             mock_to_thread.assert_called_once()
+
+    async def test_get_sample_data_threads_dialect_into_metadata_and_query_services(self):
+        """WIRING-02 regression: both MetadataService and QueryService receive the
+        connection's registered dialect — prevents silent degradation to tsql on
+        Databricks/generic connections for the get_sample_data path."""
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        from src.mcp_server import query_tools
+
+        fake_dialect = MagicMock(name="registered_dialect")
+        fake_dialect.name = "databricks"
+        fake_engine = MagicMock(name="engine")
+
+        fake_sample = MagicMock()
+        fake_sample.sample_id = "sid"
+        fake_sample.table_id = "tid"
+        fake_sample.sample_size = 5
+        fake_sample.rows = []
+        fake_sample.sampling_method = query_tools.SamplingMethod.TOP
+        fake_sample.truncated_columns = []
+        fake_sample.sampled_at = datetime.now()
+
+        with (
+            patch.object(query_tools, "get_connection_manager") as mock_cm_factory,
+            patch.object(query_tools, "MetadataService") as MockMS,
+            patch.object(query_tools, "QueryService") as MockQS,
+            patch.object(query_tools, "get_config") as mock_cfg,
+        ):
+            mock_cm = MagicMock()
+            mock_cm.get_engine.return_value = fake_engine
+            mock_cm.get_dialect.return_value = fake_dialect
+            mock_cm_factory.return_value = mock_cm
+            mock_cfg.return_value.defaults.sample_size = 5
+            MockQS.return_value.get_sample_data.return_value = fake_sample
+
+            await query_tools.get_sample_data(
+                connection_id="cid-1",
+                table_name="t",
+                schema_name="s",
+                sample_size=5,
+            )
+
+            MockMS.assert_called_once_with(fake_engine, dialect=fake_dialect)
+            MockQS.assert_called_once_with(
+                fake_engine,
+                dialect=fake_dialect,
+                metadata_service=MockMS.return_value,
+            )
 
     async def test_execute_query_uses_to_thread(self):
         """execute_query wraps sync DB work in asyncio.to_thread."""
@@ -230,7 +280,7 @@ _TOOL_PARAMS = [
     pytest.param(
         connect_database,
         "src.mcp_server.schema_tools",
-        {"server": "localhost", "database": "testdb"},
+        {"sqlalchemy_url": "sqlite:///test.db"},
         id="connect_database",
     ),
     pytest.param(

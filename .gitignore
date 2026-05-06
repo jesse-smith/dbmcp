@@ -54,9 +54,6 @@ logs/
 *.local
 .mcp.json
 
-# MCP server logs
-dbmcp.log
-
 # OS
 .DS_Store
 Thumbs.db

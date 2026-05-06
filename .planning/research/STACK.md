@@ -1,321 +1,233 @@
-# Technology Stack: v1.1 Concern Handling
+# Technology Stack: Multi-Dialect Support Additions
 
-**Project:** dbmcp
-**Researched:** 2026-03-06
-**Scope:** Stack additions/changes for exception handling, token refresh, sqlglot pinning, config format, type handler registry
+**Project:** dbmcp v2.0
+**Researched:** 2026-04-13
+**Scope:** New dependencies for Databricks and generic SQLAlchemy dialect support only
 
-## Existing Stack (No Changes)
+## Existing Stack (Validated, Not Changing)
 
-These are validated and working. Listed for reference only.
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| Python | >=3.11 | Runtime |
+| mcp[cli] | >=1.27.0 | MCP server framework |
+| sqlalchemy | >=2.0.0 | Database abstraction, Inspector API |
+| pyodbc | >=5.0.0 | SQL Server DBAPI driver |
+| sqlglot | >=30.4.2,<31.0.0 | Query parsing, validation, transpilation |
+| azure-identity | >=1.14.0 | Azure AD auth for SQL Server |
+| toon-format | v0.9.0-beta.1 | Token-efficient response serialization |
 
-| Technology | Version (Installed) | Spec Range | Purpose |
-|------------|-------------------|------------|---------|
-| Python | 3.13.1 | >=3.11 | Runtime |
-| FastMCP (mcp[cli]) | >=1.0.0 | >=1.0.0 | MCP server framework |
-| SQLAlchemy | 2.0.47 | >=2.0.0 | Connection pooling, metadata introspection |
-| pyodbc | 5.3.0 | >=5.0.0 | SQL Server ODBC driver |
-| azure-identity | 1.25.2 | >=1.14.0 | Azure AD authentication |
-| sqlglot | 29.0.1 | >=26.0.0,<30.0.0 | SQL AST validation |
-| toon-format | 0.9.0-beta.1 | git pin | Response serialization |
+## New Dependencies for Databricks
 
-## Recommended Changes
+### Required Additions
 
-### 1. Exception Handling -- NO NEW DEPENDENCIES
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| databricks-sqlalchemy | >=2.0.0 | SQLAlchemy dialect for Databricks | Registers `databricks://` dialect with SQLAlchemy, implements all Inspector methods needed by dbmcp (get_schema_names, get_table_names, get_columns, get_pk_constraint, get_foreign_keys). Requires SQLAlchemy >=2.0.21 (compatible with our >=2.0.0 pin). |
+| databricks-sql-connector | >=4.0.0 | Databricks SQL DBAPI driver | Required by databricks-sqlalchemy. Provides the actual wire protocol for Databricks SQL warehouses and clusters. Since v4.0.0, SQLAlchemy support was extracted to separate package. |
 
-**Recommendation:** Replace broad `except Exception:` with specific SQLAlchemy and pyodbc exception types. Zero new dependencies required.
+### NOT Adding (Generic Dialect)
 
-**Confidence:** HIGH (verified against installed SQLAlchemy 2.0.47 and pyodbc 5.3.0)
+No new packages needed for generic SQLAlchemy dialect support. Any database with a SQLAlchemy dialect + sqlglot dialect can work through the existing stack. Users install their own driver packages (e.g., `psycopg2` for PostgreSQL, `mysql-connector-python` for MySQL) and pass a `sqlalchemy_url` directly.
 
-There are 25 `except Exception` blocks across `src/`. The correct replacements group into three categories:
+## Databricks Package Details
 
-#### Category A: Database Operations (connection, query execution, metadata)
+### databricks-sqlalchemy 2.0.9
 
-Use `sqlalchemy.exc` types. SQLAlchemy wraps pyodbc errors as DBAPI exceptions, so catching at the SQLAlchemy layer is sufficient when going through `engine.connect()` / `conn.execute()`.
+**Confidence:** HIGH (verified via PyPI, GitHub source, and local sqlglot testing)
 
-| Exception | When It Fires | Replace In |
-|-----------|---------------|------------|
-| `sqlalchemy.exc.OperationalError` | Connection failure, timeout, network drop, query timeout | `connection.py`, `query.py`, `metadata.py` |
-| `sqlalchemy.exc.ProgrammingError` | Bad SQL syntax, nonexistent table/column, permission denied | `query.py`, `metadata.py` |
-| `sqlalchemy.exc.DatabaseError` | Generic DB-level error (superset of above two) | Catch as fallback after specific types |
-| `sqlalchemy.exc.InterfaceError` | Driver-level failure (ODBC driver missing, corrupt connection) | `connection.py` |
-| `sqlalchemy.exc.TimeoutError` | Pool checkout timeout (all connections busy) | `connection.py` pool operations |
-| `sqlalchemy.exc.DisconnectionError` | Stale connection detected by pool_pre_ping | `connection.py` (log and let pool retry) |
-| `sqlalchemy.exc.NoSuchTableError` | Table introspection on nonexistent table | `metadata.py` |
-| `sqlalchemy.exc.NoInspectionAvailable` | Inspector can't introspect object | `metadata.py` |
+- **Dialect name:** `"databricks"` (registered as SQLAlchemy entry point)
+- **Connection URI:** `databricks://token:{access_token}@{host}?http_path={path}&catalog={catalog}&schema={schema}`
+- **Inherits:** `sqlalchemy.engine.default.DefaultDialect`
+- **Python support:** 3.8-3.13 (covers our >=3.11 requirement)
+- **SQLAlchemy requirement:** >=2.0.21 (compatible with our >=2.0.0 floor)
+- **DBR requirement:** 14.2+ for parameterized query support; Unity Catalog enabled
 
-#### Category B: Azure Authentication
+### databricks-sql-connector 4.2.5
 
-Already handled specifically in `azure_auth.py` -- uses `CredentialUnavailableError` and `ClientAuthenticationError`. No changes needed there.
+**Confidence:** HIGH (verified via PyPI, GitHub source)
 
-#### Category C: MCP Tool Layer (schema_tools.py, query_tools.py, analysis_tools.py)
+- **Transitive dependencies (heavy):** thrift, pandas, lz4, requests, oauthlib, openpyxl, urllib3, python-dateutil, pyjwt, pybreaker
+- **Pandas is mandatory:** Required at install time (not optional). Open issue #489 and PR #536 to make it optional, not merged as of April 2026.
+- **Package size:** ~214 KB wheel, but transitive deps add significant footprint (pandas alone ~40MB)
+- **Authentication:** Token (via URL), OAuth M2M (via connect_args), OAuth U2M (via connect_args)
 
-These 10 `except Exception` blocks are catch-all wrappers that format errors for MCP responses. **Keep these broad but layer them**: catch specific types first for actionable error messages, then catch `Exception` as final fallback for unexpected errors. MCP tools must never raise -- they must always return a response.
+### Dependency Footprint Warning
 
-**Pattern:**
+databricks-sql-connector pulls in pandas as a mandatory dependency. This adds ~40MB+ to the install. However:
+1. dbmcp never imports or uses pandas directly -- it is only a transitive dependency of the connector
+2. The connector team has an open PR (#536) to make pandas optional
+3. This weight is only imposed on users who install the `databricks` extra, not core users
 
-```python
-# In MCP tool handlers:
-try:
-    ...
-except sqlalchemy.exc.OperationalError as e:
-    return encode_response({"status": "error", "error": "Connection lost or query timed out", "detail": str(e)})
-except sqlalchemy.exc.ProgrammingError as e:
-    return encode_response({"status": "error", "error": "SQL error", "detail": str(e)})
-except ValueError as e:
-    return encode_response({"status": "error", "error": str(e)})
-except Exception as e:
-    logger.exception(f"Unexpected error in {tool_name}")
-    return encode_response({"status": "error", "error": f"Unexpected error: {type(e).__name__}: {e}"})
-```
+## sqlglot Databricks Dialect Coverage
 
-**Why NOT catch pyodbc exceptions directly:** SQLAlchemy wraps all DBAPI exceptions. You only need raw pyodbc catches in the `creator()` function in `_create_engine()` where pyodbc is called directly (Azure AD token connection).
+**Confidence:** HIGH (verified by running sqlglot 30.4.2 locally)
 
-### 2. Azure AD Token Refresh -- NO NEW DEPENDENCIES
+### What Works
 
-**Recommendation:** Use SQLAlchemy `pool_events.checkout` to validate token expiry before each connection use. The `AccessToken.expires_on` field (Unix timestamp) is already available from azure-identity.
+| Feature | Status | Verified |
+|---------|--------|----------|
+| `dialect="databricks"` string resolution | Works | Local test |
+| Parse SELECT/INSERT/UPDATE/DELETE/CREATE/DROP | Correct AST types | Local test |
+| Transpile TSQL -> Databricks (TOP -> LIMIT) | Works | Local test |
+| Transpile Databricks -> TSQL (LIMIT -> TOP) | Works | Local test |
+| Existing denylist validation (DML/DDL/DCL checks) | Works unchanged | Local test -- same AST expression types |
+| DESCRIBE TABLE EXTENDED parsing | Parses as `exp.Describe` | Local test |
+| Databricks class inherits from Spark | Confirmed | `Databricks.__bases__ == (Spark,)` |
 
-**Confidence:** HIGH (verified `AccessToken` is a NamedTuple with `token: str, expires_on: int`; verified SQLAlchemy pool has `checkout` event)
+### Databricks Dialect Specifics
 
-**Current problem:** The `creator()` function in `_create_engine()` calls `provider.get_token()` on every new raw connection, but pooled connections reuse the same pyodbc connection without re-acquiring tokens. Azure AD tokens expire after ~60-90 minutes, so long-running sessions will fail silently.
+- Inherits from `sqlglot.dialects.spark.Spark`
+- Adds Databricks-specific functions: GETDATE(), DATEADD, DATEDIFF, UNIFORM()
+- Colon operator (`:`) for JSON extraction
+- `VOID` type mapping for NULL
+- Strict casting enabled
 
-**Solution architecture:**
+### Integration with Existing Validation
 
-```python
-# In AzureTokenProvider, cache the token with expiry:
-def get_token(self) -> str:
-    if self._cached_token and self._expires_on > time.time() + 300:  # 5-min buffer
-        return self._cached_token
-    access_token = self._credential.get_token(_AZURE_SQL_SCOPE)
-    self._cached_token = access_token.token
-    self._expires_on = access_token.expires_on
-    return self._cached_token
+The current `validate_query()` in `src/db/validation.py` hardcodes `dialect="tsql"`. For multi-dialect support, this needs to accept a dialect parameter. The denylist AST types (Insert, Create, Drop, etc.) are dialect-independent -- sqlglot produces the same expression types regardless of dialect. Only the parse dialect string changes.
 
-def is_token_expiring_soon(self, buffer_seconds: int = 300) -> bool:
-    return self._expires_on <= time.time() + buffer_seconds
-```
+**Key finding:** The SAFE_PROCEDURES allowlist (22 SQL Server-specific sp_ names) is MSSQL-only. Databricks has no stored procedures in this sense. The validation module needs dialect-aware procedure handling -- likely the DialectStrategy should provide the safe procedure list (empty for Databricks, existing list for MSSQL).
 
-Then in `ConnectionManager._create_engine()` for Azure AD Integrated:
+## SQLAlchemy Inspector API Coverage (databricks-sqlalchemy)
 
-```python
-@event.listens_for(engine, "checkout")
-def _check_token_expiry(dbapi_connection, connection_record, connection_proxy):
-    if provider.is_token_expiring_soon():
-        # Invalidate this pooled connection; pool will create a new one via creator()
-        raise sqlalchemy.exc.DisconnectionError("Azure AD token expiring, reconnecting")
-```
+**Confidence:** HIGH (verified via GitHub source code review)
 
-**Why `checkout` not `connect`:** The `connect` event fires only when a *new* raw connection is created. `checkout` fires every time a connection is borrowed from the pool, which is where we need to validate token freshness.
+### Inspector Methods Used by dbmcp
 
-**Why `DisconnectionError`:** SQLAlchemy's pool treats this as "connection is stale, create a new one" -- exactly the behavior we want. The `creator()` function will be called again, which calls `get_token()`, which acquires a fresh token.
+| Inspector Method | Supported | Implementation Notes |
+|-----------------|-----------|---------------------|
+| `get_schema_names()` | YES | Uses `SHOW SCHEMAS` |
+| `get_table_names()` | YES | Uses `SHOW TABLES FROM {schema}`, filters out views |
+| `get_columns()` | YES | Uses `cursor.columns()` with catalog/schema/table params |
+| `get_pk_constraint()` | YES | Uses `DESCRIBE TABLE EXTENDED`, parses output |
+| `get_foreign_keys()` | YES | Uses `DESCRIBE TABLE EXTENDED`, parses output |
+| `get_indexes()` | STUB | Returns empty list (Databricks has no indexes) |
+| `get_view_names()` | YES | Not currently used by dbmcp but available |
+| `get_table_comment()` | YES | Not currently used by dbmcp but available |
+| `has_table()` | YES | Useful for validation |
 
-**No new dependencies.** Uses `time` (stdlib), `sqlalchemy.event` (existing), `azure.core.credentials.AccessToken.expires_on` (existing).
+### Key Behavioral Differences from MSSQL
 
-### 3. sqlglot Version Pinning -- TIGHTEN EXISTING RANGE
+1. **No indexes:** `get_indexes()` always returns `[]` -- this is correct, not a bug
+2. **DESCRIBE TABLE EXTENDED:** Primary metadata strategy (vs information_schema for MSSQL)
+3. **No transactions:** `do_rollback()` is a no-op
+4. **Table/view conflation:** `SHOW TABLES` returns both; dialect filters by comparing against `get_view_names()`
+5. **FK/PK may be sparse:** Databricks tables often lack explicit constraints (especially Delta tables). The Inspector methods return empty results, not errors. This is normal and the analysis tools (find_pk_candidates, find_fk_candidates) provide heuristic alternatives.
+6. **Catalog-scoped schemas:** Databricks uses three-level naming (catalog.schema.table). The `catalog` parameter in the connection URI sets the default catalog.
 
-**Recommendation:** Pin to `>=29.0.0,<30.0.0` (tighten from current `>=26.0.0,<30.0.0`).
+## pyproject.toml Optional Dependencies Structure
 
-**Confidence:** MEDIUM (based on observed API surface; sqlglot does not follow semver strictly)
+**Confidence:** HIGH (standard Python packaging, PEP 508)
 
-**Rationale:**
+### Recommended Structure
 
-- **Current installed:** 29.0.1
-- **Current spec:** `>=26.0.0,<30.0.0` -- too wide. The validation module depends on `exp.Execute`, `exp.ExecuteSql`, `exp.Kill`, `exp.IfBlock`, `exp.WhileBlock`, which may not exist in all versions 26-29.
-- The codebase has explicit comments: `"Execute/ExecuteSql (sqlglot >=29)"` and `"Command: EXEC/EXECUTE (sqlglot <29)"` -- confirming API breakage between major versions.
-- sqlglot releases frequently (multiple minor versions per month) but major versions can rearrange expression types.
-- The `_check_command` and `_check_execute` paths handle both old and new sqlglot behavior, but testing should anchor to a known-working major.
-
-**Action:** Change `pyproject.toml` to `sqlglot>=29.0.0,<30.0.0`. Add a test fixture that explicitly verifies all expression types used in `DENIED_TYPES` and the control flow types exist in the installed sqlglot version, so CI catches breakage on upgrade.
-
-### 4. Config File Format -- USE TOML (stdlib)
-
-**Recommendation:** Use TOML via `tomllib` (Python 3.11+ stdlib). No new dependencies.
-
-**Confidence:** HIGH (verified `tomllib` available in Python 3.13.1 runtime)
-
-| Format | Pros | Cons | Verdict |
-|--------|------|------|---------|
-| **TOML** | Stdlib `tomllib` (read), human-friendly, supports nested tables, standard for Python projects (pyproject.toml) | Write requires `tomli-w` (3rd party) | **Use this** |
-| YAML | Human-friendly, widely used | Requires `pyyaml` (new dependency), security footguns with `yaml.load` | No |
-| JSON | Stdlib `json`, machine-friendly | No comments, poor human ergonomics | No |
-| INI | Stdlib `configparser` | No nested structures, limited types | No |
-
-**Why TOML:** The project constraint is "minimize new dependencies; prefer stdlib solutions." `tomllib` is stdlib since Python 3.11 (the project's minimum). TOML is already the project's config format (pyproject.toml). Config files are read-only at runtime -- no need for `tomli-w`.
-
-**Config file structure (proposed):**
+Move dialect-specific drivers to optional extras. Core dependencies remain dialect-agnostic:
 
 ```toml
-# dbmcp.toml
-
-[connection.defaults]
-port = 1433
-trust_server_cert = false
-connection_timeout = 30
-query_timeout = 30
-
-[pool]
-size = 5
-max_overflow = 10
-timeout = 30
-recycle = 3600
-pre_ping = true
-
-[validation]
-safe_procedures = [
-    "sp_help",
-    "sp_helptext",
-    # ... user can extend the allowlist
+[project]
+dependencies = [
+    "mcp[cli]>=1.27.0",
+    "sqlalchemy>=2.0.21",   # Bump floor to match databricks-sqlalchemy requirement
+    "sqlglot>=30.4.2,<31.0.0",
+    "toon-format @ git+https://github.com/toon-format/toon-python.git@v0.9.0-beta.1",
 ]
 
-[serialization]
-max_text_length = 1000
-max_binary_preview = 32
+[project.optional-dependencies]
+mssql = [
+    "pyodbc>=5.0.0",
+    "azure-identity>=1.14.0",
+]
+databricks = [
+    "databricks-sqlalchemy>=2.0.0",
+    "databricks-sql-connector>=4.0.0",
+]
+all = [
+    "dbmcp[mssql]",
+    "dbmcp[databricks]",
+]
+examples = [
+    "jupyter>=1.0.0",
+    "notebook>=7.0.0",
+]
 ```
 
-**Reading pattern:**
+### Key Design Decisions
 
-```python
-import tomllib
-from pathlib import Path
+1. **pyodbc moves to `mssql` extra:** Currently a core dependency. Moving it to an extra means users who only want Databricks don't install pyodbc (which requires ODBC drivers on the system).
 
-def load_config(path: Path | None = None) -> dict:
-    if path is None:
-        path = Path("dbmcp.toml")
-    if not path.exists():
-        return {}  # All defaults are in code; config is optional
-    with open(path, "rb") as f:
-        return tomllib.load(f)
+2. **azure-identity moves to `mssql` extra:** Only needed for SQL Server Azure AD auth.
+
+3. **SQLAlchemy floor bump to >=2.0.21:** databricks-sqlalchemy requires this minimum. Safe bump since we already require >=2.0.0 and the installed version is 2.0.49.
+
+4. **Self-referencing extras:** `all = ["dbmcp[mssql]", "dbmcp[databricks]"]` is valid PEP 508 and works with pip and uv.
+
+5. **No `generic` extra:** Generic dialect support uses only core deps (SQLAlchemy + sqlglot). Users install their own DBAPI driver independently.
+
+### Installation Commands
+
+```bash
+# SQL Server only (current behavior)
+uv pip install dbmcp[mssql]
+
+# Databricks only
+uv pip install dbmcp[databricks]
+
+# Everything
+uv pip install dbmcp[all]
+
+# Development (gets everything)
+uv sync --all-extras
 ```
 
-**No write support needed.** Users create/edit config manually. The server only reads it.
+## Databricks Authentication Strategy
 
-### 5. Type Handler Registry -- NO NEW DEPENDENCIES
+**Confidence:** MEDIUM (verified URL format and connect_args mechanism; OAuth via connect_args not directly tested)
 
-**Recommendation:** Implement a registry pattern using a dict mapping `type -> callable` in `src/serialization.py`. No new dependencies.
+### Supported Auth Methods
 
-**Confidence:** HIGH (this is a pure Python pattern)
+| Method | Mechanism | Config |
+|--------|-----------|--------|
+| Personal Access Token | URL password field | `databricks://token:{token}@{host}?...` |
+| OAuth M2M (Service Principal) | connect_args to DBAPI | `create_engine(url, connect_args={"credentials_provider": ...})` |
+| OAuth U2M (Interactive) | connect_args to DBAPI | `create_engine(url, connect_args={"auth_type": "databricks-oauth"})` |
 
-**Current problem:** `_pre_serialize()` in `serialization.py` and `_truncate_value()` in `query.py` both handle type conversion with hardcoded `isinstance` chains. Adding new types requires editing both functions. SQL Server returns types not currently handled:
+The databricks-sqlalchemy dialect's `create_connect_args()` only extracts token from the URL. For OAuth/M2M, the standard SQLAlchemy `connect_args` parameter on `create_engine()` passes additional kwargs directly to the DBAPI `connect()` call, bypassing the dialect's `create_connect_args()`. This is standard SQLAlchemy behavior and does not require dialect modification.
 
-| SQL Server Type | Python Type | Current Handling | Needed |
-|----------------|-------------|-----------------|--------|
-| `uniqueidentifier` | `uuid.UUID` | **TypeError** (crash) | `str(value)` |
-| `time` | `datetime.time` | **Missing in serialization.py** (handled only in query.py) | `.isoformat()` |
-| `datetimeoffset` | `datetime.datetime` (tz-aware) | Works (datetime handler) | OK |
-| `varbinary` | `bytes` | **TypeError** in serialization.py | hex repr |
-| `sql_variant` | varies | Depends on actual value | Passthrough or str() |
-| `hierarchyid` | `str` | Works | OK |
+### TOML Config Model for Databricks
 
-**Registry pattern:**
-
-```python
-from typing import Any, Callable
-
-# Type -> serializer function
-_TYPE_HANDLERS: dict[type, Callable[[Any], Any]] = {}
-
-def register_type_handler(type_: type, handler: Callable[[Any], Any]) -> None:
-    _TYPE_HANDLERS[type_] = handler
-
-def _pre_serialize(value: Any) -> Any:
-    # Primitives first (fast path)
-    if value is None or isinstance(value, (bool, int, float, str)) and not isinstance(value, StrEnum):
-        return value
-    # Check registry before hardcoded handlers
-    for type_, handler in _TYPE_HANDLERS.items():
-        if isinstance(type_, type) and isinstance(value, type_):
-            return handler(value)
-    # ... existing hardcoded handlers as fallback ...
-    raise TypeError(f"Cannot serialize type {type(value).__name__}")
+```toml
+[connections.my_databricks]
+dialect = "databricks"
+host = "${DATABRICKS_SERVER_HOSTNAME}"
+http_path = "${DATABRICKS_HTTP_PATH}"
+access_token = "${DATABRICKS_TOKEN}"
+catalog = "my_catalog"
+schema = "my_schema"
 ```
 
-**Default registrations (at module load):**
+## Alternatives Considered
 
-```python
-import uuid
-from datetime import date, datetime, time as dt_time
-from decimal import Decimal
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Databricks dialect | databricks-sqlalchemy | Raw databricks-sql-connector + custom dialect | databricks-sqlalchemy provides all Inspector methods out of box; writing a custom dialect is unnecessary work |
+| Databricks DBAPI | databricks-sql-connector | pyhive/thrift | databricks-sql-connector is the official driver, actively maintained, supports latest Databricks features |
+| Query transpilation | sqlglot (existing) | Manual SQL rewriting | sqlglot already supports Databricks dialect at our pinned version; no new dependency needed |
+| Generic dialect | No new package | Create adapter packages per DB | SQLAlchemy's Inspector API is the adapter; users bring their own driver |
 
-register_type_handler(StrEnum, lambda v: str(v.value))
-register_type_handler(dict, lambda v: {k: _pre_serialize(val) for k, val in v.items()})
-register_type_handler(list, lambda v: [_pre_serialize(item) for item in v])
-register_type_handler(tuple, lambda v: [_pre_serialize(item) for item in v])
-register_type_handler(datetime, lambda v: v.isoformat())
-register_type_handler(date, lambda v: v.isoformat())
-register_type_handler(dt_time, lambda v: v.isoformat())
-register_type_handler(Decimal, lambda v: float(v))
-register_type_handler(uuid.UUID, lambda v: str(v))
-register_type_handler(bytes, lambda v: f"<binary: {v[:32].hex()}{'...' if len(v) > 32 else ''} ({len(v)} bytes)>")
-```
+## What NOT to Add
 
-**Why a dict registry, not a Protocol/ABC:** The project constraint says "prefer stdlib solutions" and "current dataclasses work fine." A dict registry is simple, extensible (config file could add custom handlers later), and testable. No need for an abstract interface when there are fewer than 15 types.
-
-**Important:** The registry uses `isinstance` ordering, so subclass relationships matter. `StrEnum` must be checked before `str`, `bool` before `int`. The implementation should either maintain insertion order (dict preserves order in Python 3.7+) or use explicit priority.
-
-## Dependencies Summary
-
-### New Dependencies: NONE
-
-The entire v1.1 concern handling milestone requires **zero new dependencies**. Everything is achievable with:
-
-- `sqlalchemy.exc` (existing) -- specific exception types
-- `sqlalchemy.event` (existing) -- pool checkout for token refresh
-- `azure.core.credentials.AccessToken.expires_on` (existing) -- token expiry check
-- `tomllib` (stdlib since 3.11) -- config file parsing
-- `time` (stdlib) -- token expiry comparison
-- `uuid` (stdlib) -- UUID serialization handler
-
-### Dependency Changes
-
-| Dependency | Current Spec | Proposed Spec | Reason |
-|------------|-------------|---------------|--------|
-| sqlglot | `>=26.0.0,<30.0.0` | `>=29.0.0,<30.0.0` | Tighten to known-working major; codebase uses >=29 expression types |
-
-### Explicitly NOT Adding
-
-| Library | Why Considered | Why Rejected |
-|---------|---------------|-------------|
-| `pyyaml` | Config file format | TOML is stdlib; YAML is not |
-| `tomli-w` | TOML writing | Config is read-only at runtime |
-| `pydantic` | Config validation | PROJECT.md says "Pydantic migration -- current dataclasses work fine" |
-| `tenacity` | Retry logic for token refresh | `DisconnectionError` + pool retry is simpler; one retry mechanism |
-| `structlog` | Structured exception logging | Existing `logging` module is sufficient |
-
-## Integration Points
-
-### Exception Types and MCP Tool Layer
-
-The MCP tool handlers (`schema_tools.py`, `query_tools.py`, `analysis_tools.py`) are the boundary between database errors and user-facing responses. They must:
-1. Catch specific SQLAlchemy exceptions for actionable messages
-2. Keep a final `except Exception` for unexpected errors (MCP tools must never raise)
-3. Always return `encode_response(...)` -- never let exceptions propagate to FastMCP
-
-### Token Refresh and Connection Pool
-
-The `checkout` event integrates with SQLAlchemy's existing pool lifecycle. The `creator()` callable already calls `get_token()`, so forcing a reconnect via `DisconnectionError` triggers token reacquisition naturally. No changes to the connection creation path -- only adding an event listener.
-
-### Config File and Existing Defaults
-
-Config must be optional. All current defaults live in code (`PoolConfig` dataclass, `SAFE_PROCEDURES` frozenset, etc.). The config file only overrides. Pattern: `config_value = config.get("key", code_default)`.
-
-### Type Registry and TOON Serialization
-
-The registry replaces the hardcoded `isinstance` chain in `_pre_serialize()`. The `encode_response()` public API does not change. The `_truncate_value()` in `query.py` remains separate (it handles display truncation, not serialization).
-
-## MCP Session Cleanup Note
-
-FastMCP does not expose session lifecycle hooks (no `on_disconnect` or `on_shutdown` callback). For connection cleanup when the MCP session ends, use Python's `atexit` module to call `ConnectionManager.disconnect_all()`. This fires when the process exits (stdio transport = process lifetime = session lifetime).
-
-```python
-import atexit
-atexit.register(_connection_manager.disconnect_all)
-```
+1. **No new query validation library:** sqlglot's Databricks dialect handles parsing and validation identically to TSQL (same AST types).
+2. **No Databricks SDK:** `databricks-sdk` is for workspace management, not SQL queries. Unnecessary.
+3. **No pyarrow explicit dependency:** databricks-sql-connector includes optional pyarrow support but it is not required for our use case (we use SQLAlchemy result sets, not Arrow).
+4. **No alembic:** databricks-sqlalchemy has optional alembic support. We do read-only operations; schema migration is out of scope.
+5. **No pandas dependency:** It comes transitively via databricks-sql-connector. Never import it directly.
 
 ## Sources
 
-- SQLAlchemy 2.0 exception hierarchy: verified via `sqlalchemy.exc` introspection on installed 2.0.47
-- SQLAlchemy pool events: verified via `sqlalchemy.pool.events.PoolEvents` introspection (checkout, connect, checkin, etc.)
-- pyodbc exception hierarchy: verified via runtime inspection of installed 5.3.0
-- `azure.core.credentials.AccessToken`: verified as `NamedTuple(token: str, expires_on: int)` via source inspection
-- `tomllib` stdlib availability: verified in Python 3.13.1 runtime
-- sqlglot expression types: verified `Execute`, `ExecuteSql`, `Kill`, `IfBlock`, `WhileBlock` all present in 29.0.1
-- FastMCP lifecycle: verified `run()`, `session_manager` via introspection; no built-in shutdown hook (use `atexit` for cleanup)
+- PyPI: databricks-sql-connector 4.2.5 (https://pypi.org/project/databricks-sql-connector/) -- HIGH confidence
+- PyPI: databricks-sqlalchemy 2.0.9 (https://pypi.org/project/databricks-sqlalchemy/) -- HIGH confidence
+- GitHub: databricks-sqlalchemy base.py source (https://github.com/databricks/databricks-sqlalchemy/) -- HIGH confidence
+- Local verification: sqlglot 30.4.2 Databricks dialect parsing and transpilation -- HIGH confidence
+- Databricks docs: SQL connector auth (https://docs.databricks.com/en/dev-tools/python-sql-connector.html) -- HIGH confidence
+- Databricks docs: SQLAlchemy usage (https://docs.databricks.com/en/dev-tools/sqlalchemy.html) -- HIGH confidence
+- GitHub issue #489: pandas optional dependency status (https://github.com/databricks/databricks-sql-python/issues/489) -- HIGH confidence

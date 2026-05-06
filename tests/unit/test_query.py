@@ -399,7 +399,7 @@ class TestCTEQueryParsing:
 
     def test_cte_select_allowed(self, mock_engine):
         """Test CTE+SELECT queries pass validation."""
-        result = validate_query("WITH cte AS (SELECT 1) SELECT * FROM cte")
+        result = validate_query("WITH cte AS (SELECT 1) SELECT * FROM cte", dialect="tsql")
         assert result.is_safe is True
 
     @pytest.mark.parametrize(
@@ -430,7 +430,7 @@ class TestCTEQueryParsing:
 
     def test_cte_write_blocked_by_default(self, mock_engine):
         """Test CTE+write queries are blocked by default."""
-        result = validate_query("WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src")
+        result = validate_query("WITH src AS (SELECT 1) INSERT INTO t SELECT * FROM src", dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == DenialCategory.CTE_WRAPPED_WRITE
 
@@ -438,6 +438,7 @@ class TestCTEQueryParsing:
         """Test CTE+write queries pass validation when allow_write=True."""
         result = validate_query(
             "WITH src AS (SELECT 1 as val) INSERT INTO t SELECT * FROM src",
+            dialect="tsql",
             allow_write=True,
         )
         assert result.is_safe is True
@@ -453,7 +454,7 @@ class TestCTEQueryParsing:
     )
     def test_existing_write_controls_unchanged(self, mock_engine, sql, category):
         """Regression test: existing write controls still work as before."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -526,7 +527,7 @@ class TestReadOnlyEnforcement:
 
     def test_select_allowed_by_default(self, mock_engine):
         """Test SELECT queries pass validation by default."""
-        result = validate_query("SELECT * FROM users")
+        result = validate_query("SELECT * FROM users", dialect="tsql")
         assert result.is_safe is True
 
     @pytest.mark.parametrize(
@@ -541,7 +542,7 @@ class TestReadOnlyEnforcement:
     )
     def test_write_blocked_by_default(self, mock_engine, sql, category):
         """Test write and DDL queries are denied by default."""
-        result = validate_query(sql)
+        result = validate_query(sql, dialect="tsql")
         assert result.is_safe is False
         assert result.reasons[0].category == category
 
@@ -556,7 +557,7 @@ class TestReadOnlyEnforcement:
     )
     def test_write_allowed_when_enabled(self, mock_engine, sql):
         """Test write operations pass when allow_write=True."""
-        assert validate_query(sql, allow_write=True).is_safe is True
+        assert validate_query(sql, dialect="tsql", allow_write=True).is_safe is True
 
 
 class TestRowLimitInjection:
@@ -755,6 +756,109 @@ class TestQueryExecution:
         assert query.denial_reasons[0].category == DenialCategory.DDL
 
 
+class TestSafeOperationalCommandExecution:
+    """Tests for result materialization of SHOW/DESCRIBE on Databricks.
+
+    Safe operational commands (SHOW, DESCRIBE, EXPLAIN) are result-producing
+    reads that must return rows, not just a rowcount.
+    """
+
+    def _make_mock_dialect(self, safe_ops=frozenset({"SHOW", "DESCRIBE"})):
+        """Create a mock dialect with safe_operational_commands."""
+        from unittest.mock import PropertyMock
+        dialect = MagicMock()
+        type(dialect).safe_operational_commands = PropertyMock(return_value=safe_ops)
+        type(dialect).safe_procedures = PropertyMock(return_value=frozenset())
+        type(dialect).sqlglot_dialect = PropertyMock(return_value="databricks")
+        dialect.name = "databricks"
+        return dialect
+
+    def test_show_catalogs_materializes_rows(self, mock_engine):
+        """execute_query('SHOW CATALOGS') returns actual rows, not 0."""
+        mock_result = MagicMock()
+        mock_result.keys.return_value = ["catalog"]
+        mock_result.fetchall.return_value = [("bmtct",), ("main",)]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="SHOW CATALOGS",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is True
+        assert query.rows == [{"catalog": "bmtct"}, {"catalog": "main"}]
+        assert query.rows_affected == 2
+
+    def test_describe_table_materializes_rows(self, mock_engine):
+        """execute_query('DESCRIBE TABLE t') returns rows."""
+        mock_result = MagicMock()
+        mock_result.keys.return_value = ["col_name", "data_type", "comment"]
+        mock_result.fetchall.return_value = [("id", "int", ""), ("name", "string", "")]
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="DESCRIBE TABLE catalog.schema.t",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is True
+        assert len(query.rows) == 2
+        assert query.rows[0]["col_name"] == "id"
+
+    def test_show_without_databricks_dialect_is_blocked(self, mock_engine):
+        """SHOW CATALOGS with no safe_operational_commands is blocked by validator."""
+        mock_engine.dialect.name = "sqlite"
+
+        # No dialect set — safe_operational_commands will be empty frozenset
+        service = QueryService(mock_engine, dialect=None)
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="SHOW CATALOGS",
+            row_limit=1000,
+        )
+
+        assert query.is_allowed is False
+        assert query.rows == []
+
+    def test_insert_still_uses_write_path(self, mock_engine):
+        """INSERT queries still use rowcount + commit, not row materialization."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.dialect.name = "databricks"
+
+        dialect = self._make_mock_dialect()
+        service = QueryService(mock_engine, dialect=dialect)
+        # INSERT is a write; allow_write=True to get past the validator
+        query = service.execute_query(
+            connection_id="test123",
+            query_text="INSERT INTO t VALUES (1)",
+            row_limit=1000,
+            allow_write=True,
+        )
+
+        # Should have taken the write/commit path (rows empty, rows_affected==1)
+        assert query.rows == []
+        assert mock_conn.commit.called
+
+
 class TestTruncationConfig:
     """Test that truncation limit is driven by config, not hardcoded."""
 
@@ -810,3 +914,37 @@ class TestTruncationConfig:
         # String should NOT be truncated (700 < 1000 limit)
         assert rows[0]["Description"] == text_700
         assert "Description" not in truncated_cols
+
+
+class TestQueryServiceDialectDelegation:
+    """QueryService delegates sample-query SQL generation to the dialect."""
+
+    def _make_stub(self, sentinel="STUB_SQL"):
+        stub = MagicMock()
+        stub.build_sample_query = MagicMock(return_value=sentinel)
+        stub.quote_identifier = lambda ident: f"[{ident}]"
+        return stub
+
+    def test_build_top_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_top_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.TOP, "[dbo].[T]", "*", 5
+        )
+
+    def test_build_tablesample_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_tablesample_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.TABLESAMPLE, "[dbo].[T]", "*", 5
+        )
+
+    def test_build_modulo_query_delegates_to_dialect(self, mock_engine):
+        stub = self._make_stub()
+        service = QueryService(mock_engine, dialect=stub)
+        assert service._build_modulo_query("[dbo].[T]", "*", 5) == "STUB_SQL"
+        stub.build_sample_query.assert_called_once_with(
+            SamplingMethod.MODULO, "[dbo].[T]", "*", 5
+        )

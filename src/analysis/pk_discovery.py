@@ -4,13 +4,21 @@ Identifies PK candidates via two approaches:
 1. Constraint-backed: Columns with PK or UNIQUE constraints
 2. Structural: Columns that are unique, non-null, and match a configurable type set
 
-Returns PKCandidate model instances with raw metadata only — no scoring or interpretation.
+Returns PKCandidate model instances with raw metadata only -- no scoring or interpretation.
 """
+
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from src.analysis._sql import transpile_query
 from src.models.analysis import PKCandidate
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Inspector
+
+    from src.db.dialects.protocol import DialectStrategy
 
 # Default types considered for structural PK candidacy
 DEFAULT_PK_TYPE_FILTER = [
@@ -25,6 +33,7 @@ class PKDiscovery:
     - Constraint-backed detection (PK and UNIQUE constraints)
     - Structural candidacy (unique values + non-null + type match)
     - Configurable type filter for structural candidates
+    - Dialect-aware: Inspector for generic/Databricks, INFORMATION_SCHEMA for MSSQL
     """
 
     def __init__(
@@ -32,10 +41,14 @@ class PKDiscovery:
         connection: Connection,
         schema_name: str,
         table_name: str,
+        dialect: "DialectStrategy | None" = None,
+        inspector: "Inspector | None" = None,
     ):
         self.connection = connection
         self.schema_name = schema_name
         self.table_name = table_name
+        self._dialect = dialect
+        self._inspector = inspector
         self._qualified_table = f"[{schema_name}].[{table_name}]"
 
     def get_constraint_candidates(
@@ -43,6 +56,8 @@ class PKDiscovery:
         type_filter: list[str],
     ) -> list[PKCandidate]:
         """Find columns backed by PK or UNIQUE constraints.
+
+        Uses Inspector for non-MSSQL dialects, INFORMATION_SCHEMA for MSSQL/None.
 
         Args:
             type_filter: SQL types to evaluate is_pk_type against.
@@ -52,6 +67,19 @@ class PKDiscovery:
             List of PKCandidate instances for constraint-backed columns.
         """
         type_filter_lower = {t.lower() for t in type_filter}
+
+        if (
+            self._dialect is not None
+            and self._dialect.name != "mssql"
+            and self._inspector is not None
+        ):
+            return self._get_constraint_candidates_inspector(type_filter_lower)
+        return self._get_constraint_candidates_mssql(type_filter_lower)
+
+    def _get_constraint_candidates_mssql(
+        self, type_filter_lower: set[str]
+    ) -> list[PKCandidate]:
+        """Use INFORMATION_SCHEMA for constraint discovery (MSSQL/default)."""
         candidates = []
 
         # Get PRIMARY KEY columns
@@ -126,12 +154,70 @@ class PKDiscovery:
 
         return candidates
 
+    def _get_constraint_candidates_inspector(
+        self, type_filter_lower: set[str]
+    ) -> list[PKCandidate]:
+        """Use Inspector for constraint discovery (generic/Databricks)."""
+        candidates = []
+        pk_columns: set[str] = set()
+
+        # Determine if constraints are informational (Databricks)
+        is_informational = self._dialect.name == "databricks"
+
+        # Build column type map from Inspector
+        columns = self._inspector.get_columns(
+            self.table_name, schema=self.schema_name
+        )
+        col_type_map = {c["name"]: str(c["type"]) for c in columns}
+
+        # Get PK constraint
+        pk_info = self._inspector.get_pk_constraint(
+            self.table_name, schema=self.schema_name
+        )
+        if pk_info and pk_info.get("constrained_columns"):
+            for col_name in pk_info["constrained_columns"]:
+                pk_columns.add(col_name)
+                data_type = col_type_map.get(col_name, "unknown")
+                candidates.append(PKCandidate(
+                    column_name=col_name,
+                    data_type=data_type,
+                    is_constraint_backed=True,
+                    constraint_type="PRIMARY KEY",
+                    is_unique=True,
+                    is_non_null=True,
+                    is_pk_type=not type_filter_lower or data_type.lower() in type_filter_lower,
+                    constraint_enforced=not is_informational,
+                ))
+
+        # Get UNIQUE constraints
+        unique_constraints = self._inspector.get_unique_constraints(
+            self.table_name, schema=self.schema_name
+        )
+        for uc in unique_constraints:
+            for col_name in uc.get("column_names", []):
+                if col_name not in pk_columns:
+                    data_type = col_type_map.get(col_name, "unknown")
+                    candidates.append(PKCandidate(
+                        column_name=col_name,
+                        data_type=data_type,
+                        is_constraint_backed=True,
+                        constraint_type="UNIQUE",
+                        is_unique=True,
+                        is_non_null=False,
+                        is_pk_type=not type_filter_lower or data_type.lower() in type_filter_lower,
+                        constraint_enforced=not is_informational,
+                    ))
+
+        return candidates
+
     def get_structural_candidates(
         self,
         type_filter: list[str],
         exclude_columns: set[str],
     ) -> list[PKCandidate]:
         """Find structural PK candidates (unique + non-null + type match).
+
+        Uses Inspector for column listing when available, INFORMATION_SCHEMA otherwise.
 
         Args:
             type_filter: SQL types to consider. Empty list disables type filtering.
@@ -140,22 +226,35 @@ class PKDiscovery:
         Returns:
             List of PKCandidate instances for structural candidates.
         """
-        # Get all columns with metadata
-        cols_query = text("""
-            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = :schema_name
-                AND TABLE_NAME = :table_name
-            ORDER BY ORDINAL_POSITION
-        """)
-
-        cols_result = self.connection.execute(
-            cols_query,
-            {"schema_name": self.schema_name, "table_name": self.table_name},
-        )
-        all_columns = cols_result.fetchall()
-
         type_filter_lower = {t.lower() for t in type_filter}
+
+        if self._inspector is not None:
+            columns = self._inspector.get_columns(
+                self.table_name, schema=self.schema_name
+            )
+            all_columns = [
+                (c["name"], str(c["type"]), c.get("nullable", True))
+                for c in columns
+            ]
+        else:
+            # Fallback: INFORMATION_SCHEMA query (existing MSSQL logic)
+            cols_query = text("""
+                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = :schema_name
+                    AND TABLE_NAME = :table_name
+                ORDER BY ORDINAL_POSITION
+            """)
+
+            cols_result = self.connection.execute(
+                cols_query,
+                {"schema_name": self.schema_name, "table_name": self.table_name},
+            )
+            all_columns = [
+                (row[0], row[1], row[2] == "YES")
+                for row in cols_result.fetchall()
+            ]
+
         candidates = []
 
         for col_name, data_type, is_nullable in all_columns:
@@ -164,7 +263,7 @@ class PKDiscovery:
                 continue
 
             # Must be non-null
-            if is_nullable == "YES":
+            if is_nullable:
                 continue
 
             # Type filter check (empty filter = all types pass)
@@ -172,13 +271,14 @@ class PKDiscovery:
                 continue
 
             # Check uniqueness: COUNT(DISTINCT col) vs COUNT(*) WHERE col IS NOT NULL
-            uniq_query = text(f"""
+            uniq_sql = f"""
                 SELECT
                     COUNT(DISTINCT [{col_name}]) AS distinct_count,
                     COUNT(*) AS total_non_null
                 FROM {self._qualified_table}
                 WHERE [{col_name}] IS NOT NULL
-            """)
+            """
+            uniq_query = text(transpile_query(uniq_sql, self._dialect))
 
             uniq_result = self.connection.execute(uniq_query)
             row = uniq_result.fetchall()

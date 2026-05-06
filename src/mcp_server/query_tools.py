@@ -88,8 +88,9 @@ async def get_sample_data(
     def _sync_work():
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
-        metadata_svc = MetadataService(engine)
-        query_svc = QueryService(engine, metadata_service=metadata_svc)
+        dialect = conn_manager.get_dialect(connection_id)
+        metadata_svc = MetadataService(engine, dialect=dialect)
+        query_svc = QueryService(engine, dialect=dialect, metadata_service=metadata_svc)
 
         sample = query_svc.get_sample_data(
             table_name=table_name,
