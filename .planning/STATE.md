@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Multi-Dialect Support
-status: in_progress
+status: milestone_complete
 stopped_at: Phase 13.1 context gathered
-last_updated: "2026-05-06T19:43:47.315Z"
-last_activity: "2026-04-28 - Completed quick task 260428-mwr: Fix execute_query row materialization + cross-catalog column fetch"
+last_updated: "2026-05-06T20:45:38.011Z"
+last_activity: 2026-05-06 -- Phase 13.1 execution started
 progress:
   total_phases: 6
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 16
   completed_plans: 16
-  percent: 100
+  percent: 117
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** Phase 13 — test-infrastructure-coverage
+**Current focus:** Phase 13.1 — close-v2-0-gap-thread-dialect-through-schema-tools-query-too
 
 ## Current Position
 
-Phase: 13
+Phase: 13.1
 Plan: Not started
-Status: in_progress
-Last activity: 2026-04-28 - Completed quick task 260428-mwr: Fix execute_query row materialization + cross-catalog column fetch
+Status: Milestone complete
+Last activity: 2026-05-06
 
 Progress: [██████████] 100%
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 32 (v1.0: 5, v1.1: 11)
+- Total plans completed: 36 (v1.0: 5, v1.1: 11)
 - Average duration: ~4 min (v1.1 measured)
 - Total execution time: ~1.5 hours (v1.1 measured)
 
@@ -55,6 +55,7 @@ Progress: [██████████] 100%
 | 11 | 2 | - | - |
 | 12 | 2 | - | - |
 | 13 | 4 | - | - |
+| 13.1 | 4 | - | - |
 
 *Updated after each plan completion*
 | Phase 12 P01 | 13min | 3 tasks | 9 files |
