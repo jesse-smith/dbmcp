@@ -1,5 +1,27 @@
 # Milestones
 
+## v2.0 Multi-Dialect Support (Shipped: 2026-05-06)
+
+**Phases completed:** 7 phases (6 + 13.1 inserted), 20 plans
+**Timeline:** 23 days (2026-04-13 → 2026-05-06)
+**Commits:** 235 | **LOC:** ~27,000 Python (src + tests)
+**Archive:** [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md) · [milestones/v2.0-REQUIREMENTS.md](milestones/v2.0-REQUIREMENTS.md) · [milestones/v2.0-MILESTONE-AUDIT.md](milestones/v2.0-MILESTONE-AUDIT.md)
+
+**Delivered:** Extended dbmcp from SQL Server-only to a three-dialect MCP server (MSSQL, Databricks, Generic SQLAlchemy) via a DialectStrategy protocol, with optimized Databricks paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats), dialect-aware query validation, and parameterized fixtures that exercise every dialect path.
+
+**Key accomplishments:**
+- DialectStrategy protocol with MssqlDialect, DatabricksDialect, GenericDialect; registry-backed dispatch; all existing MSSQL behavior preserved through Phase 8 extraction
+- Three-level namespace (catalog.schema.table) for Databricks with DESCRIBE EXTENDED property parsing and partition metadata
+- Sqlglot-based query validation accepts a dialect parameter; safe-procedure list dialect-aware (MSSQL sp_ / empty for others); denylist unchanged across all dialects
+- connect_database tool simplified to (connection_name | sqlalchemy_url); pyodbc + azure-identity relocated to `mssql` extra; databricks packages to `databricks` extra; lazy imports with clear error messages
+- Cross-dialect analysis tools (column stats, PK/FK discovery) via TSQL-base + sqlglot transpilation; Tier-3 Databricks fast path reads precomputed stats from DESCRIBE EXTENDED when available
+- Dialect-parameterized test fixtures (generic + Databricks mock-based); coverage floor ratcheted 70% → 85% with baseline 90.64%; 872 tests across all three dialect paths
+- Phase 13.1 integration closure: WIRING-01/02/03 resolved — connect_database, get_sample_data, and ConnectionManager.connect all thread the registered dialect; quick 260506-n8s moved sample-query SQL generation into `DialectStrategy.build_sample_query`
+
+**Known deferred items at close:** Phase 999.1 (API consistency pass — `catalog` kwarg gap, hardcoded `dbo` default, row-limit naming drift, sample_size typing drift); Databricks integration test todo (env-var substitution + error wrapping).
+
+---
+
 ## v1.1 Concern Handling (Shipped: 2026-03-10)
 
 **Phases completed:** 5 phases, 11 plans, 22 tasks

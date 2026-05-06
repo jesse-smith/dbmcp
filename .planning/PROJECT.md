@@ -8,21 +8,20 @@ A Model Context Protocol (MCP) server that gives LLM agents safe, read-only acce
 
 LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
 
-## Current Milestone: v2.0 Multi-Dialect Support
+## Current State
 
-**Goal:** Extend dbmcp from SQL Server-only to support Databricks (priority) and arbitrary SQLAlchemy+sqlglot databases via a dialect strategy pattern, with minimal per-dialect code.
+**Shipped:** v2.0 Multi-Dialect Support (2026-05-06)
 
-**Target features:**
+dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQLAlchemy URL (Generic) — via a `DialectStrategy` protocol. MSSQL behavior is preserved verbatim; Databricks runs optimized paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats); Generic falls back to Inspector-only metadata. All 9 MCP tools dispatch dialect-specific behavior through the strategy.
 
-- DialectStrategy protocol with MssqlDialect, DatabricksDialect, GenericDialect implementations
-- Discriminated connection config (TOML `dialect` field, typed config models per dialect)
-- Simplified connect_database tool interface (connection_name / sqlalchemy_url)
-- Tier 1 metadata via SQLAlchemy Inspector (with MSSQL optimized overrides preserved)
-- Tier 2 standard SQL analysis queries (transpiled via sqlglot where needed)
-- Tier 3 dialect-specific optimizations (fast row counts, engine construction)
-- Databricks-optimized stats and reflections (column info, PK/FK analysis)
-- Explicit sqlglot dialect passing for query validation
-- Optional dependency groups (mssql, databricks extras)
+## Next Milestone
+
+Not yet scoped. Candidate themes surfaced during v2.0:
+- **API consistency pass** (Phase 999.1 backlog) — normalize `catalog` kwarg coverage, drop hardcoded `"dbo"` default, unify row-limit and sample-size naming across tools
+- **Databricks enrichment** — Unity Catalog tag metadata, cross-catalog discovery, ANALYZE TABLE orchestration
+- **Query result caching / audit logging** — deferred from v1.1
+
+Use `/gsd-new-milestone` to run discovery + requirements → roadmap.
 
 ## Requirements
 
@@ -43,18 +42,22 @@ LLM agents can explore and query databases safely, with validated read-only acce
 - ✓ sqlglot pinned with 28 edge case test fixtures — v1.1
 - ✓ Unified type handler registry for serialization pipeline — v1.1
 - ✓ TOML config file support for named connections and defaults — v1.1
+- ✓ Multi-dialect support via DialectStrategy protocol — v2.0
+- ✓ Databricks dialect with optimized stats/reflections — v2.0
+- ✓ Generic dialect fallback for arbitrary SQLAlchemy databases — v2.0
+- ✓ Simplified connect_database tool interface (connection_name / sqlalchemy_url) — v2.0
+- ✓ Discriminated TOML config with required dialect field — v2.0 (adjusted from default-to-mssql to required per D-02)
+- ✓ SQLAlchemy Inspector-based metadata (Tier 1) — v2.0
+- ✓ Standard SQL analysis queries with sqlglot transpilation (Tier 2) — v2.0
+- ✓ Dialect-specific optimizations (Tier 3) — v2.0
+- ✓ Optional dependency groups (mssql, databricks extras) with lazy imports — v2.0
+- ✓ Dialect-aware query validation (sqlglot parse + safe-procedure list per dialect) — v2.0
+- ✓ Databricks three-level namespace (catalog.schema.table) + DESCRIBE EXTENDED table properties — v2.0
+- ✓ Dialect-parameterized test fixtures; coverage floor raised to 85% — v2.0
 
 ### Active
 
-- [ ] Multi-dialect support via DialectStrategy protocol
-- [ ] Databricks dialect with optimized stats/reflections
-- [ ] Generic dialect fallback for arbitrary SQLAlchemy databases
-- [ ] Simplified connect_database tool interface
-- [ ] Discriminated TOML config with dialect field
-- [ ] SQLAlchemy Inspector-based metadata (Tier 1)
-- [ ] Standard SQL analysis queries with sqlglot transpilation (Tier 2)
-- [ ] Dialect-specific optimizations (Tier 3)
-- [ ] Optional dependency groups (mssql, databricks extras)
+_(No active requirements — next milestone not yet scoped. See "Next Milestone" above.)_
 
 ### Out of Scope
 
@@ -71,12 +74,12 @@ LLM agents can explore and query databases safely, with validated read-only acce
 
 ## Context
 
-- **Current state:** 9 MCP tools, 852 tests, TOON serialization, 70%+ test coverage, 3 dialects (MSSQL, Databricks, Generic), dialect-aware analysis tools
-- **Tech stack:** Python 3.11+, FastMCP, SQLAlchemy, pyodbc, toon-format, sqlglot, azure-identity
-- **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`)
-- **Key modules:** `src/db/` (connection, query, validation, metadata, config), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates), `src/serialization/` (type handlers, TOON)
-- **Milestones shipped:** v1.0 (TOON migration), v1.1 (concern handling)
-- **Breaking change planned:** connect_database tool signature simplification (v2.0)
+- **Current state:** 9 MCP tools, 872 tests, 90.64% coverage (85% floor), TOON serialization, 3 dialects (MSSQL, Databricks, Generic) via DialectStrategy protocol, dialect-aware analysis tools with Databricks Tier-3 fast path
+- **Tech stack:** Python 3.11+, FastMCP, SQLAlchemy, pyodbc (mssql extra), databricks-sqlalchemy (databricks extra), toon-format, sqlglot, azure-identity (mssql extra)
+- **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`) with required `dialect` discriminator and per-dialect typed config models
+- **Key modules:** `src/db/dialects/` (protocol, mssql, databricks, generic, registry), `src/db/` (connection, query, validation, metadata, config), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates), `src/serialization/` (type handlers, TOON)
+- **Milestones shipped:** v1.0 (TOON migration), v1.1 (concern handling), v2.0 (multi-dialect support)
+- **Known follow-ups:** Phase 999.1 backlog (API consistency pass across MCP tools); Databricks integration test todo
 
 ## Constraints
 
@@ -104,6 +107,14 @@ LLM agents can explore and query databases safely, with validated read-only acce
 | Ordered handler chain for type registry | Subclass-first isinstance ordering for correct dispatch | ✓ Good |
 | Env vars resolved at connection time | Credential security; not cached at load time | ✓ Good |
 | Tool arg precedence: explicit > config > defaults | Clear override semantics | ✓ Good |
+| DialectStrategy protocol over inheritance (v2.0) | Strategy pattern, least coupling, easy to add dialects | ✓ Good |
+| Dialect required in TOML config, no "mssql" default (v2.0, D-02) | Explicit failure over silent cross-dialect misconfiguration | ✓ Good |
+| Write base SQL in TSQL + transpile via sqlglot per-dialect (v2.0) | Single canonical query form instead of N hand-written variants | ✓ Good |
+| Probe-first-column heuristic for Databricks DESCRIBE EXTENDED Tier-3 fast path (v2.0) | Avoids unnecessary compute when precomputed stats missing | ✓ Good |
+| Inspector-first with MSSQL INFORMATION_SCHEMA fallback (v2.0) | SQLAlchemy Inspector as canonical metadata path | ✓ Good |
+| `supports_indexes` capability flag gating (v2.0) | Databricks has no traditional indexes; clean schema response | ✓ Good |
+| Coverage floor ratchet 70 → 85 (v2.0, Phase 13) | Single global knob, ~5pt headroom over 90.64% baseline | ✓ Good |
+| `build_sample_query` method on DialectStrategy (v2.0 quick 260506-n8s) | Moved dialect-specific SQL out of QueryService — no more TSQL-as-default | ✓ Good |
 
 ## Evolution
 
@@ -123,4 +134,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-15 after Phase 12 complete — Analysis modules (column stats, PK discovery, FK candidates) adapted for cross-dialect support with sqlglot transpilation, Inspector-based metadata, Databricks DESCRIBE EXTENDED fast path, and capability-gated features*
+*Last updated: 2026-05-06 after v2.0 milestone complete — Multi-dialect architecture (MSSQL + Databricks + Generic) shipped via DialectStrategy protocol, with dialect-aware validation, analysis tools, and 85%+ test coverage floor.*

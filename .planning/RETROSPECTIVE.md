@@ -90,6 +90,56 @@
 
 ---
 
+## Milestone: v2.0 — Multi-Dialect Support
+
+**Shipped:** 2026-05-06
+**Phases:** 7 (6 + 13.1 inserted) | **Plans:** 20 | **Sessions:** many (live Databricks verification surfaced 12 quick-tasks)
+**Duration:** 23 days (2026-04-13 → 2026-05-06)
+
+### What Was Built
+- DialectStrategy protocol (`src/db/dialects/protocol.py`) with MssqlDialect, DatabricksDialect, GenericDialect implementations and registry-backed dispatch
+- Discriminated TOML config with required `dialect` field and per-dialect typed config models
+- Simplified connect_database tool signature (connection_name | sqlalchemy_url) with pyodbc/azure-identity moved to `mssql` extra, databricks packages to `databricks` extra, lazy imports with clear error messages
+- Databricks three-level namespace (catalog.schema.table), DESCRIBE EXTENDED property parsing, partition metadata in schema responses, Tier-3 precomputed-stats fast path
+- Dialect-aware query validation (sqlglot parse + safe-procedure list), denylist unchanged across dialects
+- Cross-dialect analysis tools via TSQL-base + sqlglot transpilation (column stats, PK/FK discovery) with Inspector-based metadata and `supports_indexes` capability gating
+- Dialect-parameterized test fixtures (mock-based, no live connections required), coverage floor ratcheted 70% → 85% (baseline 90.64%)
+- Phase 13.1 integration closure + quick 260506-n8s: WIRING-01/02/03 resolved; sample-query SQL generation moved out of QueryService into `DialectStrategy.build_sample_query`
+
+### What Worked
+- Strategy-over-inheritance for dialects: zero coupling between MSSQL and Databricks code, each dialect self-contained
+- TSQL-as-base + sqlglot transpile: write queries once, dispatch per-dialect — avoided N-way hand-written variants
+- Capability-flag gating (`supports_indexes`): clean way to omit features that don't apply per-dialect without cluttering consumer code with isinstance checks
+- D-02 choice to require dialect in config: one integration test would have failed silently in prod with a default; explicit failure caught it immediately
+- Inserting Phase 13.1 instead of opening v3.0: audit surfaced three wiring gaps and four tech-debt items; decimal phase kept milestone intact without dragging on
+- Live Databricks verification after Phase 13.1 surfaced the dialect-blind sample-query bug — live integration is a faster truth-finder than unit tests for cross-dialect SQL generation
+
+### What Was Inefficient
+- 12 quick-tasks piled up during live Databricks verification (2026-04-28 through 2026-05-06) — suggests Phase 11 missed integration dimensions that only show up against a real warehouse (env-var substitution, error wrapping, cross-catalog column fetch, URL parsing, connect_timeout + retry, driver override). Consider a "live smoke test" gate between Phase 11 and Phase 12 in future milestones that ship a new dialect.
+- REQUIREMENTS.md traceability checkboxes stayed `[ ]` throughout the milestone despite VERIFICATION tables marking SATISFIED — same pattern as v1.0 and v1.1, still unfixed. Needs automation (auto-tick from VERIFICATION) or workflow change.
+- SUMMARY `requirements-completed` frontmatter was inconsistently populated across plans; Phase 13.1 TD-03 mechanically reconciled 16 SUMMARY files. Would be better to enforce at write time.
+- Milestone audit first ran 2026-05-05 and reported `gaps_found` (WIRING-01/02/03 + tech debt) — audit-first catches real issues; in retrospect, it should have been run before marking Phase 13 complete rather than as a separate pass.
+
+### Patterns Established
+- DialectStrategy protocol as the extension point for new databases — adding a dialect = one file in `src/db/dialects/` + registry entry + optional pyproject extra
+- Capability flags (`supports_indexes`, `supports_catalog`) instead of type checks in consumer code
+- `build_sample_query`-style delegation pattern: any SQL that diverges per-dialect belongs on the strategy, not in the service layer
+- Lazy imports guarded with try/except ImportError in dialect module-level code → clear actionable error messages when extras are missing
+- Audit-driven decimal-phase insertion (13.1) as the standard way to close milestone gaps without extending scope
+
+### Key Lessons
+1. **Live integration catches what unit tests miss for cross-dialect work.** 12 quick-tasks and one deferred integration test (sample_data) all surfaced against a real Databricks warehouse — unit mocks couldn't model Unity Catalog three-part naming, env-var substitution quirks, or SQL syntax divergence.
+2. **Require config fields instead of defaulting when the default is wrong for N-1 of N cases.** Defaulting `dialect` to `mssql` would have been silently wrong for every Databricks user. Explicit failure beats implicit coercion.
+3. **Dispatch SQL generation, don't branch on `_dialect is None`.** The `_dialect is None` SQLite proxy in QueryService persisted for weeks as latent breakage for every non-MSSQL path — fixed only when live Databricks made it visible. Any "if dialect X then A else B" in service code should migrate to the strategy.
+4. **Milestone audits are best run before marking the last phase complete, not after.** The 2026-05-05 audit report is exactly the kind of artifact that should gate phase completion, not follow it.
+
+### Cost Observations
+- Model mix: predominantly opus for execution/planning, sonnet for research and integration-checker subagent
+- Sessions: many (one per phase discuss/plan/execute + 12 quick-tasks + milestone audit + close)
+- Notable: 20 plans + 12 quick-tasks over 23 days; velocity slower than v1.1 due to the dialect-per-phase expansion pattern and live Databricks feedback loop
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -98,6 +148,7 @@
 |-----------|----------|--------|------------|
 | v1.0 | ~3 | 2 | First milestone — established TDD + atomic swap patterns |
 | v1.1 | ~8 | 5 | Audit-driven milestone — systematic concern resolution with gap closure |
+| v2.0 | many | 7 | Architecture milestone — DialectStrategy protocol + live-integration feedback loop; audit-inserted decimal phase (13.1) to close wiring gaps |
 
 ### Cumulative Quality
 
@@ -105,6 +156,7 @@
 |-----------|-------|----------|-------------|
 | v1.0 | 441 | 99% (staleness) | serialization.py, helpers.py, staleness/ |
 | v1.1 | 682 | 70%+ (all modules) | config.py, type_handlers.py, error classification |
+| v2.0 | 872 | 90.64% (85% floor) | `src/db/dialects/` (protocol, mssql, databricks, generic, registry), sqlite_schema fixture, dialect-parameterized conftest |
 
 ### Top Lessons (Verified Across Milestones)
 

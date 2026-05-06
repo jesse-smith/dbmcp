@@ -2,33 +2,34 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Multi-Dialect Support
-status: milestone_complete
-stopped_at: Phase 13.1 context gathered
-last_updated: "2026-05-06T20:45:38.011Z"
-last_activity: 2026-05-06 -- Completed quick task 260506-n8s: dialect-aware sample query SQL
+status: milestone_shipped
+stopped_at: v2.0 archived 2026-05-06
+last_updated: "2026-05-06T21:30:00.000Z"
+last_activity: 2026-05-06 -- v2.0 milestone closed and archived
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 7
-  total_plans: 16
-  completed_plans: 16
-  percent: 117
+  total_plans: 20
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-13)
+See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** Phase 13.1 — close-v2-0-gap-thread-dialect-through-schema-tools-query-too
+**Current focus:** v2.0 shipped — next milestone not yet scoped. Use `/gsd-new-milestone` to begin.
 
 ## Current Position
 
-Phase: 13.1
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-05-06
+Milestone: v2.0 ✅ SHIPPED 2026-05-06
+Phase: —
+Plan: —
+Status: milestone_shipped
+Last activity: 2026-05-06 — archived to milestones/v2.0-*.md, tagged v2.0
 
 Progress: [██████████] 100%
 
