@@ -163,3 +163,29 @@ Plans:
 - [x] 13.1-02-PLAN.md — WIRING-02: thread dialect into get_sample_data's MetadataService + QueryService
 - [x] 13.1-03-PLAN.md — WIRING-03: accept optional dialect in ConnectionManager.connect() MSSQL path
 - [x] 13.1-04-PLAN.md — Tech debt cleanup: TD-01 ROADMAP, TD-02 REQUIREMENTS, TD-03 SUMMARY frontmatter reconciliation, TD-04 ruff verification
+
+## Backlog
+
+### Phase 999.1: API consistency pass across MCP tools (BACKLOG)
+
+**Goal:** Normalize the 9 tool signatures so users get predictable arg names, defaults, and capabilities across all dialects. Surfaced while validating v2.0 against live Databricks (post-phase 13.1); deliberately deferred from v2.0 scope.
+**Captured:** 2026-05-06
+**Source:** live Databricks verification after /gsd-validate-phase 13.1 + /gsd-quick 260506-n8s
+
+**Inconsistencies to resolve:**
+
+1. **`catalog` kwarg coverage gap.** Present on `list_schemas`, `list_tables`, `get_table_schema`. Missing on `get_sample_data`, `get_column_info`, `find_pk_candidates`, `find_fk_candidates`. Databricks/Unity-Catalog users can list/describe cross-catalog but cannot sample/analyze cross-catalog without reconnecting. User-visible impact.
+
+2. **Hardcoded `schema_name: str = "dbo"` default.** Baked into `get_table_schema`, `get_sample_data`, `get_column_info`, `find_pk_candidates`, `find_fk_candidates`. MSSQL-ism that is never correct for Databricks/Postgres and nonsensical for SQLite. Consider dialect-aware default (e.g., via `ConnectionManager.get_dialect(connection_id).default_schema`) or drop the default and require the caller to specify.
+
+3. **Row-limit naming.** `list_tables`→`limit`, `find_fk_candidates`→`limit`, `execute_query`→`row_limit`. Same concept, two names. Pick one (likely `row_limit` since it is explicit about units).
+
+4. **`sample_size` typing.** `get_sample_data: int | None = None` (default resolved indirectly) vs `get_column_info: int = 10` (explicit default). Different conventions for an identical parameter.
+
+**Success Criteria:**
+1. Any tool that takes `schema_name` also accepts `catalog: str | None = None` (or the `catalog` concept is reframed as part of a connection/selector primitive).
+2. Zero hardcoded `"dbo"` defaults on public tool signatures.
+3. Single consistent name + typing convention for row-limit and sample-size parameters across all tools.
+4. Regression tests cover Databricks cross-catalog sample + analysis paths.
+
+**Not in v2.0:** v2.0 shipped dialect strategy + wiring; this is API-surface polish that does not belong in a milestone retroactively.
