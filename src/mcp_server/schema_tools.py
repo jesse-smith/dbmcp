@@ -136,35 +136,15 @@ async def connect_database(
         conn_manager = get_connection_manager()
 
         if connection_name is not None:
-            config = get_config()
-            if config.load_error:
-                return {
-                    "status": "error",
-                    "error_message": f"config parse error: {config.load_error}",
-                }
-            if connection_name not in config.connections:
-                return {
-                    "status": "error",
-                    "error_message": f"Named connection '{connection_name}' not found in config. "
-                    f"Available: {sorted(config.connections.keys()) or 'none'}",
-                }
-            conn_cfg = config.connections[connection_name]
-            dialect_cls = get_dialect(conn_cfg.dialect)
-            dialect = dialect_cls()
-            connection = conn_manager.connect_with_config(
-                config=conn_cfg,
-                dialect=dialect,
-                query_timeout=config.defaults.query_timeout,
-            )
+            result = _connect_by_name(connection_name, conn_manager)
         else:
-            # sqlalchemy_url path
             assert sqlalchemy_url is not None
-            dialect = resolve_dialect_from_url(sqlalchemy_url)
-            connection = conn_manager.connect_with_url(
-                sqlalchemy_url=sqlalchemy_url,
-                dialect=dialect,
-                query_timeout=get_config().defaults.query_timeout,
-            )
+            result = _connect_by_url(sqlalchemy_url, conn_manager)
+
+        # Named-connection path may short-circuit with an error dict.
+        if isinstance(result, dict):
+            return result
+        connection, dialect = result
 
         engine = conn_manager.get_engine(connection.connection_id)
         metadata_svc = MetadataService(engine, dialect=dialect)
@@ -187,27 +167,63 @@ async def connect_database(
         return encode_response(result)
     except ConnectionError as e:
         logger.error(f"Connection failed: {type(e).__name__}")
-        return encode_response({
-            "status": "error",
-            "error_message": str(e),
-        })
+        return encode_response({"status": "error", "error_message": str(e)})
     except ValueError as e:
         logger.error(f"Validation error: {e}")
-        return encode_response({
-            "status": "error",
-            "error_message": str(e),
-        })
+        return encode_response({"status": "error", "error_message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in connect_database")
-        if isinstance(e, SQLAlchemyError):
-            _cat, guidance = _classify_db_error(e)
-            error_msg = f"{guidance} ({e})"
-        else:
-            error_msg = format_unexpected_error(e, include_type=True)
-        return encode_response({
+        return encode_response(_connect_error_response(e))
+
+
+def _connect_by_name(connection_name: str, conn_manager):
+    """Resolve a named connection from config and open it.
+
+    Returns either (connection, dialect) on success or an error dict on
+    config-level failure (missing name, unparseable config).
+    """
+    config = get_config()
+    if config.load_error:
+        return {
             "status": "error",
-            "error_message": error_msg,
-        })
+            "error_message": f"config parse error: {config.load_error}",
+        }
+    if connection_name not in config.connections:
+        return {
+            "status": "error",
+            "error_message": f"Named connection '{connection_name}' not found in config. "
+            f"Available: {sorted(config.connections.keys()) or 'none'}",
+        }
+    conn_cfg = config.connections[connection_name]
+    dialect_cls = get_dialect(conn_cfg.dialect)
+    dialect = dialect_cls()
+    connection = conn_manager.connect_with_config(
+        config=conn_cfg,
+        dialect=dialect,
+        query_timeout=config.defaults.query_timeout,
+    )
+    return connection, dialect
+
+
+def _connect_by_url(sqlalchemy_url: str, conn_manager):
+    """Open an ad-hoc connection from a SQLAlchemy URL."""
+    dialect = resolve_dialect_from_url(sqlalchemy_url)
+    connection = conn_manager.connect_with_url(
+        sqlalchemy_url=sqlalchemy_url,
+        dialect=dialect,
+        query_timeout=get_config().defaults.query_timeout,
+    )
+    return connection, dialect
+
+
+def _connect_error_response(exc: Exception) -> dict:
+    """Build the error-response dict for the connect_database catch-all."""
+    if isinstance(exc, SQLAlchemyError):
+        _cat, guidance = _classify_db_error(exc)
+        error_msg = f"{guidance} ({exc})"
+    else:
+        error_msg = format_unexpected_error(exc, include_type=True)
+    return {"status": "error", "error_message": error_msg}
 
 
 # =============================================================================
