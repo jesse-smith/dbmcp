@@ -621,38 +621,21 @@ name = "dbmcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "azure-identity" },
+    { name = "databricks-sql-connector" },
+    { name = "databricks-sqlalchemy" },
+    { name = "jupyter" },
     { name = "mcp", extra = ["cli"] },
+    { name = "notebook" },
+    { name = "pyodbc" },
     { name = "sqlalchemy" },
     { name = "sqlglot" },
     { name = "toon-format" },
 ]
 
-[package.optional-dependencies]
-all = [
-    { name = "azure-identity" },
-    { name = "databricks-sql-connector" },
-    { name = "databricks-sqlalchemy" },
-    { name = "jupyter" },
-    { name = "notebook" },
-    { name = "pyodbc" },
-]
-databricks = [
-    { name = "databricks-sql-connector" },
-    { name = "databricks-sqlalchemy" },
-]
-examples = [
-    { name = "jupyter" },
-    { name = "notebook" },
-]
-mssql = [
-    { name = "azure-identity" },
-    { name = "pyodbc" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "complexipy" },
-    { name = "dbmcp", extra = ["all"] },
     { name = "jupyter" },
     { name = "pyright" },
     { name = "pytest" },
@@ -663,16 +646,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-identity", marker = "extra == 'mssql'", specifier = ">=1.14.0" },
-    { name = "databricks-sql-connector", marker = "extra == 'databricks'", specifier = ">=4.0.0" },
-    { name = "databricks-sqlalchemy", marker = "extra == 'databricks'", specifier = ">=2.0.0" },
-    { name = "dbmcp", extras = ["databricks"], marker = "extra == 'all'" },
-    { name = "dbmcp", extras = ["examples"], marker = "extra == 'all'" },
-    { name = "dbmcp", extras = ["mssql"], marker = "extra == 'all'" },
-    { name = "jupyter", marker = "extra == 'examples'", specifier = ">=1.0.0" },
+    { name = "azure-identity", specifier = ">=1.14.0" },
+    { name = "databricks-sql-connector", specifier = ">=4.0.0" },
+    { name = "databricks-sqlalchemy", specifier = ">=2.0.0" },
+    { name = "jupyter", specifier = ">=1.0.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.27.0" },
-    { name = "notebook", marker = "extra == 'examples'", specifier = ">=7.0.0" },
-    { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.0.0" },
+    { name = "notebook", specifier = ">=7.0.0" },
+    { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlglot", specifier = ">=30.7.0,<31.0.0" },
     { name = "toon-format", git = "https://github.com/toon-format/toon-python.git?rev=v0.9.0-beta.1" },
@@ -682,7 +662,6 @@ provides-extras = ["mssql", "databricks", "examples", "all"]
 [package.metadata.requires-dev]
 dev = [
     { name = "complexipy", specifier = ">=5.2.0" },
-    { name = "dbmcp", extras = ["all"] },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "pyright", specifier = ">=1.1.409" },
     { name = "pytest", specifier = ">=9.0.3" },

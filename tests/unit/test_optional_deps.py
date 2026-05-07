@@ -18,7 +18,7 @@ class TestLazyPyodbcImport:
 
         dialect = MssqlDialect()
         with patch.object(mssql, "pyodbc", None):
-            with pytest.raises(ImportError, match="pip install dbmcp\\[mssql\\]"):
+            with pytest.raises(ImportError, match="Reinstall dbmcp"):
                 dialect.create_engine(
                     server="test",
                     database="test",

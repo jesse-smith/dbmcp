@@ -183,7 +183,7 @@ class MssqlDialect:
                 ) from _pyodbc_import_error
             else:
                 raise ImportError(
-                    "MSSQL support requires pyodbc. Install with: pip install dbmcp[mssql]"
+                    "MSSQL support requires pyodbc. Reinstall dbmcp to pull it in."
                 ) from _pyodbc_import_error
 
         # URL-mode branch: when sqlalchemy_url is provided, parse it and

@@ -26,25 +26,12 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "sqlglot>=30.7.0,<31.0.0",
     "toon-format @ git+https://github.com/toon-format/toon-python.git@v0.9.0-beta.1",
-]
-
-[project.optional-dependencies]
-mssql = [
     "pyodbc>=5.0.0",
     "azure-identity>=1.14.0",
-]
-databricks = [
     "databricks-sqlalchemy>=2.0.0",
     "databricks-sql-connector>=4.0.0",
-]
-examples = [
     "jupyter>=1.0.0",
     "notebook>=7.0.0",
-]
-all = [
-    "dbmcp[mssql]",
-    "dbmcp[databricks]",
-    "dbmcp[examples]",
 ]
 
 [project.scripts]
@@ -109,7 +96,6 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
-    "dbmcp[all]",
     "complexipy>=5.2.0",
     "jupyter>=1.1.1",
     "pyright>=1.1.409",

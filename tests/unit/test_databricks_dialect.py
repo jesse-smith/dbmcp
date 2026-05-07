@@ -65,7 +65,7 @@ class TestDatabricksDialect:
                     http_path="/sql/1.0/warehouses/abc",
                     token="dapi123",
                 )
-            with pytest.raises(ImportError, match="pip install dbmcp\\[databricks\\]"):
+            with pytest.raises(ImportError, match="Reinstall dbmcp"):
                 dialect.create_engine(
                     host="test.databricks.com",
                     http_path="/sql/1.0/warehouses/abc",
