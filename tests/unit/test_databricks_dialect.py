@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -102,14 +102,16 @@ class TestDatabricksDialect:
             call_args = mock_sa_create_engine.call_args
             url = call_args[0][0]
             parsed = urlparse(url)
+            query = parse_qs(parsed.query)
 
             # Verify URL structure
-            assert url.startswith("databricks://token:")
-            assert "dapi_test_token" in url
+            assert parsed.scheme == "databricks"
+            assert parsed.username == "token"
+            assert parsed.password == "dapi_test_token"
             assert parsed.hostname == "my-workspace.cloud.databricks.com"
-            assert "http_path" in url
-            assert "catalog=analytics" in url
-            assert "schema=production" in url
+            assert query["http_path"] == ["/sql/1.0/warehouses/abc123"]
+            assert query["catalog"] == ["analytics"]
+            assert query["schema"] == ["production"]
 
             # Verify pool_pre_ping and echo settings
             assert call_args[1]["pool_pre_ping"] is True
@@ -218,12 +220,12 @@ class TestCreateEngineFromUrl:
 
             url = mock_sa_create_engine.call_args[0][0]
             parsed = urlparse(url)
+            query = parse_qs(parsed.query)
             assert parsed.hostname == "host.cloud.databricks.com"
-            assert "dapi_abc" in url
-            assert "http_path" in url
-            assert "%2Fsql%2F1.0%2Fwarehouses%2Fxyz" in url or "/sql/1.0/warehouses/xyz" in url
-            assert "catalog=analytics" in url
-            assert "schema=production" in url
+            assert parsed.password == "dapi_abc"
+            assert query["http_path"] == ["/sql/1.0/warehouses/xyz"]
+            assert query["catalog"] == ["analytics"]
+            assert query["schema"] == ["production"]
         finally:
             databricks_mod._databricks_import_error = original_error
 
