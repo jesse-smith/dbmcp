@@ -227,77 +227,23 @@ class PKDiscovery:
             List of PKCandidate instances for structural candidates.
         """
         type_filter_lower = {t.lower() for t in type_filter}
-
-        if self._inspector is not None:
-            columns = self._inspector.get_columns(
-                self.table_name, schema=self.schema_name
-            )
-            all_columns = [
-                (c["name"], str(c["type"]), c.get("nullable", True))
-                for c in columns
-            ]
-        else:
-            # Fallback: INFORMATION_SCHEMA query (existing MSSQL logic)
-            cols_query = text("""
-                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = :schema_name
-                    AND TABLE_NAME = :table_name
-                ORDER BY ORDINAL_POSITION
-            """)
-
-            cols_result = self.connection.execute(
-                cols_query,
-                {"schema_name": self.schema_name, "table_name": self.table_name},
-            )
-            all_columns = [
-                (row[0], row[1], row[2] == "YES")
-                for row in cols_result.fetchall()
-            ]
+        all_columns = self._list_all_columns()
 
         candidates = []
-
         for col_name, data_type, is_nullable in all_columns:
-            # Skip already-found constraint columns
-            if col_name in exclude_columns:
+            # Skip already-found constraint columns / nullable / wrong-type
+            if col_name in exclude_columns or is_nullable:
                 continue
-
-            # Must be non-null
-            if is_nullable:
-                continue
-
-            # Type filter check (empty filter = all types pass)
             if type_filter_lower and data_type.lower() not in type_filter_lower:
                 continue
 
-            # Check uniqueness: COUNT(DISTINCT col) vs COUNT(*) WHERE col IS NOT NULL
-            uniq_sql = f"""
-                SELECT
-                    COUNT(DISTINCT [{col_name}]) AS distinct_count,
-                    COUNT(*) AS total_non_null
-                FROM {self._qualified_table}
-                WHERE [{col_name}] IS NOT NULL
-            """
-            uniq_query = text(transpile_query(uniq_sql, self._dialect))
-
-            uniq_result = self.connection.execute(uniq_query)
-            row = uniq_result.fetchall()
-            if not row:
-                continue
-
-            distinct_count = row[0][0]
-            total_non_null = row[0][1]
-
-            is_unique = distinct_count == total_non_null and total_non_null > 0
-
-            if not is_unique:
+            if not self._column_is_unique(col_name):
                 continue
 
             is_pk_type = (
                 not type_filter_lower
                 or data_type.lower() in type_filter_lower
             )
-
             candidates.append(PKCandidate(
                 column_name=col_name,
                 data_type=data_type,
@@ -309,6 +255,59 @@ class PKDiscovery:
             ))
 
         return candidates
+
+    def _list_all_columns(self) -> list[tuple[str, str, bool]]:
+        """List all (name, data_type, is_nullable) columns for the target table.
+
+        Uses SQLAlchemy Inspector when available, falls back to
+        INFORMATION_SCHEMA.
+        """
+        if self._inspector is not None:
+            columns = self._inspector.get_columns(
+                self.table_name, schema=self.schema_name
+            )
+            return [
+                (c["name"], str(c["type"]), c.get("nullable", True))
+                for c in columns
+            ]
+
+        cols_query = text("""
+            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+            ORDER BY ORDINAL_POSITION
+        """)
+        cols_result = self.connection.execute(
+            cols_query,
+            {"schema_name": self.schema_name, "table_name": self.table_name},
+        )
+        return [
+            (row[0], row[1], row[2] == "YES")
+            for row in cols_result.fetchall()
+        ]
+
+    def _column_is_unique(self, col_name: str) -> bool:
+        """Check uniqueness of ``col_name`` over its non-null domain.
+
+        Unique iff COUNT(DISTINCT col) == COUNT(*) over non-null rows AND
+        at least one non-null row exists.
+        """
+        uniq_sql = f"""
+            SELECT
+                COUNT(DISTINCT [{col_name}]) AS distinct_count,
+                COUNT(*) AS total_non_null
+            FROM {self._qualified_table}
+            WHERE [{col_name}] IS NOT NULL
+        """
+        uniq_query = text(transpile_query(uniq_sql, self._dialect))
+        uniq_result = self.connection.execute(uniq_query)
+        row = uniq_result.fetchall()
+        if not row:
+            return False
+        distinct_count = row[0][0]
+        total_non_null = row[0][1]
+        return distinct_count == total_non_null and total_non_null > 0
 
     def find_candidates(
         self,
