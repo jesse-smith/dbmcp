@@ -488,32 +488,59 @@ class MetadataService:
         for name in names:
             if not self._matches_name_pattern(name, name_pattern):
                 continue
-
-            row_count = self._get_row_count_generic(name, schema) if is_table else None
-
-            if min_row_count is not None and (row_count or 0) < min_row_count:
-                continue
-
-            has_pk = self._has_primary_key(name, schema) if is_table else False
-
-            if use_three_level:
-                table_id = f"{catalog}.{display_schema}.{name}"
-            else:
-                table_id = f"{display_schema}.{name}"
-
-            results.append(Table(
-                table_id=table_id,
-                schema_id=display_schema,
-                table_name=name,
+            entry = self._build_table_entry(
+                name=name,
+                schema=schema,
+                display_schema=display_schema,
                 table_type=table_type,
-                row_count=row_count,
-                row_count_updated=datetime.now(),
-                has_primary_key=has_pk,
-                last_modified=None,
-                access_denied=False,
-            ))
+                is_table=is_table,
+                use_three_level=use_three_level,
+                catalog=catalog,
+                min_row_count=min_row_count,
+            )
+            if entry is not None:
+                results.append(entry)
 
         return results
+
+    def _build_table_entry(
+        self,
+        *,
+        name: str,
+        schema: str | None,
+        display_schema: str,
+        table_type: TableType,
+        is_table: bool,
+        use_three_level: bool,
+        catalog: str | None,
+        min_row_count: int | None,
+    ) -> "Table | None":
+        """Build a :class:`Table` entry for one name; returns None if filtered out.
+
+        Row-count filter semantics: ``(row_count or 0) < min_row_count`` skips
+        the entry. Only tables get row counts and PK probes.
+        """
+        row_count = self._get_row_count_generic(name, schema) if is_table else None
+        if min_row_count is not None and (row_count or 0) < min_row_count:
+            return None
+
+        has_pk = self._has_primary_key(name, schema) if is_table else False
+        table_id = (
+            f"{catalog}.{display_schema}.{name}"
+            if use_three_level
+            else f"{display_schema}.{name}"
+        )
+        return Table(
+            table_id=table_id,
+            schema_id=display_schema,
+            table_name=name,
+            table_type=table_type,
+            row_count=row_count,
+            row_count_updated=datetime.now(),
+            has_primary_key=has_pk,
+            last_modified=None,
+            access_denied=False,
+        )
 
     def _has_primary_key(self, table_name: str, schema: str | None) -> bool:
         """Check if a table has a primary key constraint."""
