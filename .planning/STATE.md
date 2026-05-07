@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Multi-Dialect Support
 status: milestone_shipped
 stopped_at: v2.0 archived 2026-05-06
-last_updated: "2026-05-06T21:30:00.000Z"
-last_activity: 2026-05-06 -- v2.0 milestone closed and archived
+last_updated: "2026-05-07T15:30:00.000Z"
+last_activity: 2026-05-07 — Completed quick task 260507-e8m: Fix all 8 complexity violations
 progress:
   total_phases: 7
   completed_phases: 7
@@ -113,6 +113,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-o6n | Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url — mirrors MSSQL fix) | 2026-05-05 | b50268f,10e56a6 | [260505-o6n-fix-databricksdialect-url-parsing-parse-](./quick/260505-o6n-fix-databricksdialect-url-parsing-parse-/) |
 | 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
 | 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
+| 260507-e8m | Fix all 8 complexity violations flagged by CI complexipy gate | 2026-05-07 | f026ca0,2e7b1b9,a3117be,7fc0531,2e1559e,de8e433,be992eb,6bbc680,76bc6c1 | [260507-e8m-fix-all-8-complexity-violations](./quick/260507-e8m-fix-all-8-complexity-violations/) |
 
 ## Session Continuity
 
