@@ -8,9 +8,9 @@ def format_unexpected_error(exc: BaseException, *, include_type: bool = False) -
 
     ImportError/ModuleNotFoundError are surfaced verbatim (they carry an
     actionable install hint at their raise site — e.g., the databricks
-    dialect's "Install with: pip install dbmcp[databricks]" message). All
-    other exceptions keep the legacy "Unexpected error:" prefix so genuine
-    bugs remain visible.
+    dialect's "Reinstall dbmcp to pull it in." message). All other
+    exceptions keep the legacy "Unexpected error:" prefix so genuine bugs
+    remain visible.
 
     Args:
         exc: The exception caught in a generic handler.

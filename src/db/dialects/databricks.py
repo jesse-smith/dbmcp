@@ -221,7 +221,7 @@ class DatabricksDialect:
         if _databricks_import_error is not None:
             raise ImportError(
                 "Databricks support requires databricks-sqlalchemy. "
-                "Install with: pip install dbmcp[databricks]"
+                "Reinstall dbmcp to pull it in."
             ) from _databricks_import_error
 
         sqlalchemy_url = kwargs.get("sqlalchemy_url")

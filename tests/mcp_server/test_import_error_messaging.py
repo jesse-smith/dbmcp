@@ -11,7 +11,7 @@ from src.mcp_server._errors import format_unexpected_error
 
 
 def test_import_error_is_verbatim_no_prefix() -> None:
-    msg = "Install with: pip install dbmcp[databricks]"
+    msg = "Databricks support requires databricks-sqlalchemy. Reinstall dbmcp to pull it in."
     result = format_unexpected_error(ImportError(msg))
     assert result == msg
 
@@ -37,7 +37,7 @@ def test_import_error_does_not_start_with_unexpected_prefix() -> None:
     result = format_unexpected_error(
         ImportError(
             "Databricks support requires databricks-sqlalchemy. "
-            "Install with: pip install dbmcp[databricks]"
+            "Reinstall dbmcp to pull it in."
         )
     )
     assert not result.startswith("Unexpected error:")
