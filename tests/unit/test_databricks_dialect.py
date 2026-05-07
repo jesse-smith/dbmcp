@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -364,8 +365,9 @@ class TestCreateEngineFromUrl:
             )
 
             url = mock_sa_create_engine.call_args[0][0]
+            parsed = urlparse(url)
             assert url.startswith("databricks://token:")
-            assert "legacy.databricks.com" in url
+            assert parsed.hostname == "legacy.databricks.com"
             assert "legacy_tok" in url
             assert "catalog=legacy_cat" in url
             assert "schema=legacy_schema" in url
