@@ -44,8 +44,12 @@ def main() -> int:
         capture_output=True,
     )
 
-    # complexipy writes to cwd with a timestamped name
-    json_files = sorted(project_root.glob("complexipy_results_*.json"))
+    # complexipy writes to cwd. Pre-5.4 used timestamped
+    # `complexipy_results_<ts>.json`; 5.4+ uses `complexipy-results.json`.
+    json_files = sorted(
+        [*project_root.glob("complexipy_results_*.json"), *project_root.glob("complexipy-results.json")],
+        key=lambda p: p.stat().st_mtime,
+    )
     if not json_files:
         print("ERROR: complexipy did not produce output")
         return 1
