@@ -101,11 +101,12 @@ class TestDatabricksDialect:
             mock_sa_create_engine.assert_called_once()
             call_args = mock_sa_create_engine.call_args
             url = call_args[0][0]
+            parsed = urlparse(url)
 
             # Verify URL structure
             assert url.startswith("databricks://token:")
             assert "dapi_test_token" in url
-            assert "my-workspace.cloud.databricks.com" in url
+            assert parsed.hostname == "my-workspace.cloud.databricks.com"
             assert "http_path" in url
             assert "catalog=analytics" in url
             assert "schema=production" in url
@@ -181,7 +182,11 @@ class TestDatabricksDialect:
             )
 
             url = mock_sa_create_engine.call_args[0][0]
-            assert "databricks://token:@test.databricks.com" in url
+            parsed = urlparse(url)
+            assert parsed.scheme == "databricks"
+            assert parsed.username == "token"
+            assert parsed.password == ""
+            assert parsed.hostname == "test.databricks.com"
         finally:
             databricks_mod._databricks_import_error = original_error
 
@@ -212,7 +217,8 @@ class TestCreateEngineFromUrl:
             )
 
             url = mock_sa_create_engine.call_args[0][0]
-            assert "host.cloud.databricks.com" in url
+            parsed = urlparse(url)
+            assert parsed.hostname == "host.cloud.databricks.com"
             assert "dapi_abc" in url
             assert "http_path" in url
             assert "%2Fsql%2F1.0%2Fwarehouses%2Fxyz" in url or "/sql/1.0/warehouses/xyz" in url
@@ -341,8 +347,8 @@ class TestCreateEngineFromUrl:
             )
 
             url = mock_sa_create_engine.call_args[0][0]
-            assert "url-host.cloud.databricks.com" in url
-            assert "other.databricks.com" not in url
+            parsed = urlparse(url)
+            assert parsed.hostname == "url-host.cloud.databricks.com"
         finally:
             databricks_mod._databricks_import_error = original_error
 
