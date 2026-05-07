@@ -251,7 +251,7 @@ class MssqlDialect:
         return engine
 
     @staticmethod
-    def _build_pool_kwargs(pool_config, authentication_method: "AuthenticationMethod") -> dict:
+    def _build_pool_kwargs(pool_config, authentication_method: AuthenticationMethod) -> dict:
         """Build the pool kwargs dict for ``sa_create_engine``.
 
         Azure AD (either flavor) overrides ``pool_recycle`` with the shorter
