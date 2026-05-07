@@ -651,6 +651,7 @@ mssql = [
 [package.dev-dependencies]
 dev = [
     { name = "complexipy" },
+    { name = "dbmcp", extra = ["all"] },
     { name = "jupyter" },
     { name = "pyright" },
     { name = "pytest" },
@@ -679,6 +680,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "complexipy", specifier = ">=5.2.0" },
+    { name = "dbmcp", extras = ["all"] },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=9.0.3" },

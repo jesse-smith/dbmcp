@@ -109,6 +109,7 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
+    "dbmcp[all]",
     "complexipy>=5.2.0",
     "jupyter>=1.1.1",
     "pyright>=1.1.408",
