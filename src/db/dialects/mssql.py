@@ -225,44 +225,15 @@ class MssqlDialect:
             driver=driver,
         )
 
-        pool_kwargs = {
-            "poolclass": QueuePool,
-            "pool_size": pool_config.pool_size,
-            "max_overflow": pool_config.max_overflow,
-            "pool_timeout": pool_config.pool_timeout,
-            "pool_pre_ping": pool_config.pool_pre_ping,
-            "pool_recycle": pool_config.pool_recycle,
-            "echo": False,
-        }
-
-        # Auth-aware pool_recycle: Azure AD connections use a shorter recycle
-        # interval to discard connections before token expiry (~3600s).
-        if authentication_method in (
-            AuthenticationMethod.AZURE_AD,
-            AuthenticationMethod.AZURE_AD_INTEGRATED,
-        ):
-            pool_kwargs["pool_recycle"] = pool_config.azure_ad_pool_recycle
-            logger.debug(
-                f"Azure AD auth: pool_recycle set to {pool_kwargs['pool_recycle']}s (token-aware)"
-            )
+        pool_kwargs = self._build_pool_kwargs(pool_config, authentication_method)
 
         if authentication_method == AuthenticationMethod.AZURE_AD_INTEGRATED:
-            provider = AzureTokenProvider(tenant_id=tenant_id)
-
-            def creator():
-                try:
-                    token = provider.get_token()
-                except builtins.ConnectionError:
-                    logger.debug("Azure AD token re-acquisition failed, cleaning up connection")
-                    if disconnect_callback and connection_id:
-                        disconnect_callback(connection_id)
-                    raise
-                packed = provider.pack_token_for_pyodbc(token)
-                return pyodbc.connect(
-                    odbc_conn_str,
-                    attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed},
-                )
-
+            creator = self._build_azure_ad_creator(
+                odbc_conn_str=odbc_conn_str,
+                tenant_id=tenant_id,
+                connection_id=connection_id,
+                disconnect_callback=disconnect_callback,
+            )
             engine = sa_create_engine("mssql+pyodbc://", creator=creator, **pool_kwargs)
         else:
             engine = sa_create_engine(
@@ -278,6 +249,64 @@ class MssqlDialect:
                 dbapi_connection.timeout = query_timeout
 
         return engine
+
+    @staticmethod
+    def _build_pool_kwargs(pool_config, authentication_method: AuthenticationMethod) -> dict:
+        """Build the pool kwargs dict for ``sa_create_engine``.
+
+        Azure AD (either flavor) overrides ``pool_recycle`` with the shorter
+        ``azure_ad_pool_recycle`` so pooled connections are recycled before
+        the AD access token expires (~3600s).
+        """
+        pool_kwargs = {
+            "poolclass": QueuePool,
+            "pool_size": pool_config.pool_size,
+            "max_overflow": pool_config.max_overflow,
+            "pool_timeout": pool_config.pool_timeout,
+            "pool_pre_ping": pool_config.pool_pre_ping,
+            "pool_recycle": pool_config.pool_recycle,
+            "echo": False,
+        }
+        if authentication_method in (
+            AuthenticationMethod.AZURE_AD,
+            AuthenticationMethod.AZURE_AD_INTEGRATED,
+        ):
+            pool_kwargs["pool_recycle"] = pool_config.azure_ad_pool_recycle
+            logger.debug(
+                f"Azure AD auth: pool_recycle set to {pool_kwargs['pool_recycle']}s (token-aware)"
+            )
+        return pool_kwargs
+
+    @staticmethod
+    def _build_azure_ad_creator(
+        odbc_conn_str: str,
+        tenant_id: str | None,
+        connection_id: str | None,
+        disconnect_callback: Callable[[str], None] | None,
+    ):
+        """Build the pyodbc ``creator`` closure for Azure AD Integrated auth.
+
+        The closure fetches a fresh AD token on each new pooled connection and
+        attaches it via ``SQL_COPT_SS_ACCESS_TOKEN``. Token acquisition failure
+        triggers ``disconnect_callback`` so the stale connection is purged.
+        """
+        provider = AzureTokenProvider(tenant_id=tenant_id)
+
+        def creator():
+            try:
+                token = provider.get_token()
+            except builtins.ConnectionError:
+                logger.debug("Azure AD token re-acquisition failed, cleaning up connection")
+                if disconnect_callback and connection_id:
+                    disconnect_callback(connection_id)
+                raise
+            packed = provider.pack_token_for_pyodbc(token)
+            return pyodbc.connect(
+                odbc_conn_str,
+                attrs_before={SQL_COPT_SS_ACCESS_TOKEN: packed},
+            )
+
+        return creator
 
     def fast_row_counts(
         self, engine: Engine, schema_name: str | None = None

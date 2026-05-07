@@ -488,32 +488,59 @@ class MetadataService:
         for name in names:
             if not self._matches_name_pattern(name, name_pattern):
                 continue
-
-            row_count = self._get_row_count_generic(name, schema) if is_table else None
-
-            if min_row_count is not None and (row_count or 0) < min_row_count:
-                continue
-
-            has_pk = self._has_primary_key(name, schema) if is_table else False
-
-            if use_three_level:
-                table_id = f"{catalog}.{display_schema}.{name}"
-            else:
-                table_id = f"{display_schema}.{name}"
-
-            results.append(Table(
-                table_id=table_id,
-                schema_id=display_schema,
-                table_name=name,
+            entry = self._build_table_entry(
+                name=name,
+                schema=schema,
+                display_schema=display_schema,
                 table_type=table_type,
-                row_count=row_count,
-                row_count_updated=datetime.now(),
-                has_primary_key=has_pk,
-                last_modified=None,
-                access_denied=False,
-            ))
+                is_table=is_table,
+                use_three_level=use_three_level,
+                catalog=catalog,
+                min_row_count=min_row_count,
+            )
+            if entry is not None:
+                results.append(entry)
 
         return results
+
+    def _build_table_entry(
+        self,
+        *,
+        name: str,
+        schema: str | None,
+        display_schema: str,
+        table_type: TableType,
+        is_table: bool,
+        use_three_level: bool,
+        catalog: str | None,
+        min_row_count: int | None,
+    ) -> "Table | None":
+        """Build a :class:`Table` entry for one name; returns None if filtered out.
+
+        Row-count filter semantics: ``(row_count or 0) < min_row_count`` skips
+        the entry. Only tables get row counts and PK probes.
+        """
+        row_count = self._get_row_count_generic(name, schema) if is_table else None
+        if min_row_count is not None and (row_count or 0) < min_row_count:
+            return None
+
+        has_pk = self._has_primary_key(name, schema) if is_table else False
+        table_id = (
+            f"{catalog}.{display_schema}.{name}"
+            if use_three_level
+            else f"{display_schema}.{name}"
+        )
+        return Table(
+            table_id=table_id,
+            schema_id=display_schema,
+            table_name=name,
+            table_type=table_type,
+            row_count=row_count,
+            row_count_updated=datetime.now(),
+            has_primary_key=has_pk,
+            last_modified=None,
+            access_denied=False,
+        )
 
     def _has_primary_key(self, table_name: str, schema: str | None) -> bool:
         """Check if a table has a primary key constraint."""
@@ -1045,42 +1072,13 @@ class MetadataService:
 
             props: dict = {}
             partition_cols: list[str] = []
-            in_partition_section = False
-            in_detail_section = False
+            in_partition = False
+            in_detail = False
 
             for row in rows:
-                col_name = (row[0] or "").strip()
-                data_type = (row[1] or "").strip() if len(row) > 1 else ""
-
-                # Section markers
-                if col_name.startswith("# Partition Information"):
-                    in_partition_section = True
-                    in_detail_section = False
-                    continue
-                elif col_name.startswith("# Detailed Table Information"):
-                    in_partition_section = False
-                    in_detail_section = True
-                    continue
-                elif col_name.startswith("#"):
-                    continue  # Skip header rows
-                elif not col_name and not data_type:
-                    in_partition_section = False
-                    # Don't reset detail section -- it continues to end
-                    continue
-
-                if in_partition_section and col_name:
-                    partition_cols.append(col_name)
-
-                if in_detail_section:
-                    key_map = {
-                        "Owner": "owner",
-                        "Provider": "storage_format",
-                        "Type": "table_type_detail",
-                        "Created Time": "created_time",
-                        "Location": "location",
-                    }
-                    if col_name in key_map:
-                        props[key_map[col_name]] = data_type
+                in_partition, in_detail = self._process_dte_row(
+                    row, props, partition_cols, in_partition, in_detail
+                )
 
             if partition_cols:
                 props["partition_columns"] = partition_cols
@@ -1095,6 +1093,71 @@ class MetadataService:
             )
             # Return error indicator so caller can optionally surface it
             return {"_describe_extended_error": error_msg}
+
+    def _process_dte_row(
+        self,
+        row,
+        props: dict,
+        partition_cols: list[str],
+        in_partition: bool,
+        in_detail: bool,
+    ) -> tuple[bool, bool]:
+        """Process a single DESCRIBE TABLE EXTENDED row; mutate accumulators.
+
+        Returns the updated ``(in_partition, in_detail)`` section flags.
+        """
+        col_name = (row[0] or "").strip()
+        data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+        section, in_partition, in_detail, is_data = self._classify_dte_row(
+            col_name, data_type, in_partition, in_detail
+        )
+        if is_data:
+            if section == "partition" and col_name:
+                partition_cols.append(col_name)
+            elif section == "detail":
+                self._apply_dte_detail_row(props, col_name, data_type)
+        return in_partition, in_detail
+
+    @staticmethod
+    def _classify_dte_row(
+        col_name: str, data_type: str, in_partition: bool, in_detail: bool
+    ) -> tuple[str, bool, bool, bool]:
+        """Classify a DESCRIBE TABLE EXTENDED row.
+
+        Returns (section, next_in_partition, next_in_detail, is_data_row).
+        ``section`` is "partition" | "detail" | "none" when ``is_data_row`` is True.
+        When ``is_data_row`` is False the row is a section marker / header /
+        blank separator and should be skipped by the caller.
+        """
+        if col_name.startswith("# Partition Information"):
+            return "none", True, False, False
+        if col_name.startswith("# Detailed Table Information"):
+            return "none", False, True, False
+        if col_name.startswith("#"):
+            return "none", in_partition, in_detail, False
+        if not col_name and not data_type:
+            # Blank separator: ends partition section; detail continues to EOF
+            return "none", False, in_detail, False
+
+        if in_partition:
+            return "partition", in_partition, in_detail, True
+        if in_detail:
+            return "detail", in_partition, in_detail, True
+        return "none", in_partition, in_detail, True
+
+    @staticmethod
+    def _apply_dte_detail_row(props: dict, col_name: str, data_type: str) -> None:
+        """Apply a Detailed-Table-Information row to ``props`` via the key map."""
+        key_map = {
+            "Owner": "owner",
+            "Provider": "storage_format",
+            "Type": "table_type_detail",
+            "Created Time": "created_time",
+            "Location": "location",
+        }
+        if col_name in key_map:
+            props[key_map[col_name]] = data_type
 
     def table_exists(
         self,

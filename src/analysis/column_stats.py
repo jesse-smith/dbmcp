@@ -492,6 +492,44 @@ class ColumnStatsCollector:
             string_stats=string_stats,
         )
 
+    def _resolve_columns_to_analyze(
+        self,
+        columns: list[str] | None,
+        column_pattern: str | None,
+    ) -> list[str]:
+        """Resolve which columns to analyze.
+
+        Precedence: explicit ``columns`` > ``column_pattern`` > all columns
+        (via SQLAlchemy inspector, falling back to INFORMATION_SCHEMA).
+        """
+        if columns is not None:
+            return columns
+        if column_pattern is not None:
+            pattern_results = self.get_columns_by_pattern(column_pattern)
+            return [col_name for col_name, _type_info in pattern_results]
+
+        if self._inspector is not None:
+            inspector_cols = self._inspector.get_columns(
+                self.table_name, schema=self.schema_name
+            )
+            return [c["name"] for c in inspector_cols]
+
+        all_columns_query = text("""
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = :schema_name
+                AND TABLE_NAME = :table_name
+            ORDER BY ORDINAL_POSITION
+        """)
+        result = self.connection.execute(
+            all_columns_query,
+            {
+                "schema_name": self.schema_name,
+                "table_name": self.table_name,
+            },
+        )
+        return [row[0] for row in result.fetchall()]
+
     def get_columns_info(
         self,
         columns: list[str] | None = None,
@@ -499,35 +537,7 @@ class ColumnStatsCollector:
         sample_size: int = 10,
     ) -> list[ColumnStatistics]:
         """Collect statistics for multiple columns with optional filtering."""
-        columns_to_analyze: list[str] = []
-
-        if columns is not None:
-            columns_to_analyze = columns
-        elif column_pattern is not None:
-            pattern_results = self.get_columns_by_pattern(column_pattern)
-            columns_to_analyze = [col_name for col_name, _type_info in pattern_results]
-        else:
-            if self._inspector is not None:
-                inspector_cols = self._inspector.get_columns(
-                    self.table_name, schema=self.schema_name
-                )
-                columns_to_analyze = [c["name"] for c in inspector_cols]
-            else:
-                all_columns_query = text("""
-                    SELECT COLUMN_NAME
-                    FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_SCHEMA = :schema_name
-                        AND TABLE_NAME = :table_name
-                    ORDER BY ORDINAL_POSITION
-                """)
-                result = self.connection.execute(
-                    all_columns_query,
-                    {
-                        "schema_name": self.schema_name,
-                        "table_name": self.table_name,
-                    },
-                )
-                columns_to_analyze = [row[0] for row in result.fetchall()]
+        columns_to_analyze = self._resolve_columns_to_analyze(columns, column_pattern)
 
         # Databricks fast path: probe first column to decide bulk strategy
         use_fast_path = False
