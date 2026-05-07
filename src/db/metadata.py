@@ -1045,42 +1045,13 @@ class MetadataService:
 
             props: dict = {}
             partition_cols: list[str] = []
-            in_partition_section = False
-            in_detail_section = False
+            in_partition = False
+            in_detail = False
 
             for row in rows:
-                col_name = (row[0] or "").strip()
-                data_type = (row[1] or "").strip() if len(row) > 1 else ""
-
-                # Section markers
-                if col_name.startswith("# Partition Information"):
-                    in_partition_section = True
-                    in_detail_section = False
-                    continue
-                elif col_name.startswith("# Detailed Table Information"):
-                    in_partition_section = False
-                    in_detail_section = True
-                    continue
-                elif col_name.startswith("#"):
-                    continue  # Skip header rows
-                elif not col_name and not data_type:
-                    in_partition_section = False
-                    # Don't reset detail section -- it continues to end
-                    continue
-
-                if in_partition_section and col_name:
-                    partition_cols.append(col_name)
-
-                if in_detail_section:
-                    key_map = {
-                        "Owner": "owner",
-                        "Provider": "storage_format",
-                        "Type": "table_type_detail",
-                        "Created Time": "created_time",
-                        "Location": "location",
-                    }
-                    if col_name in key_map:
-                        props[key_map[col_name]] = data_type
+                in_partition, in_detail = self._process_dte_row(
+                    row, props, partition_cols, in_partition, in_detail
+                )
 
             if partition_cols:
                 props["partition_columns"] = partition_cols
@@ -1095,6 +1066,71 @@ class MetadataService:
             )
             # Return error indicator so caller can optionally surface it
             return {"_describe_extended_error": error_msg}
+
+    def _process_dte_row(
+        self,
+        row,
+        props: dict,
+        partition_cols: list[str],
+        in_partition: bool,
+        in_detail: bool,
+    ) -> tuple[bool, bool]:
+        """Process a single DESCRIBE TABLE EXTENDED row; mutate accumulators.
+
+        Returns the updated ``(in_partition, in_detail)`` section flags.
+        """
+        col_name = (row[0] or "").strip()
+        data_type = (row[1] or "").strip() if len(row) > 1 else ""
+
+        section, in_partition, in_detail, is_data = self._classify_dte_row(
+            col_name, data_type, in_partition, in_detail
+        )
+        if is_data:
+            if section == "partition" and col_name:
+                partition_cols.append(col_name)
+            elif section == "detail":
+                self._apply_dte_detail_row(props, col_name, data_type)
+        return in_partition, in_detail
+
+    @staticmethod
+    def _classify_dte_row(
+        col_name: str, data_type: str, in_partition: bool, in_detail: bool
+    ) -> tuple[str, bool, bool, bool]:
+        """Classify a DESCRIBE TABLE EXTENDED row.
+
+        Returns (section, next_in_partition, next_in_detail, is_data_row).
+        ``section`` is "partition" | "detail" | "none" when ``is_data_row`` is True.
+        When ``is_data_row`` is False the row is a section marker / header /
+        blank separator and should be skipped by the caller.
+        """
+        if col_name.startswith("# Partition Information"):
+            return "none", True, False, False
+        if col_name.startswith("# Detailed Table Information"):
+            return "none", False, True, False
+        if col_name.startswith("#"):
+            return "none", in_partition, in_detail, False
+        if not col_name and not data_type:
+            # Blank separator: ends partition section; detail continues to EOF
+            return "none", False, in_detail, False
+
+        if in_partition:
+            return "partition", in_partition, in_detail, True
+        if in_detail:
+            return "detail", in_partition, in_detail, True
+        return "none", in_partition, in_detail, True
+
+    @staticmethod
+    def _apply_dte_detail_row(props: dict, col_name: str, data_type: str) -> None:
+        """Apply a Detailed-Table-Information row to ``props`` via the key map."""
+        key_map = {
+            "Owner": "owner",
+            "Provider": "storage_format",
+            "Type": "table_type_detail",
+            "Created Time": "created_time",
+            "Location": "location",
+        }
+        if col_name in key_map:
+            props[key_map[col_name]] = data_type
 
     def table_exists(
         self,
