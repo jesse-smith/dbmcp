@@ -69,3 +69,6 @@ credentials.json
 # Generated test database (examples)
 examples/test_database/example.db
 .complexipy_cache/
+
+# GSD
+HANDOFF.json
