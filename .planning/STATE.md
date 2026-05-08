@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Multi-Dialect Support
-status: milestone_shipped
-stopped_at: v2.0 archived 2026-05-06
-last_updated: "2026-05-07T15:30:00.000Z"
-last_activity: 2026-05-07 — Completed quick task 260507-e8m: Fix all 8 complexity violations
+milestone: v2.1
+milestone_name: Databricks identifier fixes
+status: planning
+last_updated: "2026-05-08T18:51:24.692Z"
+last_activity: 2026-05-08
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,13 +24,10 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 ## Current Position
 
-Milestone: v2.0 ✅ SHIPPED 2026-05-06
-Phase: —
+Phase: Not started (defining requirements)
 Plan: —
-Status: milestone_shipped
-Last activity: 2026-05-07 — Completed quick task 260507-h6j: Move all optional extras to hard dependencies
-
-Progress: [██████████] 100%
+Status: Defining requirements
+Last activity: 2026-05-08 — Milestone v2.1 started
 
 ## Performance Metrics
 

@@ -14,14 +14,22 @@ LLM agents can explore and query databases safely, with validated read-only acce
 
 dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQLAlchemy URL (Generic) — via a `DialectStrategy` protocol. MSSQL behavior is preserved verbatim; Databricks runs optimized paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats); Generic falls back to Inspector-only metadata. All 9 MCP tools dispatch dialect-specific behavior through the strategy.
 
-## Next Milestone
+## Current Milestone: v2.1 Databricks identifier fixes
 
-Not yet scoped. Candidate themes surfaced during v2.0:
-- **API consistency pass** (Phase 999.1 backlog) — normalize `catalog` kwarg coverage, drop hardcoded `"dbo"` default, unify row-limit and sample-size naming across tools
-- **Databricks enrichment** — Unity Catalog tag metadata, cross-catalog discovery, ANALYZE TABLE orchestration
-- **Query result caching / audit logging** — deferred from v1.1
+**Goal:** Fix Databricks catalog handling and unify 3-part identifier resolution across MCP tools. API is changing — existing Databricks connections without a catalog in the URL will break, by design.
 
-Use `/gsd-new-milestone` to run discovery + requirements → roadmap.
+**Target features:**
+- Require catalog at connect time for Databricks connections (fail-fast with accessible-catalog list from `SHOW CATALOGS`)
+- Unified identifier resolver across the five affected tools: dialect-aware depth (3/2/1), strict conflict detection between `table_name` / `schema_name` / `catalog`, dialect-aware default schema (no more hardcoded `"dbo"`)
+- Add `catalog` parameter to `get_sample_data` and `get_column_info`
+- Drop the silent catalog-listing fallback in `list_schemas`
+- Residual Databricks `connect_with_config` regression tests (env-var substitution for `catalog`/`schema_name`, `SQLAlchemyError` → `ConnectionError` wrapping)
+
+**Sources:**
+- `.planning/todos/pending/2026-05-08-unify-3-part-identifier-handling-and-require-databricks-cata.md`
+- `.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`
+
+**Explicitly out of scope:** Cross-dialect `list_databases`/`list_catalogs` enumeration tool — captured as note for a future milestone.
 
 ## Requirements
 
@@ -57,7 +65,17 @@ Use `/gsd-new-milestone` to run discovery + requirements → roadmap.
 
 ### Active
 
-_(No active requirements — next milestone not yet scoped. See "Next Milestone" above.)_
+<!-- v2.1 Databricks identifier fixes — see REQUIREMENTS.md for full list -->
+
+- [ ] **IDENT-01**: `connect_database` rejects Databricks connections without a catalog, listing accessible catalogs in the error
+- [ ] **IDENT-02**: `list_schemas` no longer silently returns catalog names when schema lookup fails
+- [ ] **IDENT-03**: All five namespace-aware tools parse dotted `table_name` per dialect depth and error on extra parts
+- [ ] **IDENT-04**: Explicit `schema_name`/`catalog` params that conflict with segments in `table_name` produce a named-conflict error (no silent overrides)
+- [ ] **IDENT-05**: `get_sample_data` accepts a `catalog` parameter on Databricks; errors on MSSQL/generic
+- [ ] **IDENT-06**: `get_column_info` accepts a `catalog` parameter on Databricks; errors on MSSQL/generic
+- [ ] **IDENT-07**: Per-dialect default schema advertised on `DialectStrategy`; no tool signature hardcodes `"dbo"`
+- [ ] **TEST-01**: Regression test for env-var substitution on `catalog` and `schema_name` in Databricks `connect_with_config`
+- [ ] **TEST-02**: Regression test for `SQLAlchemyError` → `ConnectionError` wrapping on Databricks connect path
 
 ### Out of Scope
 
@@ -134,4 +152,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-06 after v2.0 milestone complete — Multi-dialect architecture (MSSQL + Databricks + Generic) shipped via DialectStrategy protocol, with dialect-aware validation, analysis tools, and 85%+ test coverage floor.*
+*Last updated: 2026-05-08 after v2.1 milestone scoped — Databricks identifier fixes (require catalog at connect, unified 3-part resolver, fix `get_sample_data`/`get_column_info` catalog gap, drop `dbo` default, residual regression tests).*
