@@ -387,11 +387,16 @@ class QueryService:
         if not is_direct_select and not is_cte_select:
             return query_text
 
-        # SQLite/test mode: Add LIMIT clause if not present
-        if self._dialect is None:
-            if " LIMIT " not in query_text.upper():
-                return f"{query_text} LIMIT {row_limit}"
-            return query_text
+        # Non-MSSQL dialects (Databricks, generic, SQLite/test): use LIMIT
+        if self._dialect is None or self._dialect.name != "mssql":
+            if re.search(r'\bLIMIT\s+\d+', query_text, re.IGNORECASE):
+                return query_text
+            # Insert LIMIT before any trailing statement terminator so we
+            # don't produce "SELECT ...; LIMIT N" (a syntax error).
+            match = re.search(r'\s*;\s*$', query_text)
+            if match:
+                return f"{query_text[:match.start()]} LIMIT {row_limit}{query_text[match.start():]}"
+            return f"{query_text} LIMIT {row_limit}"
 
         # SQL Server: Return early if TOP already exists
         if re.search(r'\bTOP\s*\(?\s*\d+\s*\)?', query_text, re.IGNORECASE):

@@ -13,6 +13,7 @@ Tests cover:
 - Config-driven truncation limit
 """
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -568,8 +569,9 @@ class TestRowLimitInjection:
         [
             ("mssql", "SELECT * FROM Users", "TOP", "100"),
             ("sqlite", "SELECT * FROM Users", "LIMIT 100", None),
+            ("databricks", "SELECT * FROM Users", "LIMIT 100", None),
         ],
-        ids=["top_sqlserver", "limit_sqlite"],
+        ids=["top_sqlserver", "limit_sqlite", "limit_databricks"],
     )
     def test_inject_row_limit(self, mock_engine, dialect, sql, check_keyword, limit_val):
         """Test row limit clause is injected for different dialects."""
@@ -579,6 +581,27 @@ class TestRowLimitInjection:
         assert check_keyword in result.upper()
         if limit_val:
             assert limit_val in result
+
+    @pytest.mark.parametrize(
+        "dialect,sql",
+        [
+            ("databricks", "SELECT * FROM Users;"),
+            ("databricks", "WITH cte AS (SELECT * FROM Users) SELECT * FROM cte;"),
+            ("sqlite", "SELECT * FROM Users  ;  "),
+        ],
+        ids=["databricks_trailing_semicolon", "databricks_cte_trailing_semicolon", "sqlite_trailing_semicolon_whitespace"],
+    )
+    def test_limit_with_trailing_semicolon(self, mock_engine, dialect, sql):
+        """LIMIT must be inserted before any trailing statement terminator."""
+        mock_engine.dialect.name = dialect
+        service = QueryService(mock_engine)
+        result = service.inject_row_limit(sql, 100)
+        # LIMIT must not appear after a semicolon
+        assert "; LIMIT" not in result.upper()
+        assert ";LIMIT" not in result.upper().replace(" ", "")
+        # LIMIT N must be present, and the trailing ; must be preserved
+        assert re.search(r'LIMIT\s+100', result, re.IGNORECASE)
+        assert result.rstrip().endswith(";")
 
     def test_no_duplicate_top(self, mock_engine):
         """Test TOP is not duplicated if already present."""
