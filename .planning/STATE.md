@@ -89,6 +89,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 ### Pending Todos
 
 - [testing] Add Databricks integration tests for env-var substitution and error wrapping (`.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`)
+- [database] Unify 3-part identifier handling and require Databricks catalog (`.planning/todos/pending/2026-05-08-unify-3-part-identifier-handling-and-require-databricks-cata.md`)
 
 ### Blockers/Concerns
 
