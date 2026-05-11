@@ -583,7 +583,7 @@ wheels = [
 
 [[package]]
 name = "databricks-sql-connector"
-version = "4.2.5"
+version = "4.2.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "lz4" },
@@ -597,9 +597,9 @@ dependencies = [
     { name = "thrift" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/0c/1e8179f427044a0c769e279b2c45b72a20cff902f4e92ca1bcca50549435/databricks_sql_connector-4.2.5.tar.gz", hash = "sha256:762df7568ef1998540f96b20cad6f1aaae87d1aad54e40e528f87e4524397291", size = 187223, upload-time = "2026-02-09T11:26:29.762Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/2f/2c1a96b1d40d53dc9a0abf639c823895b6da76b1b5dc2f2230df2ae1aa6c/databricks_sql_connector-4.2.6.tar.gz", hash = "sha256:65e59f08e55dcc563c05e02e2321d5171dd9482e5792328d99ac097377795d01", size = 189069, upload-time = "2026-04-23T10:40:33.878Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/a7/0d6dd8323cb2249a979cf4c6a45694e975668c53b19d52d7e15490bafb4c/databricks_sql_connector-4.2.5-py3-none-any.whl", hash = "sha256:31cee10552ce77a830318ce9488fc5e67daca7abbcdf0d8d34f12a180bc55039", size = 213906, upload-time = "2026-02-09T11:26:28.566Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/4f/4ea282af1e413d26e47b9e987c1cbef1d3fc599da81eb54ac2bf74b6b822/databricks_sql_connector-4.2.6-py3-none-any.whl", hash = "sha256:61e0f425c990a0ec52c31165ea7dd0582cc0ad90c5fbd5fc9bea59bb38faeb00", size = 216743, upload-time = "2026-04-23T10:40:32.216Z" },
 ]
 
 [[package]]
@@ -647,7 +647,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "azure-identity", specifier = ">=1.14.0" },
-    { name = "databricks-sql-connector", specifier = ">=4.0.0" },
+    { name = "databricks-sql-connector", specifier = ">=4.2.6" },
     { name = "databricks-sqlalchemy", specifier = ">=2.0.0" },
     { name = "jupyter", specifier = ">=1.0.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.27.0" },
@@ -2730,12 +2730,9 @@ wheels = [
 
 [[package]]
 name = "thrift"
-version = "0.20.0"
+version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "six" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3c/2d/8946864f716ac82dcc88d290ed613cba7a80ec75df4f553ec3ff275f486e/thrift-0.20.0.tar.gz", hash = "sha256:4dd662eadf6b8aebe8a41729527bd69adf6ceaa2a8681cbef64d1273b3e8feba", size = 62295, upload-time = "2024-03-22T22:53:08.228Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/c2/db648cc10dd7d15560f2eafd92a27cd280811924696e0b4a87175fb28c94/thrift-0.22.0.tar.gz", hash = "sha256:42e8276afbd5f54fe1d364858b6877bc5e5a4a5ed69f6a005b94ca4918fe1466", size = 62303, upload-time = "2025-05-23T20:49:33.309Z" }
 
 [[package]]
 name = "tinycss2"
