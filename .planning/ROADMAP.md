@@ -56,6 +56,14 @@
 4. `test_sqlalchemy_error_wrapped_as_connection_error` passes: `SQLAlchemyError` from `DatabricksDialect.create_engine` surfaces as `ConnectionError` with the host string.
 5. Full test suite green; no existing MSSQL/generic tests regress.
 
+**Plans:** 4 plans
+
+- [ ] 14-01-PLAN.md — Dialect layer: remove "main" fallbacks, add catalog guard in create_engine, add list_catalogs method
+- [ ] 14-02-PLAN.md — Metadata cleanup: delete _list_databricks_catalogs fallback, rename _databricks_default_catalog → _engine_catalog
+- [ ] 14-03-PLAN.md — Connect layer: add _require_databricks_catalog helper, wire into URL + config paths, fix line 499 "main" fallback (D-18)
+- [ ] 14-04-PLAN.md — Regression + closure tests: IDENT-01 (3 cases), IDENT-02 (no SHOW CATALOGS lock), TEST-01, TEST-02
+
+
 #### Phase 15: Unified identifier resolver (cross-dialect)
 
 **Goal:** Land one shared identifier resolver used by all five namespace-aware tools. Dialect-aware depth (3/2/1), strict conflict detection between `table_name` and explicit params, dialect-aware default schema.
