@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: planning
-last_updated: "2026-05-08T18:51:24.692Z"
-last_activity: 2026-05-08
+status: Defining requirements
+stopped_at: Phase 14 context gathered
+last_updated: "2026-05-11T20:34:07.784Z"
+last_activity: 2026-05-08 — Milestone v2.1 started
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
-  percent: 0
 ---
 
 # Project State
@@ -116,7 +116,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 13.1 context gathered
+Stopped at: Phase 14 context gathered
 Resume file: --resume-file
 
 **Planned Phase:** 13 (test-infrastructure-coverage) — 4 plans — 2026-04-27T17:05:36.697Z
