@@ -29,7 +29,7 @@ dependencies = [
     "pyodbc>=5.0.0",
     "azure-identity>=1.14.0",
     "databricks-sqlalchemy>=2.0.0",
-    "databricks-sql-connector>=4.0.0",
+    "databricks-sql-connector>=4.2.6",
     "jupyter>=1.0.0",
     "notebook>=7.5.6",
 ]
