@@ -449,21 +449,16 @@ def test_sqlalchemy_error_wrapped_as_connection_error(monkeypatch):
 | A3 | `SHOW CATALOGS` result shape is `(catalog_name,)` tuples — a single column accessed as `row[0]`. | `SHOW CATALOGS` command shape | Verified by reading the existing `_list_databricks_catalogs` code at `metadata.py:174` which uses `row[0]`. Confidence: HIGH. |
 | A4 | The existing `databricks-sqlalchemy` install handles `SHOW CATALOGS` via the generic `conn.execute(text(...))` path the way `SHOW SCHEMAS IN` does today. | `list_catalogs` implementation | If the driver requires a different pattern, the probe fails but the outer `try/except SQLAlchemyError` in `_require_databricks_catalog` catches it — degrades gracefully. Confidence: HIGH (pattern already used elsewhere in the codebase). |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Is `connection.py:499`'s `"main"` fallback a separate deletion target?**
-   - What we know: D-02 names `databricks.py:149,239` explicitly but not `connection.py:499`.
-   - What's unclear: Whether the discuss-phase author considered this line or missed it.
-   - Recommendation: Planner surfaces as a planning-time question, treats as in-scope absent a counter-decision.
+   - **RESOLVED (2026-05-11, user-confirmed):** In scope. Captured as **D-18** in CONTEXT.md; implemented in Plan 14-03 Task 1 (remove `else "main"` at line 499; let the connect-layer helper enrich the resulting `ValueError`).
 
 2. **Placeholder catalog for probe engine — dialect constant or plain string?**
-   - What we know: Needs to be connectable on most workspaces; `"system"` and `"samples"` are candidates.
-   - What's unclear: Whether the planner/executor wants this abstracted.
-   - Recommendation: Inline `"system"` with a comment for now; no abstraction until there's a second caller.
+   - **RESOLVED:** Inline `"system"` with a comment. No dialect constant until a second caller appears. See Plan 14-03 Task 1 Step B.
 
 3. **Test file split — one vs two?**
-   - What we know: D-14 leaves discretion.
-   - Recommendation: Keep in `test_connect_with_config_databricks.py` (total new test count ≈ 4).
+   - **RESOLVED:** One file for IDENT-01 / TEST-01 / TEST-02 (`tests/unit/test_connect_with_config_databricks.py`) + IDENT-02 regression in `tests/unit/test_metadata.py`. See Plan 14-04.
 
 ## Environment Availability
 

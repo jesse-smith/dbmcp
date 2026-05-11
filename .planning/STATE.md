@@ -4,13 +4,14 @@ milestone: v2.1
 milestone_name: Databricks identifier fixes
 status: Defining requirements
 stopped_at: Phase 14 context gathered
-last_updated: "2026-05-11T20:34:07.784Z"
+last_updated: "2026-05-11T20:50:13.412Z"
 last_activity: 2026-05-08 — Milestone v2.1 started
 progress:
   total_phases: 2
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -119,4 +120,4 @@ Last session: --stopped-at
 Stopped at: Phase 14 context gathered
 Resume file: --resume-file
 
-**Planned Phase:** 13 (test-infrastructure-coverage) — 4 plans — 2026-04-27T17:05:36.697Z
+**Planned Phase:** 14 (connect-time-hardening-databricks) — 4 plans — 2026-05-11T20:50:13.408Z
