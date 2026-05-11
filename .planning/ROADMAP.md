@@ -5,6 +5,7 @@
 - ✅ **v1.0 TOON Response Format Migration** — Phases 1-2 (shipped 2026-03-05) · [archive](milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Concern Handling** — Phases 3-7 (shipped 2026-03-10) · [archive](milestones/v1.1-ROADMAP.md)
 - ✅ **v2.0 Multi-Dialect Support** — Phases 8-13.1 (shipped 2026-05-06) · [archive](milestones/v2.0-ROADMAP.md)
+- ◆ **v2.1 Databricks identifier fixes** — Phases 14-15 (in progress)
 
 ## Phases
 
@@ -40,6 +41,36 @@
 
 </details>
 
+### ◆ v2.1 Databricks identifier fixes (Phases 14-15) — IN PROGRESS
+
+#### Phase 14: Connect-time hardening (Databricks)
+
+**Goal:** Make `connect_database` strict about the Databricks catalog, remove the silent catalog-listing fallback in `list_schemas`, and close the residual regression-test gaps from the 2026-05-05 audit.
+
+**Requirements covered:** IDENT-01, IDENT-02, TEST-01, TEST-02
+
+**Success Criteria:**
+1. Databricks connection via URL or named config without a catalog fails fast in `connect_database` with an error that includes the accessible-catalog list from `SHOW CATALOGS`.
+2. `list_schemas` on Databricks never returns catalog names in place of schemas — the old fallback code is gone and a targeted test asserts the pre-IDENT-01 failure mode no longer reoccurs.
+3. `test_env_var_substitution_for_catalog_and_schema` passes: env-var placeholders in Databricks `catalog` / `schema_name` resolve before engine creation.
+4. `test_sqlalchemy_error_wrapped_as_connection_error` passes: `SQLAlchemyError` from `DatabricksDialect.create_engine` surfaces as `ConnectionError` with the host string.
+5. Full test suite green; no existing MSSQL/generic tests regress.
+
+#### Phase 15: Unified identifier resolver (cross-dialect)
+
+**Goal:** Land one shared identifier resolver used by all five namespace-aware tools. Dialect-aware depth (3/2/1), strict conflict detection between `table_name` and explicit params, dialect-aware default schema.
+
+**Requirements covered:** IDENT-03, IDENT-04, IDENT-05, IDENT-06, IDENT-07
+
+**Success Criteria:**
+1. `list_tables`, `list_schemas`, `get_table_schema`, `get_sample_data`, `get_column_info` all parse `table_name` per dialect depth and route through the shared resolver. Extra parts → clear error.
+2. Conflicts between leading segments in `table_name` and the matching explicit param (`catalog` or `schema_name`) produce a named-conflict error across all five tools. Covered by a shared test matrix.
+3. `get_sample_data` and `get_column_info` each expose a `catalog` parameter (Databricks-only; MSSQL/generic error on its presence). `bmtct.ml_infections_ref.mv_fever_episodes` and equivalents work end-to-end without `USE CATALOG` workarounds.
+4. No tool signature in `src/tools/` carries `schema_name: str = "dbo"`. A `default_schema` property on `DialectStrategy` supplies the fallback per connected dialect.
+5. Full test suite green; 85% coverage floor maintained.
+
+**Depends on:** Phase 14 (IDENT-01 lets the resolver assume catalog is always known post-connect for Databricks).
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -47,29 +78,19 @@
 | 1-2 | v1.0 | 5/5 | Complete | 2026-03-05 |
 | 3-7 | v1.1 | 11/11 | Complete | 2026-03-10 |
 | 8-13.1 | v2.0 | 20/20 | Complete | 2026-05-06 |
+| 14-15 | v2.1 | 0/TBD | In Progress | — |
 
 ## Backlog
 
-### Phase 999.1: API consistency pass across MCP tools (BACKLOG)
+### DISC-01: Cross-dialect catalog/database enumeration tool (FUTURE)
 
-**Goal:** Normalize the 9 tool signatures so users get predictable arg names, defaults, and capabilities across all dialects. Surfaced while validating v2.0 against live Databricks (post-phase 13.1); deliberately deferred from v2.0 scope.
-**Captured:** 2026-05-06
-**Source:** live Databricks verification after /gsd-validate-phase 13.1 + /gsd-quick 260506-n8s
+**Goal:** Add a `list_catalogs`/`list_databases` tool that enumerates server-visible databases (MSSQL: `sys.databases`) or catalogs (Databricks: `SHOW CATALOGS`). Informational on MSSQL — listed entries may not be queryable from the current connection due to login scope.
 
-**Inconsistencies to resolve:**
+**Captured:** 2026-05-08 (during v2.1 scoping)
+**Source:** tangent from v2.1 design discussion — see `.planning/notes/2026-05-08-think-cross-dialect-catalog-enumeration.md`
 
-1. **`catalog` kwarg coverage gap.** Present on `list_schemas`, `list_tables`, `get_table_schema`. Missing on `get_sample_data`, `get_column_info`, `find_pk_candidates`, `find_fk_candidates`. Databricks/Unity-Catalog users can list/describe cross-catalog but cannot sample/analyze cross-catalog without reconnecting. User-visible impact.
+**Why deferred:** pure additive feature, independent of the resolver refactor. Can share the `SHOW CATALOGS` helper introduced in Phase 14 (IDENT-01) once that lands.
 
-2. **Hardcoded `schema_name: str = "dbo"` default.** Baked into `get_table_schema`, `get_sample_data`, `get_column_info`, `find_pk_candidates`, `find_fk_candidates`. MSSQL-ism that is never correct for Databricks/Postgres and nonsensical for SQLite. Consider dialect-aware default (e.g., via `ConnectionManager.get_dialect(connection_id).default_schema`) or drop the default and require the caller to specify.
+---
 
-3. **Row-limit naming.** `list_tables`→`limit`, `find_fk_candidates`→`limit`, `execute_query`→`row_limit`. Same concept, two names. Pick one (likely `row_limit` since it is explicit about units).
-
-4. **`sample_size` typing.** `get_sample_data: int | None = None` (default resolved indirectly) vs `get_column_info: int = 10` (explicit default). Different conventions for an identical parameter.
-
-**Success Criteria:**
-1. Any tool that takes `schema_name` also accepts `catalog: str | None = None` (or the `catalog` concept is reframed as part of a connection/selector primitive).
-2. Zero hardcoded `"dbo"` defaults on public tool signatures.
-3. Single consistent name + typing convention for row-limit and sample-size parameters across all tools.
-4. Regression tests cover Databricks cross-catalog sample + analysis paths.
-
-**Not in v2.0:** v2.0 shipped dialect strategy + wiring; this is API-surface polish that does not belong in a milestone retroactively.
+_Former "Phase 999.1 API consistency pass" backlog item consumed into v2.1 scope on 2026-05-08. `catalog` kwarg coverage and `"dbo"` default are now IDENT-05/06/07. Row-limit naming and `sample_size` typing inconsistencies from that backlog item are deferred — not in v2.1._
