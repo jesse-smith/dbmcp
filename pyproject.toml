@@ -31,7 +31,7 @@ dependencies = [
     "databricks-sqlalchemy>=2.0.0",
     "databricks-sql-connector>=4.0.0",
     "jupyter>=1.0.0",
-    "notebook>=7.0.0",
+    "notebook>=7.5.6",
 ]
 
 [project.scripts]
