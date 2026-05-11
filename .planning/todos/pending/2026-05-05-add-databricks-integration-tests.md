@@ -2,6 +2,7 @@
 created: 2026-05-05T00:00:00.000Z
 title: Add residual Databricks connect_with_config regression tests
 area: testing
+resolves_phase: 14
 source: Follow-up from quick task 260505-mr3 (Databricks test-coverage audit)
 files:
   - tests/unit/test_connect_with_config_databricks.py (add 2 tests)
