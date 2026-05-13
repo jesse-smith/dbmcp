@@ -268,6 +268,28 @@ class DatabricksDialect:
             connect_args=merged_connect_args,
         )
 
+    def list_catalogs(self, engine: Engine) -> list[str]:
+        """Return catalog names visible to the connected principal via SHOW CATALOGS.
+
+        Used by the connect-time helper that enriches the catalog-required
+        ValueError raised by ``create_engine`` (IDENT-01) and by future DISC-01
+        tooling. Lets ``SQLAlchemyError`` propagate — callers decide how to wrap.
+
+        Args:
+            engine: A SQLAlchemy Engine already bound to a Databricks workspace.
+                The engine does NOT need to point at a specific catalog;
+                SHOW CATALOGS is workspace-scoped.
+
+        Returns:
+            List of catalog names (the row[0] of each SHOW CATALOGS row), in
+            the order returned by Databricks.
+        """
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("SHOW CATALOGS")).fetchall()
+        return [row[0] for row in rows]
+
     def fast_row_counts(
         self, engine: Engine, schema_name: str | None = None
     ) -> dict[str, int]:
