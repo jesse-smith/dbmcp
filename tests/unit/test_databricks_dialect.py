@@ -682,3 +682,68 @@ class TestDatabricksDialectSampleQueries:
         assert "ROW_NUMBER() OVER" in sql
         assert "LIMIT 5" in sql
         assert "TOP (" not in sql
+
+
+class TestDatabricksDialectListCatalogs:
+    """Tests for DatabricksDialect.list_catalogs (D-08)."""
+
+    def _make_dialect(self):
+        from src.db.dialects.databricks import DatabricksDialect
+
+        return DatabricksDialect()
+
+    def _engine_with_rows(self, rows):
+        """Build a MagicMock engine whose conn.execute(...).fetchall() returns rows."""
+        engine = MagicMock(name="Engine")
+        conn = MagicMock(name="SQLAConnection")
+        result = MagicMock()
+        result.fetchall.return_value = rows
+        conn.execute.return_value = result
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=conn)
+        ctx.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = ctx
+        return engine, conn
+
+    def test_list_catalogs_returns_row_zero_values(self):
+        """list_catalogs returns row[0] for each row, order preserved."""
+        from sqlalchemy import text as sa_text
+
+        dialect = self._make_dialect()
+        engine, conn = self._engine_with_rows(
+            [("main",), ("hive_metastore",), ("samples",)]
+        )
+
+        result = dialect.list_catalogs(engine)
+
+        assert result == ["main", "hive_metastore", "samples"]
+        # SHOW CATALOGS executed via sqlalchemy.text
+        conn.execute.assert_called_once()
+        executed_arg = conn.execute.call_args.args[0]
+        # Compare via the rendered SQL string for either text() instance or string
+        assert str(executed_arg) == str(sa_text("SHOW CATALOGS"))
+
+    def test_list_catalogs_returns_empty_list_when_no_rows(self):
+        """list_catalogs returns [] when SHOW CATALOGS yields no rows."""
+        dialect = self._make_dialect()
+        engine, _conn = self._engine_with_rows([])
+
+        result = dialect.list_catalogs(engine)
+
+        assert result == []
+
+    def test_list_catalogs_propagates_sqlalchemy_error(self):
+        """list_catalogs lets SQLAlchemyError propagate (caller wraps per D-08)."""
+        from sqlalchemy.exc import SQLAlchemyError
+
+        dialect = self._make_dialect()
+        engine = MagicMock(name="Engine")
+        conn = MagicMock(name="SQLAConnection")
+        conn.execute.side_effect = SQLAlchemyError("boom")
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=conn)
+        ctx.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = ctx
+
+        with pytest.raises(SQLAlchemyError, match="boom"):
+            dialect.list_catalogs(engine)
