@@ -122,3 +122,168 @@ def test_connect_with_config_databricks_signature_matches_dialect(monkeypatch):
     # silently accepting anything, which would make Bug B invisible.
     with pytest.raises(ValueError, match="Missing required parameter"):
         dialect.create_engine(http_path="/x", token="t")
+
+
+# ---------------------------------------------------------------------------
+# IDENT-01 / D-18: catalog-required enrichment in the config path
+# ---------------------------------------------------------------------------
+
+
+class _NeverCalled:
+    """Helper to assert that an attribute access never happens."""
+
+    def __getattr__(self, name):  # pragma: no cover - shouldn't trigger
+        raise AssertionError(f"Should not have been called: {name}")
+
+
+def _patch_no_test_connection(monkeypatch):
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+
+def test_connect_with_config_empty_catalog_raises_enriched_connection_error(monkeypatch):
+    """Empty catalog flows into enriched ConnectionError listing accessible catalogs (IDENT-01)."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="",  # explicit empty — must NOT fall back to "main"
+        schema_name="default",
+    )
+
+    captured_engine_kwargs: list[dict] = []
+
+    def fake_create_engine(self, **kwargs):
+        captured_engine_kwargs.append(dict(kwargs))
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        # probe path: catalog="system"
+        return _make_engine_spy()
+
+    def fake_list_catalogs(self, engine):
+        return ["main", "hive_metastore", "samples", "my_catalog"]
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Databricks connection requires a catalog" in msg
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg and "hive_metastore" in msg
+    # __cause__ chained to the original ValueError from create_engine
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "catalog is required" in str(exc_info.value.__cause__)
+
+    # Probe engine used catalog="system" placeholder
+    probe_calls = [k for k in captured_engine_kwargs if k.get("catalog") == "system"]
+    assert len(probe_calls) == 1, captured_engine_kwargs
+
+
+def test_connect_with_config_none_catalog_raises_enriched_connection_error(monkeypatch):
+    """D-18: None catalog must NOT silently default to 'main' — must enrich-and-raise."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog=None,
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        DatabricksDialect, "list_catalogs",
+        lambda self, engine: ["main", "samples"],
+    )
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Accessible catalogs:" in msg
+
+
+def test_connect_with_config_probe_failure_message_names_both(monkeypatch):
+    """When SHOW CATALOGS itself fails, error names BOTH the missing-catalog requirement
+    AND the SHOW CATALOGS failure (D-06)."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="",
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    def boom_list_catalogs(self, engine):
+        raise SQLAlchemyError("permission denied")
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", boom_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "catalog" in msg
+    assert "SHOW CATALOGS" in msg and "failed" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_connect_with_config_valid_catalog_does_not_invoke_helper(monkeypatch):
+    """Happy-path: valid catalog returns engine; helper is never invoked, list_catalogs not called."""
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    list_catalogs_calls: list[int] = []
+
+    def fake_list_catalogs(self, engine):
+        list_catalogs_calls.append(1)
+        return []
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    result = manager.connect_with_config(cfg, DatabricksDialect())
+
+    assert result.dialect_name == "databricks"
+    assert list_catalogs_calls == []  # helper never touched
