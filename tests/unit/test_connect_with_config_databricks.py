@@ -520,3 +520,73 @@ def test_connect_with_url_databricks_requires_catalog(monkeypatch):
     assert "main" in msg
     assert "hive_metastore" in msg
     assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# TEST-01 (D-16): env-var substitution for catalog/schema
+# ---------------------------------------------------------------------------
+
+
+def test_env_var_substitution_for_catalog_and_schema(monkeypatch):
+    """TEST-01 (D-16): ${VAR} placeholders in catalog/schema_name resolve before
+    kwargs reach DatabricksDialect.create_engine. Captured kwargs must hold the
+    resolved values, not the literal ${...} placeholders."""
+    monkeypatch.setenv("DBX_CATALOG", "my_resolved_catalog")
+    monkeypatch.setenv("DBX_SCHEMA", "my_resolved_schema")
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+    captured_kwargs: dict = {}
+
+    def spy_create_engine(self, **kw):
+        captured_kwargs.update(kw)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+
+    cfg = DatabricksConnectionConfig(
+        host="example.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/x",
+        token="t",
+        catalog="${DBX_CATALOG}",
+        schema_name="${DBX_SCHEMA}",
+    )
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    assert captured_kwargs["catalog"] == "my_resolved_catalog"
+    assert captured_kwargs["schema"] == "my_resolved_schema"
+    # Negative: literal ${...} placeholders must NOT survive resolution.
+    assert "${" not in captured_kwargs["catalog"]
+    assert "${" not in captured_kwargs["schema"]
+
+
+# ---------------------------------------------------------------------------
+# TEST-02 (D-17): SQLAlchemyError from create_engine wraps to ConnectionError
+# ---------------------------------------------------------------------------
+
+
+def test_sqlalchemy_error_wrapped_as_connection_error(monkeypatch):
+    """TEST-02 (D-17): SQLAlchemyError from create_engine surfaces as ConnectionError
+    whose message contains the host string."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    def boom(self, **kw):
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", boom)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="t",
+        catalog="main",
+        schema_name="default",
+    )
+    with pytest.raises(DBConnectionError) as exc_info:
+        ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    assert "dbc-test.cloud.databricks.com" in str(exc_info.value)
