@@ -692,8 +692,14 @@ class TestCatalogListSchemas:
         assert schemas[0].table_count == 0
         assert schemas[0].view_count == 0
 
-    def test_list_schemas_no_catalog_falls_back_to_show_catalogs(self, test_engine):
-        """If the engine-default catalog is unavailable, list available catalogs."""
+    def test_list_schemas_propagates_sqlalchemy_error_no_catalog_fallback(self, test_engine):
+        """Post-IDENT-02: no SHOW CATALOGS fallback; SQLAlchemyError propagates loudly.
+
+        Before this plan, list_schemas silently fell back to SHOW CATALOGS when the
+        engine-bound catalog was inaccessible — that returned catalog names labeled
+        as "schemas", a silent data-corruption class. Now the error propagates, mirroring
+        MSSQL/generic branches.
+        """
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
@@ -701,7 +707,10 @@ class TestCatalogListSchemas:
         catalogs_result.fetchall.return_value = [("bmtct",), ("other_catalog",)]
 
         mock_conn = MagicMock()
-        # First: SHOW SCHEMAS IN `main` raises; then SHOW CATALOGS returns list.
+        # First call (SHOW SCHEMAS IN `main`) raises. The pre-IDENT-02 code would
+        # catch this and call SHOW CATALOGS next; we wire that up so the *old*
+        # code path would silently succeed. The new (post-IDENT-02) contract is
+        # that the SQLAlchemyError propagates instead — no second call is made.
         mock_conn.execute.side_effect = [
             SQLAlchemyError("NO_SUCH_CATALOG_EXCEPTION"),
             catalogs_result,
@@ -716,10 +725,8 @@ class TestCatalogListSchemas:
             patch.object(service.engine, "connect", return_value=mock_conn),
             patch.object(service.engine, "url", fake_url),
         ):
-            schemas = service.list_schemas(connection_id="test")
-
-        names = {s.schema_name for s in schemas}
-        assert names == {"bmtct", "other_catalog"}
+            with pytest.raises(SQLAlchemyError):
+                service.list_schemas(connection_id="test")
 
     def test_list_schemas_without_catalog_uses_engine_default(self, test_engine):
         """Databricks + no catalog extracts engine URL's catalog and uses SHOW SCHEMAS IN."""
