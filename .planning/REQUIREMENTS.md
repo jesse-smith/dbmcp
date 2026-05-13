@@ -9,8 +9,8 @@
 
 ### Identifier Resolution
 
-- [ ] **IDENT-01**: `connect_database` rejects Databricks connections without a catalog in the SQLAlchemy URL (or the named-connection config equivalent). The error lists accessible catalogs from `SHOW CATALOGS` and explains that a catalog is required.
-- [ ] **IDENT-02**: `list_schemas` no longer silently falls through to returning catalog names when schema lookup fails against the configured default catalog. With IDENT-01 in place, this path is unreachable for valid connections; the fallback code is removed.
+- [x] **IDENT-01**: `connect_database` rejects Databricks connections without a catalog in the SQLAlchemy URL (or the named-connection config equivalent). The error lists accessible catalogs from `SHOW CATALOGS` and explains that a catalog is required.
+- [x] **IDENT-02**: `list_schemas` no longer silently falls through to returning catalog names when schema lookup fails against the configured default catalog. With IDENT-01 in place, this path is unreachable for valid connections; the fallback code is removed.
 - [ ] **IDENT-03**: A shared identifier resolver parses `table_name` into 1, 2, or 3 parts per dialect depth (Databricks=3, MSSQL=2, generic/SQLite=1). Supplying more parts than the dialect allows produces a clear error naming the expected depth.
 - [ ] **IDENT-04**: When `table_name` carries a leading segment (catalog or schema) AND the matching explicit parameter (`catalog` or `schema_name`) is also provided AND the two values disagree, the tool returns an error naming the specific conflict. No silent overrides.
 - [ ] **IDENT-05**: `get_sample_data` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Passing `catalog` on MSSQL or generic dialects produces a dialect-inappropriate-parameter error.
@@ -19,8 +19,8 @@
 
 ### Regression Tests (residual from v2.0 audit)
 
-- [ ] **TEST-01**: `tests/unit/test_connect_with_config_databricks.py::test_env_var_substitution_for_catalog_and_schema` — given `catalog="${DBX_CATALOG}"` and `schema_name="${DBX_SCHEMA}"` with env vars set, the kwargs captured by the engine spy contain resolved values, not `${…}` literals.
-- [ ] **TEST-02**: `tests/unit/test_connect_with_config_databricks.py::test_sqlalchemy_error_wrapped_as_connection_error` — when a patched `DatabricksDialect.create_engine` raises `SQLAlchemyError`, `connect_with_config` raises `ConnectionError` whose message contains the host string.
+- [x] **TEST-01**: `tests/unit/test_connect_with_config_databricks.py::test_env_var_substitution_for_catalog_and_schema` — given `catalog="${DBX_CATALOG}"` and `schema_name="${DBX_SCHEMA}"` with env vars set, the kwargs captured by the engine spy contain resolved values, not `${…}` literals.
+- [x] **TEST-02**: `tests/unit/test_connect_with_config_databricks.py::test_sqlalchemy_error_wrapped_as_connection_error` — when a patched `DatabricksDialect.create_engine` raises `SQLAlchemyError`, `connect_with_config` raises `ConnectionError` whose message contains the host string.
 
 ## Future Requirements
 
@@ -48,10 +48,10 @@ Populated by the roadmap step.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| IDENT-01 | Phase 14 | Pending |
-| IDENT-02 | Phase 14 | Pending |
-| TEST-01 | Phase 14 | Pending |
-| TEST-02 | Phase 14 | Pending |
+| IDENT-01 | Phase 14 | Complete |
+| IDENT-02 | Phase 14 | Complete |
+| TEST-01 | Phase 14 | Complete |
+| TEST-02 | Phase 14 | Complete |
 | IDENT-03 | Phase 15 | Pending |
 | IDENT-04 | Phase 15 | Pending |
 | IDENT-05 | Phase 15 | Pending |
