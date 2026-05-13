@@ -287,3 +287,89 @@ def test_connect_with_config_valid_catalog_does_not_invoke_helper(monkeypatch):
 
     assert result.dialect_name == "databricks"
     assert list_catalogs_calls == []  # helper never touched
+
+
+# ---------------------------------------------------------------------------
+# IDENT-01 / Task 2: catalog-required enrichment in the URL path
+# ---------------------------------------------------------------------------
+
+
+def test_connect_with_url_databricks_missing_catalog_raises_enriched(monkeypatch):
+    """connect_with_url on a catalog-less Databricks URL raises enriched ConnectionError."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    captured: list[dict] = []
+
+    def fake_create_engine(self, **kwargs):
+        captured.append(dict(kwargs))
+        # Reproduce real dialect: parse URL → extract kwargs → catalog=="" → raise
+        if "sqlalchemy_url" in kwargs:
+            url_kwargs = self._kwargs_from_url(kwargs["sqlalchemy_url"], kwargs)
+            kwargs = url_kwargs
+            captured[-1] = dict(kwargs)  # record post-parse kwargs
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        DatabricksDialect, "list_catalogs",
+        lambda self, engine: ["main", "hive_metastore"],
+    )
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    url = "databricks://token:tok@dbc-test.cloud.databricks.com/?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc"
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_url(url, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Databricks connection requires a catalog" in msg
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_connect_with_url_databricks_with_catalog_succeeds(monkeypatch):
+    """Happy path: URL with ?catalog=main returns engine; helper not invoked."""
+
+    list_catalogs_calls: list[int] = []
+
+    def fake_create_engine(self, **kwargs):
+        if "sqlalchemy_url" in kwargs:
+            kwargs = self._kwargs_from_url(kwargs["sqlalchemy_url"], kwargs)
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    def fake_list_catalogs(self, engine):
+        list_catalogs_calls.append(1)
+        return []
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    url = (
+        "databricks://token:tok@dbc-test.cloud.databricks.com/"
+        "?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc&catalog=main"
+    )
+    result = manager.connect_with_url(url, DatabricksDialect())
+
+    assert result.dialect_name == "databricks"
+    assert list_catalogs_calls == []
+
+
+def test_connect_with_url_non_databricks_value_error_not_routed_to_helper(monkeypatch):
+    """A ValueError from a non-Databricks dialect must propagate as-is, not enriched."""
+    from src.db.dialects.mssql import MssqlDialect
+
+    def fake_create_engine(self, **kwargs):
+        raise ValueError("some non-catalog problem")
+
+    monkeypatch.setattr(MssqlDialect, "create_engine", fake_create_engine)
+
+    manager = ConnectionManager()
+    with pytest.raises(ValueError, match="some non-catalog problem"):
+        manager.connect_with_url("mssql+pyodbc://u:p@h/db", MssqlDialect())
