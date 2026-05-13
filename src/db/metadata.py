@@ -77,42 +77,33 @@ class MetadataService:
         return self.dialect_name == "mssql"
 
     def list_schemas(self, connection_id: str = "", catalog: str | None = None) -> list[Schema]:
-        """List all schemas with table and view counts.
+        """List schemas visible in the catalog.
 
-        Uses SQL Server DMVs for efficiency when available, falls back to
-        SQLAlchemy inspector for other databases.
+        On Databricks, the catalog is always known post-connect (IDENT-01 invariant):
+        if ``catalog=`` is supplied, that catalog is used; otherwise the engine-bound
+        catalog (from the SQLAlchemy URL) is used. There is no fallback to catalog
+        enumeration — a SQLAlchemyError from the underlying call propagates loudly,
+        mirroring the MSSQL/generic branches.
+
+        Uses SQL Server DMVs for efficiency on MSSQL; falls back to SQLAlchemy
+        Inspector for generic dialects.
 
         Args:
-            connection_id: Optional connection ID for schema_id generation
-            catalog: Optional Databricks catalog name. Overrides the connection's
-                default catalog. When omitted on a Databricks connection, the
-                configured default catalog (from the engine URL) is used.
+            connection_id: Optional connection ID for schema_id generation.
+            catalog: Optional explicit catalog (Databricks cross-catalog discovery).
                 Ignored for non-Databricks dialects.
 
         Returns:
-            List of Schema objects sorted by table count descending
+            List of Schema objects sorted by table count descending.
         """
         start_time = time.time()
 
-        # Databricks: always use SHOW SCHEMAS IN <catalog>. When catalog is not
-        # passed, fall back to the engine URL's configured catalog. If that
-        # catalog doesn't exist on the workspace, fall back to listing
-        # available catalogs via SHOW CATALOGS so the caller can discover
-        # what to pass.
+        # Databricks: single deterministic path. If catalog= is supplied it wins;
+        # otherwise the engine-bound catalog (post-IDENT-01 invariant) is used.
+        # No fallback to SHOW CATALOGS — errors propagate.
         if self._dialect and self._dialect.name == "databricks":
-            if catalog:
-                result = self._list_schemas_databricks(connection_id, catalog)
-            else:
-                default_catalog = self._databricks_default_catalog()
-                try:
-                    result = self._list_schemas_databricks(connection_id, default_catalog)
-                except SQLAlchemyError as exc:
-                    logger.info(
-                        f"Default Databricks catalog '{default_catalog}' not "
-                        f"accessible ({exc.__class__.__name__}); falling back "
-                        f"to SHOW CATALOGS for discovery."
-                    )
-                    result = self._list_databricks_catalogs(connection_id)
+            effective_catalog = catalog or self._engine_catalog()
+            result = self._list_schemas_databricks(connection_id, effective_catalog)
         elif self._dialect and self._dialect.has_fast_row_counts:
             result = self._list_schemas_mssql(connection_id)
         else:
@@ -161,44 +152,14 @@ class MetadataService:
         logger.debug(f"Found {len(schemas)} schemas (SQL Server)")
         return schemas
 
-    def _list_databricks_catalogs(self, connection_id: str) -> list[Schema]:
-        """Fallback discovery path: list catalogs via SHOW CATALOGS.
+    def _engine_catalog(self) -> str:
+        """Return the catalog the engine was built with.
 
-        Used when no catalog was passed to list_schemas and the engine's
-        configured default catalog isn't accessible. Each catalog is returned
-        as a pseudo-Schema with zero counts; the caller is expected to pick
-        one and re-call list_schemas with catalog=<name>.
+        Post-IDENT-01 invariant: a Databricks engine is always constructed with a
+        non-empty ``catalog`` in the URL query. If this invariant is violated,
+        ``KeyError`` propagates — a loud failure beats a silent default.
         """
-        schemas: list[Schema] = []
-        with self.engine.connect() as conn:
-            for row in conn.execute(text("SHOW CATALOGS")).fetchall():
-                catalog_name = row[0]
-                schema_id = (
-                    f"{connection_id}_catalog_{catalog_name}"
-                    if connection_id
-                    else f"catalog_{catalog_name}"
-                )
-                schemas.append(Schema(
-                    schema_id=schema_id,
-                    connection_id=connection_id,
-                    schema_name=catalog_name,
-                    table_count=0,
-                    view_count=0,
-                    last_scanned=datetime.now(),
-                ))
-        logger.debug(f"Listed {len(schemas)} Databricks catalogs as discovery fallback")
-        return schemas
-
-    def _databricks_default_catalog(self) -> str:
-        """Return the engine's configured default Databricks catalog.
-
-        The DatabricksDialect.create_engine embeds catalog in the SQLAlchemy URL
-        query params. Falls back to 'main' if the URL doesn't surface one.
-        """
-        try:
-            return self.engine.url.query.get("catalog", "main")
-        except AttributeError:
-            return "main"
+        return self.engine.url.query["catalog"]
 
     def _list_schemas_databricks(self, connection_id: str, catalog: str) -> list[Schema]:
         """Databricks schema listing using SHOW SCHEMAS IN for cross-catalog queries.
