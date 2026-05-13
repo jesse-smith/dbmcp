@@ -117,7 +117,8 @@ class DatabricksDialect:
             - host       ← url.host (required; ValueError if missing)
             - http_path  ← url.query["http_path"] (required; ValueError if missing)
             - token      ← url.password or "" (username expected literally "token")
-            - catalog    ← url.query.get("catalog", "main")
+            - catalog    ← url.query.get("catalog", "")  (empty when missing — caller must
+                                                            supply or create_engine raises)
             - schema     ← url.database or url.query.get("schema") or "default"
 
         Args:
@@ -146,7 +147,7 @@ class DatabricksDialect:
             )
 
         token = url.password or ""
-        catalog = query.get("catalog", "main")
+        catalog = query.get("catalog", "")
         schema = url.database or query.get("schema") or "default"
 
         preserved_keys = {
@@ -207,7 +208,8 @@ class DatabricksDialect:
                 host (str): Databricks workspace hostname. (required in kwargs mode)
                 http_path (str): SQL warehouse HTTP path. (required in kwargs mode)
                 token (str): Personal access token or OAuth token. (optional)
-                catalog (str): Unity Catalog name (default "main"). (optional)
+                catalog (str): Unity Catalog name. **Required** — empty/missing/None
+                    raises ValueError("Databricks catalog is required") (IDENT-01).
                 schema (str): Schema name (default "default"). (optional)
 
         Returns:
@@ -236,7 +238,9 @@ class DatabricksDialect:
             raise ValueError(f"Missing required parameter: {e.args[0]}") from e
 
         token: str = kwargs.get("token", "")
-        catalog: str = kwargs.get("catalog", "main")
+        catalog: str = kwargs.get("catalog", "") or ""
+        if not catalog:
+            raise ValueError("Databricks catalog is required")
         schema: str = kwargs.get("schema", "default")
 
         query_params = urlencode({
