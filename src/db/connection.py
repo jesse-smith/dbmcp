@@ -358,6 +358,22 @@ class ConnectionManager:
             )
         except ConnectionError:
             raise
+        except ValueError as ve:
+            # IDENT-01: route Databricks catalog-required ValueError through
+            # the enrichment helper. Non-Databricks ValueErrors propagate as-is.
+            from src.db.dialects.databricks import DatabricksDialect
+
+            if isinstance(dialect, DatabricksDialect):
+                db_kwargs = dialect._kwargs_from_url(sqlalchemy_url, {})
+                self._require_databricks_catalog(
+                    dialect,
+                    host=db_kwargs.get("host", ""),
+                    http_path=db_kwargs.get("http_path", ""),
+                    token=db_kwargs.get("token", ""),
+                    schema=db_kwargs.get("schema", "default"),
+                    orig_value_error=ve,
+                )
+            raise  # non-Databricks ValueError or unreachable after helper
         except SQLAlchemyError as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
             safe_url = parsed_url.render_as_string(hide_password=True)
