@@ -65,12 +65,14 @@ class TestDatabricksDialect:
                     host="test.databricks.com",
                     http_path="/sql/1.0/warehouses/abc",
                     token="dapi123",
+                    catalog="main",
                 )
             with pytest.raises(ImportError, match="Reinstall dbmcp"):
                 dialect.create_engine(
                     host="test.databricks.com",
                     http_path="/sql/1.0/warehouses/abc",
                     token="dapi123",
+                    catalog="main",
                 )
         finally:
             databricks_mod._databricks_import_error = original_error
@@ -120,8 +122,70 @@ class TestDatabricksDialect:
             databricks_mod._databricks_import_error = original_error
 
     @patch("src.db.dialects.databricks.sa_create_engine")
-    def test_create_engine_uses_defaults_for_catalog_and_schema(self, mock_sa_create_engine):
-        """create_engine defaults catalog to 'main' and schema to 'default'."""
+    def test_create_engine_missing_catalog_raises_value_error(self, mock_sa_create_engine):
+        """create_engine with no catalog kwarg raises ValueError (IDENT-01 / D-01)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            databricks_mod._databricks_import_error = None
+            dialect = databricks_mod.DatabricksDialect()
+            mock_sa_create_engine.return_value = MagicMock()
+
+            with pytest.raises(ValueError, match="Databricks catalog is required"):
+                dialect.create_engine(
+                    host="test.databricks.com",
+                    http_path="/sql/1.0/warehouses/abc",
+                    token="tok",
+                )
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_create_engine_empty_catalog_raises_value_error(self, mock_sa_create_engine):
+        """create_engine with catalog="" raises ValueError (IDENT-01 / D-03)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            databricks_mod._databricks_import_error = None
+            dialect = databricks_mod.DatabricksDialect()
+            mock_sa_create_engine.return_value = MagicMock()
+
+            with pytest.raises(ValueError, match="Databricks catalog is required"):
+                dialect.create_engine(
+                    host="test.databricks.com",
+                    http_path="/sql/1.0/warehouses/abc",
+                    token="tok",
+                    catalog="",
+                )
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_create_engine_none_catalog_raises_value_error(self, mock_sa_create_engine):
+        """create_engine with catalog=None raises ValueError (None is falsy)."""
+        from src.db.dialects import databricks as databricks_mod
+
+        original_error = databricks_mod._databricks_import_error
+        try:
+            databricks_mod._databricks_import_error = None
+            dialect = databricks_mod.DatabricksDialect()
+            mock_sa_create_engine.return_value = MagicMock()
+
+            with pytest.raises(ValueError, match="Databricks catalog is required"):
+                dialect.create_engine(
+                    host="test.databricks.com",
+                    http_path="/sql/1.0/warehouses/abc",
+                    token="tok",
+                    catalog=None,
+                )
+        finally:
+            databricks_mod._databricks_import_error = original_error
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_create_engine_explicit_main_catalog_succeeds(self, mock_sa_create_engine):
+        """Explicit catalog='main' is accepted — only missing/empty is rejected."""
         from src.db.dialects import databricks as databricks_mod
 
         original_error = databricks_mod._databricks_import_error
@@ -134,13 +198,35 @@ class TestDatabricksDialect:
                 host="test.databricks.com",
                 http_path="/sql/1.0/warehouses/abc",
                 token="tok",
+                catalog="main",
             )
 
             url = mock_sa_create_engine.call_args[0][0]
             assert "catalog=main" in url
+            # schema still defaults to "default" (out of scope per D-02)
             assert "schema=default" in url
         finally:
             databricks_mod._databricks_import_error = original_error
+
+    def test_kwargs_from_url_missing_catalog_returns_empty_string(self):
+        """_kwargs_from_url returns catalog="" (NOT "main") when URL lacks ?catalog="""
+        from src.db.dialects.databricks import DatabricksDialect
+
+        kwargs = DatabricksDialect._kwargs_from_url(
+            "databricks://token:t@host.cloud.databricks.com?http_path=/x",
+            {},
+        )
+        assert kwargs["catalog"] == ""
+
+    def test_kwargs_from_url_with_catalog_returns_value(self):
+        """_kwargs_from_url returns the URL-supplied catalog verbatim."""
+        from src.db.dialects.databricks import DatabricksDialect
+
+        kwargs = DatabricksDialect._kwargs_from_url(
+            "databricks://token:t@host.cloud.databricks.com?http_path=/x&catalog=my_cat",
+            {},
+        )
+        assert kwargs["catalog"] == "my_cat"
 
     @patch("src.db.dialects.databricks.sa_create_engine")
     def test_create_engine_url_encodes_token_special_chars(self, mock_sa_create_engine):
@@ -157,6 +243,7 @@ class TestDatabricksDialect:
                 host="test.databricks.com",
                 http_path="/sql/1.0/warehouses/abc",
                 token="tok+en/with=special&chars",
+                catalog="main",
             )
 
             url = mock_sa_create_engine.call_args[0][0]
@@ -181,6 +268,7 @@ class TestDatabricksDialect:
                 host="test.databricks.com",
                 http_path="/sql/1.0/warehouses/abc",
                 token="",
+                catalog="main",
             )
 
             url = mock_sa_create_engine.call_args[0][0]
@@ -253,8 +341,8 @@ class TestCreateEngineFromUrl:
             databricks_mod._databricks_import_error = original_error
 
     @patch("src.db.dialects.databricks.sa_create_engine")
-    def test_create_engine_url_defaults_catalog_and_schema(self, mock_sa_create_engine):
-        """URL without catalog/schema uses defaults main/default."""
+    def test_create_engine_url_missing_catalog_raises(self, mock_sa_create_engine):
+        """URL without ?catalog= raises ValueError (IDENT-01: no implicit default)."""
         databricks_mod = self._dialect_mod()
         original_error = databricks_mod._databricks_import_error
         try:
@@ -262,13 +350,12 @@ class TestCreateEngineFromUrl:
             dialect = databricks_mod.DatabricksDialect()
             mock_sa_create_engine.return_value = MagicMock()
 
-            dialect.create_engine(
-                sqlalchemy_url="databricks://token:tok@host.cloud.databricks.com?http_path=/p",
-            )
-
-            url = mock_sa_create_engine.call_args[0][0]
-            assert "catalog=main" in url
-            assert "schema=default" in url
+            with pytest.raises(ValueError, match="Databricks catalog is required"):
+                dialect.create_engine(
+                    sqlalchemy_url=(
+                        "databricks://token:tok@host.cloud.databricks.com?http_path=/p"
+                    ),
+                )
         finally:
             databricks_mod._databricks_import_error = original_error
 
@@ -320,7 +407,7 @@ class TestCreateEngineFromUrl:
             dialect.create_engine(
                 sqlalchemy_url=(
                     f"databricks://token:{encoded_for_url}@host.cloud.databricks.com"
-                    "?http_path=/p"
+                    "?http_path=/p&catalog=main"
                 ),
             )
 
@@ -342,7 +429,8 @@ class TestCreateEngineFromUrl:
 
             dialect.create_engine(
                 sqlalchemy_url=(
-                    "databricks://token:tok@url-host.cloud.databricks.com?http_path=/p"
+                    "databricks://token:tok@url-host.cloud.databricks.com"
+                    "?http_path=/p&catalog=main"
                 ),
                 host="other.databricks.com",
                 http_path="/other/path",
@@ -404,6 +492,7 @@ class TestCreateEngineConnectArgs:
                 host="h.databricks.com",
                 http_path="/sql/1.0/warehouses/x",
                 token="t",
+                catalog="main",
             )
 
             call_kwargs = mock_sa_create_engine.call_args.kwargs
@@ -428,6 +517,7 @@ class TestCreateEngineConnectArgs:
                 host="h.databricks.com",
                 http_path="/sql/1.0/warehouses/x",
                 token="t",
+                catalog="main",
                 connection_timeout=5,
             )
 
@@ -451,6 +541,7 @@ class TestCreateEngineConnectArgs:
                 host="h.databricks.com",
                 http_path="/sql/1.0/warehouses/x",
                 token="t",
+                catalog="main",
                 connect_args={"_socket_timeout": 10, "_retry_delay_max": 15},
             )
 
@@ -477,6 +568,7 @@ class TestCreateEngineConnectArgs:
                 host="h.databricks.com",
                 http_path="/sql/1.0/warehouses/x",
                 token="t",
+                catalog="main",
                 connect_args={"_retry_stop_after_attempts_count": 5},
             )
 
@@ -497,7 +589,10 @@ class TestCreateEngineConnectArgs:
             mock_sa_create_engine.return_value = MagicMock()
 
             dialect.create_engine(
-                sqlalchemy_url="databricks://token:T@host.com/main?http_path=/sql/1.0/warehouses/p",
+                sqlalchemy_url=(
+                    "databricks://token:T@host.com/main"
+                    "?http_path=/sql/1.0/warehouses/p&catalog=main"
+                ),
             )
 
             ca = mock_sa_create_engine.call_args.kwargs["connect_args"]
@@ -521,7 +616,10 @@ class TestCreateEngineConnectArgs:
             mock_sa_create_engine.return_value = MagicMock()
 
             dialect.create_engine(
-                sqlalchemy_url="databricks://token:T@host.com/main?http_path=/sql/1.0/warehouses/p",
+                sqlalchemy_url=(
+                    "databricks://token:T@host.com/main"
+                    "?http_path=/sql/1.0/warehouses/p&catalog=main"
+                ),
                 connection_timeout=7,
             )
 
