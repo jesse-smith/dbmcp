@@ -768,6 +768,56 @@ class TestCatalogListSchemas:
         assert len(schemas) >= 1
         assert schemas[0].schema_name == "main"
 
+    def test_list_schemas_databricks_does_not_fall_back_to_show_catalogs(self, test_engine):
+        """IDENT-02 (D-15) regression: list_schemas on Databricks must never issue SHOW CATALOGS.
+
+        Pre-Plan-02 the list_schemas Databricks branch caught failures from SHOW SCHEMAS IN
+        and silently fell back to SHOW CATALOGS, returning catalog names labeled as "schemas"
+        — a silent data-corruption class. This test locks the post-Plan-02 contract:
+        every executed statement is recorded, and the assertion is the negative one:
+        no statement string contains "SHOW CATALOGS".
+        """
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        executed_statements: list[str] = []
+
+        def record_execute(stmt, *args, **kwargs):
+            executed_statements.append(str(stmt))
+            result = MagicMock()
+            # Provide a row shape compatible with both _list_schemas_databricks
+            # branches (SHOW SCHEMAS IN -> [(schema_name,)], counts -> []).
+            # Default to schema-name rows; counts query gets the same harmless rows
+            # but they're keyed by row[0] so non-matching names just yield zero counts.
+            if "information_schema" in str(stmt).lower():
+                result.fetchall.return_value = []
+            else:
+                result.fetchall.return_value = [("schema_a",), ("schema_b",)]
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = record_execute
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "my_cat"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test_conn_id")
+
+        # Sanity: returned a list (the negative assertion below is the primary check).
+        assert isinstance(schemas, list)
+
+        # CRITICAL assertion: zero SHOW CATALOGS executions during list_schemas.
+        assert not any("SHOW CATALOGS" in s.upper() for s in executed_statements), (
+            f"IDENT-02 regression: list_schemas issued SHOW CATALOGS. "
+            f"Executed statements: {executed_statements}"
+        )
+
 
 class TestCatalogListTables:
     """Tests for list_tables with optional catalog parameter."""
