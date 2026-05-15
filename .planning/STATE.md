@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 Phase: 15
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-13
+Last activity: 2026-05-15 - Completed quick task 260515-m30: Draft C/D fixes
 
 ## Performance Metrics
 
@@ -114,6 +114,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
 | 260507-e8m | Fix all 8 complexity violations flagged by CI complexipy gate | 2026-05-07 | f026ca0,2e7b1b9,a3117be,7fc0531,2e1559e,de8e433,be992eb,6bbc680,76bc6c1 | [260507-e8m-fix-all-8-complexity-violations](./quick/260507-e8m-fix-all-8-complexity-violations/) |
 | 260507-h6j | Move all optional extras to hard dependencies | 2026-05-07 | 4548866 | [260507-h6j-move-all-optional-extras-to-hard-depende](./quick/260507-h6j-move-all-optional-extras-to-hard-depende/) |
+| 260515-m30 | Draft C/D fixes — Databricks connection_id collision across catalogs | 2026-05-15 | bc2244f | [260515-m30-draft-c-d-fixes](./quick/260515-m30-draft-c-d-fixes/) |
 
 ## Session Continuity
 
