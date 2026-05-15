@@ -636,10 +636,21 @@ class ConnectionManager:
     def _generate_url_connection_id(self, sqlalchemy_url: str) -> str:
         """Generate a deterministic connection ID from a SQLAlchemy URL.
 
-        Credentials are excluded by hashing only host+database+driver.
+        Credentials are excluded — SQLAlchemy ``URL.query`` contains only
+        non-credential params (username/password live on ``URL.username``/
+        ``URL.password``). Sorted query params participate in the key so
+        dialects that put dialect-significant params in the query string
+        (Databricks ``?catalog=``, ``?http_path=``) get distinct pool entries
+        per value (Phase 14 D).
         """
         parsed = make_url(sqlalchemy_url)
-        safe_key = f"{parsed.get_backend_name()}://{parsed.host or ''}:{parsed.port or 0}/{parsed.database or ''}"
+        sorted_query = "&".join(f"{k}={v}" for k, v in sorted(parsed.query.items()))
+        safe_key = (
+            f"{parsed.get_backend_name()}://"
+            f"{parsed.host or ''}:{parsed.port or 0}"
+            f"/{parsed.database or ''}"
+            f"?{sorted_query}"
+        )
         return hashlib.sha256(safe_key.encode()).hexdigest()[:CONNECTION_ID_LENGTH]
 
     def _test_connection(

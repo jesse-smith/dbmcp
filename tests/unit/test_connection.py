@@ -284,6 +284,116 @@ class TestConnectionIdGeneration:
             assert conn1.connection_id != conn2.connection_id
 
 
+class TestUrlConnectionIdQueryParams:
+    """Phase 14 Defect D: URL query params must participate in pool key.
+
+    Defect D: `_generate_url_connection_id` previously hashed only
+    `{backend}://{host}:{port}/{database}`, which left `?catalog=` (and other
+    URL query params) out of the key. For Databricks the `database` URL path
+    component is empty, so all catalogs on one host collapsed to one pool
+    entry — and the pool-reuse short-circuit returned whichever engine was
+    cached first. Defect C (URL `?catalog=` ignored on second connect) was
+    the user-visible symptom.
+    """
+
+    def _make_mock_dialect(self, name="databricks"):
+        from unittest.mock import MagicMock as _MM
+        dialect = _MM()
+        dialect.name = name
+        mock_engine = _MM()
+        mock_conn = _MM()
+        mock_engine.connect.return_value.__enter__ = _MM(return_value=mock_conn)
+        mock_engine.connect.return_value.__exit__ = _MM(return_value=False)
+        dialect.create_engine.return_value = mock_engine
+        return dialect, mock_engine
+
+    def test_databricks_catalogs_produce_distinct_ids(self):
+        """Two Databricks URLs differing only in ?catalog= must yield different IDs."""
+        manager = ConnectionManager()
+        url_a = (
+            "databricks://token:tok@host.example.net"
+            "?http_path=/sql/1.0/warehouses/abc&catalog=alpha&schema=default"
+        )
+        url_b = (
+            "databricks://token:tok@host.example.net"
+            "?http_path=/sql/1.0/warehouses/abc&catalog=beta&schema=default"
+        )
+
+        id_a = manager._generate_url_connection_id(url_a)
+        id_b = manager._generate_url_connection_id(url_b)
+
+        assert id_a != id_b, (
+            "Databricks ?catalog= must participate in the pool key — "
+            "otherwise pool reuse silently returns the wrong engine."
+        )
+
+    def test_postgres_database_in_path_still_distinguishes(self):
+        """Dialects that put database in the URL path must still be disambiguated.
+
+        Regression guard: the fix folds query params into the key but must
+        not regress dialects (postgres, mssql) where `database` lives in
+        the URL path component.
+        """
+        manager = ConnectionManager()
+
+        id_db1 = manager._generate_url_connection_id("postgresql://h:5432/db1")
+        id_db2 = manager._generate_url_connection_id("postgresql://h:5432/db2")
+
+        assert id_db1 != id_db2
+
+    def test_query_param_order_does_not_affect_id(self):
+        """`?a=1&b=2` and `?b=2&a=1` must produce the same ID.
+
+        Justifies the `sorted(...)` step in the fix — without it, equivalent
+        URLs would fragment the pool unnecessarily.
+        """
+        manager = ConnectionManager()
+
+        id_ab = manager._generate_url_connection_id(
+            "databricks://token:tok@host.example.net?catalog=c&http_path=/p"
+        )
+        id_ba = manager._generate_url_connection_id(
+            "databricks://token:tok@host.example.net?http_path=/p&catalog=c"
+        )
+
+        assert id_ab == id_ba
+
+    def test_connect_with_url_distinguishes_databricks_catalogs_end_to_end(self):
+        """Two URL connects on same host with different ?catalog= -> distinct pool entries.
+
+        Phase 14 Defect C: previously, the second URL connect returned the
+        cached engine from the first call (because both had the same
+        connection_id), and silently used the wrong catalog. With the fix,
+        each URL gets its own pool entry.
+        """
+        dialect, _ = self._make_mock_dialect()
+        manager = ConnectionManager()
+
+        conn_alpha = manager.connect_with_url(
+            sqlalchemy_url=(
+                "databricks://token:tok@host.example.net"
+                "?http_path=/sql/1.0/warehouses/abc&catalog=alpha&schema=default"
+            ),
+            dialect=dialect,
+        )
+        conn_beta = manager.connect_with_url(
+            sqlalchemy_url=(
+                "databricks://token:tok@host.example.net"
+                "?http_path=/sql/1.0/warehouses/abc&catalog=beta&schema=default"
+            ),
+            dialect=dialect,
+        )
+
+        assert conn_alpha.connection_id != conn_beta.connection_id
+        assert len(manager._engines) == 2, (
+            "Expected one pool entry per catalog; got "
+            f"{len(manager._engines)} (Defect D: pool key collision)."
+        )
+        # create_engine must have been called twice — once per catalog —
+        # rather than once-and-reused.
+        assert dialect.create_engine.call_count == 2
+
+
 class TestODBCConnectionString:
     """Tests for ODBC connection string building (now in MssqlDialect)."""
 
