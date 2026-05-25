@@ -96,7 +96,7 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
-    "complexipy>=5.4.1",
+    "complexipy>=5.5.0",
     "jupyter>=1.1.1",
     "pyright>=1.1.409",
     "pytest>=9.0.3",
