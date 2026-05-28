@@ -971,3 +971,47 @@ class TestQueryServiceDialectDelegation:
         stub.build_sample_query.assert_called_once_with(
             SamplingMethod.MODULO, "[dbo].[T]", "*", 5
         )
+
+
+class TestSampleDataSchemaDefault:
+    """Tests for the None schema_name default (D-11: no hardcoded 'dbo')."""
+
+    def test_get_sample_data_schema_name_default_is_none(self):
+        """get_sample_data must default schema_name to None, not 'dbo'."""
+        import inspect
+
+        param = inspect.signature(QueryService.get_sample_data).parameters["schema_name"]
+        assert param.default is None
+
+    def test_get_sample_data_none_schema_builds_unqualified_reference(self, mock_engine):
+        """With no dialect and schema_name=None, the table reference is unqualified.
+
+        The ``self._dialect is None`` branch (query.py) emits the bare table name
+        with no schema prefix — the generic/SQLite no-prefix path. The built query
+        must therefore contain the table name without a ``schema.`` qualifier.
+        """
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine)  # no dialect -> _dialect is None
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        # Unqualified reference: no synthetic 'dbo.' (or any schema) prefix.
+        assert "Customers" in captured["sql"]
+        assert "dbo." not in captured["sql"]
+        # table_id reflects the unqualified reference, not 'dbo.Customers'.
+        assert sample.table_id == "Customers"

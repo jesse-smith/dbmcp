@@ -155,7 +155,9 @@ class QueryService:
             raise
 
         # Create sample ID
-        table_id = f"{schema_name}.{table_name}"
+        # schema_name may be None now that 'dbo' is no longer a hardcoded default;
+        # avoid emitting a literal "None." prefix in the identifier.
+        table_id = f"{schema_name}.{table_name}" if schema_name else table_name
         timestamp = datetime.now().isoformat()
         sample_id = hashlib.sha256(f"{table_id}_{timestamp}".encode()).hexdigest()[:12]
 
