@@ -25,6 +25,8 @@ class DialectStrategy(Protocol):
         sqlglot_dialect: Sqlglot dialect name for query parsing (e.g., 'tsql'), or None for generic SQL.
         supports_indexes: Whether this dialect supports traditional index metadata.
         has_fast_row_counts: Whether this dialect has DMV/system-table-based fast row counts.
+        default_schema: Default schema for this dialect, or None if the engine/connection decides.
+        max_identifier_depth: Max number of dotted identifier parts (Databricks=3, MSSQL=2, generic=1).
     """
 
     @property
@@ -45,6 +47,16 @@ class DialectStrategy(Protocol):
     @property
     def has_fast_row_counts(self) -> bool:
         """Whether this dialect has DMV/system-table-based fast row counts."""
+        ...
+
+    @property
+    def default_schema(self) -> str | None:
+        """Default schema for this dialect, or None if the engine/connection decides."""
+        ...
+
+    @property
+    def max_identifier_depth(self) -> int:
+        """Max number of dotted identifier parts: Databricks=3, MSSQL=2, generic=1."""
         ...
 
     def create_engine(self, **kwargs) -> Engine:

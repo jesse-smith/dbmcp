@@ -60,6 +60,16 @@ class MssqlDialect:
         return True
 
     @property
+    def default_schema(self) -> str | None:
+        """Default schema for SQL Server."""
+        return "dbo"
+
+    @property
+    def max_identifier_depth(self) -> int:
+        """Max dotted identifier parts: schema.table."""
+        return 2
+
+    @property
     def safe_procedures(self) -> frozenset[str]:
         """21 known-safe SQL Server system stored procedures."""
         return frozenset({
