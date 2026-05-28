@@ -40,7 +40,10 @@ post-connect). Covers IDENT-03 → IDENT-07.
 - **D-12:** SC2 shared test matrix = exhaustive parametrized unit tests on `resolve_identifier` (dialect × depth × conflict/agreement/catalog-gate), PLUS one thin parametrized test asserting each of the 5 tools routes through the resolver and surfaces its `ValueError` as an error response. Test the boundary, not duplicated logic 5×.
 
 ### Roadmap correction
-- **D-13:** Fix the `src/tools/` → `src/mcp_server/` path slip in ROADMAP.md Phase 15 SC4 text as part of this phase. Real tool surface is `src/mcp_server/{schema,query,analysis}_tools.py`.
+- **D-13:** Fix the `src/tools/` → `src/mcp_server/` path slip in ROADMAP.md Phase 15 SC4 text as part of this phase. Real tool surface is `src/mcp_server/{schema,query,analysis}_tools.py`. **NOTE (research):** confirmed NO-OP — ROADMAP SC4 already reads `src/mcp_server/`; no `src/tools/` reference exists. No fix needed.
+
+### Scope expansion (added 2026-05-28 during plan-checker revision)
+- **D-14:** `find_pk_candidates` and `find_fk_candidates` (in `src/mcp_server/analysis_tools.py`, lines ~155/~260) become **full namespace-aware tools** alongside the original 5 — total now **7 tools**. User decision (2026-05-28) resolving the SC4-vs-D-11 tension: ROADMAP SC4 ("No tool signature in `src/mcp_server/` carries `schema_name='dbo'`") is categorical, and both tools carry the identical `schema_name="dbo"` default — the exact Databricks/SQLite bug IDENT-07 removes. Therefore both tools get: (a) `schema_name="dbo"` → `None` signature sweep (D-11 extended), (b) `table_name` depth-parsing through `resolve_identifier`, (c) the D-07 catalog gate, and (d) a `catalog` param (Databricks-only, errors on MSSQL/generic). The shared test matrix (D-12) extends to assert all **7** tools route through the resolver. This intentionally supersedes D-11's "5 tool" enumeration and SC1's "five" wording; the spirit (one resolver, no hardcoded `dbo`, categorical SC4) governs.
 
 ### Claude's Discretion
 - Exact property names (`max_identifier_depth`, `default_schema`) and frozen-dataclass field naming.

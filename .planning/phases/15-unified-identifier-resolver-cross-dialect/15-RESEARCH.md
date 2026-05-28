@@ -342,7 +342,7 @@ This is a code refactor (parsing logic + signatures + properties). No stored dat
 
 **Note:** Both items are LOW risk and surfaced for the planner to confirm, not blockers.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Malformed-input handling (ties to A1)**
    - What we know: `to_table("a.")`, `to_table("")` raise `sqlglot.ParseError`; `to_table("a; DROP TABLE b")` does NOT raise (returns one identifier).

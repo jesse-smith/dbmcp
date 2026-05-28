@@ -4,14 +4,14 @@ milestone: v2.1
 milestone_name: Databricks identifier fixes
 status: planning
 stopped_at: Phase 15 context gathered
-last_updated: "2026-05-28T20:35:59.583Z"
+last_updated: "2026-05-28T21:38:16.593Z"
 last_activity: "2026-05-28 - Completed quick task 260528-gsk: Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways"
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 4
+  total_plans: 10
   completed_plans: 4
-  percent: 100
+  percent: 40
 ---
 
 # Project State
@@ -127,4 +127,4 @@ Last session: --stopped-at
 Stopped at: Phase 15 context gathered
 Resume file: --resume-file
 
-**Planned Phase:** 14 (connect-time-hardening-databricks) — 4 plans — 2026-05-11T20:50:13.408Z
+**Planned Phase:** 15 (Unified identifier resolver (cross-dialect)) — 6 plans — 2026-05-28T21:38:16.587Z
