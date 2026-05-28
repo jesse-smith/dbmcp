@@ -728,14 +728,14 @@ class MetadataService:
         logger.debug(f"Found {len(tables)} tables, total: {total_count}")
         return tables, pagination
 
-    def get_columns(self, table_name: str, schema_name: str = "dbo") -> list[Column]:
+    def get_columns(self, table_name: str, schema_name: str | None = None) -> list[Column]:
         """Get column metadata for a table.
 
         Uses SQLAlchemy inspector for portable column introspection.
 
         Args:
             table_name: Table name
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
 
         Returns:
             List of Column objects
@@ -778,12 +778,12 @@ class MetadataService:
 
         return columns
 
-    def get_indexes(self, table_name: str, schema_name: str = "dbo") -> list[Index]:
+    def get_indexes(self, table_name: str, schema_name: str | None = None) -> list[Index]:
         """Get index metadata for a table.
 
         Args:
             table_name: Table name
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
 
         Returns:
             List of Index objects
@@ -814,12 +814,12 @@ class MetadataService:
 
         return indexes
 
-    def get_foreign_keys(self, table_name: str, schema_name: str = "dbo") -> list[dict]:
+    def get_foreign_keys(self, table_name: str, schema_name: str | None = None) -> list[dict]:
         """Get declared foreign key relationships for a table.
 
         Args:
             table_name: Table name
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
 
         Returns:
             List of foreign key dictionaries
@@ -830,12 +830,12 @@ class MetadataService:
             logger.warning(f"Error getting foreign keys for {schema_name}.{table_name}: {type(e).__name__}: {e}")
             return []
 
-    def get_primary_key(self, table_name: str, schema_name: str = "dbo") -> dict:
+    def get_primary_key(self, table_name: str, schema_name: str | None = None) -> dict:
         """Get primary key constraint for a table.
 
         Args:
             table_name: Table name
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
 
         Returns:
             Primary key constraint dictionary
@@ -849,7 +849,7 @@ class MetadataService:
     def get_table_schema(
         self,
         table_name: str,
-        schema_name: str = "dbo",
+        schema_name: str | None = None,
         include_indexes: bool = True,
         include_relationships: bool = True,
         catalog: str | None = None,
@@ -860,7 +860,7 @@ class MetadataService:
 
         Args:
             table_name: Table name
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
             include_indexes: Include index information
             include_relationships: Include declared foreign keys
             catalog: Optional Databricks catalog name. Overrides the connection's
@@ -1123,7 +1123,7 @@ class MetadataService:
     def table_exists(
         self,
         table_name: str,
-        schema_name: str = "dbo",
+        schema_name: str | None = None,
         catalog: str | None = None,
     ) -> bool:
         """Check if a table exists.

@@ -78,7 +78,7 @@ class QueryService:
     def get_sample_data(
         self,
         table_name: str,
-        schema_name: str = "dbo",
+        schema_name: str | None = None,
         sample_size: int = 5,
         sampling_method: SamplingMethod = SamplingMethod.TOP,
         columns: list[str] | None = None,
@@ -87,7 +87,7 @@ class QueryService:
 
         Args:
             table_name: Table name to sample from
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
             sample_size: Number of rows to return (1-1000)
             sampling_method: Sampling strategy to use
             columns: Optional list of columns to include (None = all columns)
@@ -155,7 +155,9 @@ class QueryService:
             raise
 
         # Create sample ID
-        table_id = f"{schema_name}.{table_name}"
+        # schema_name may be None now that 'dbo' is no longer a hardcoded default;
+        # avoid emitting a literal "None." prefix in the identifier.
+        table_id = f"{schema_name}.{table_name}" if schema_name else table_name
         timestamp = datetime.now().isoformat()
         sample_id = hashlib.sha256(f"{table_id}_{timestamp}".encode()).hexdigest()[:12]
 
