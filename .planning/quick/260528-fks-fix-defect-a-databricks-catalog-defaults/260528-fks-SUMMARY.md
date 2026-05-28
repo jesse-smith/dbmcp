@@ -43,11 +43,15 @@ A parallel `or "main"` leftover in `src/db/metadata.py:928` (the DESCRIBE EXTEND
 
 ## Live UAT against `dbmcp-test`
 
-Pending — to run after MCP reconnection. Procedure:
+With `catalog` commented out in `dbmcp.toml` and `dbmcp-test` reconnected:
 
-1. Comment out `catalog = "..."` in `dbmcp.toml`, reconnect `dbmcp-test`.
-2. Call `connect_database(connection_name="<dbx-conn>")`. Expect: `Databricks connection requires a catalog. Accessible catalogs: ...` ConnectionError. NOT `Catalog 'main' was not found`. NOT a silent connect-to-main success.
-3. Uncomment `catalog = "bmtct"`, reconnect, repeat. Expect: success, schemas listed.
+| # | Probe | Result | What it proves |
+|---|---|---|---|
+| 1 | `connect_database(connection_name="databricks-test")` (catalog omitted) | Enriched ConnectionError: `Databricks connection requires a catalog, and probing SHOW CATALOGS failed (...). Pass one via ?catalog= in the URL or catalog= in the config.` | **Defect A fixed** — catalog-omitted toml routes through the IDENT-01 enrichment instead of silently substituting `"main"`. This is the D-06 branch (probe also failed → names both the catalog requirement AND the probe failure cause AND tells the user how to fix it). Pre-fix would have been `Catalog 'main' was not found` (or a silent connect-to-main if `main` existed). |
+
+The SSL cert error embedded in the probe-failure clause is the pre-existing TLS gap from prior Phase 14 UAT (databricks-sql-connector + corp MITM cert chain), orthogonal to Defect A. The probe still propagated the right error structure: catalog requirement first, then the cause of the probe failure.
+
+Positive UAT (uncomment toml `catalog = "bmtct"`, expect success) is covered by Probe 1 of quick task `260515-m30` from 2026-05-15: `connection_id d9ce935f5dbb`, 22 schemas listed. That code path is unchanged by this fix — explicit catalog flows through unchanged (regression-guarded by `test_parse_databricks_connection_explicit_catalog_preserved`).
 
 ## Out-of-scope items observed
 
