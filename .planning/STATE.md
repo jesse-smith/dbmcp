@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 Phase: 15
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-28 - Completed quick task 260528-fks: Fix Defect A — Databricks catalog defaults bypass IDENT-01
+Last activity: 2026-05-28 - Completed quick task 260528-gsk: Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways
 
 ## Performance Metrics
 
@@ -116,6 +116,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260507-h6j | Move all optional extras to hard dependencies | 2026-05-07 | 4548866 | [260507-h6j-move-all-optional-extras-to-hard-depende](./quick/260507-h6j-move-all-optional-extras-to-hard-depende/) |
 | 260515-m30 | Draft C/D fixes — Databricks connection_id collision across catalogs | 2026-05-15 | bc2244f | [260515-m30-draft-c-d-fixes](./quick/260515-m30-draft-c-d-fixes/) |
 | 260528-fks | Fix Defect A — Databricks catalog defaults bypass IDENT-01 | 2026-05-28 | 72f26f8 | [260528-fks-fix-defect-a-databricks-catalog-defaults](./quick/260528-fks-fix-defect-a-databricks-catalog-defaults/) |
+| 260528-gsk | Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways | 2026-05-28 | 269a6da | [260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca](./quick/260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca/) |
 
 ## Session Continuity
 

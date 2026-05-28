@@ -226,6 +226,10 @@ process-wide fallback (applies to every Databricks connection that doesn't set
 explicit per-connection `ca_bundle` > URL `?ca_bundle=` query param >
 `DBMCP_CA_BUNDLE` env > unset (connector falls back to certifi).
 
+Point `ca_bundle` at the gateway CA file alone — dbmcp automatically merges it
+with certifi's bundle at connect time, so standard intermediates (DigiCert,
+etc.) remain trusted alongside the gateway root.
+
 This setting is currently Databricks-only; MSSQL and generic dialects do not
 have an equivalent hook yet.
 
