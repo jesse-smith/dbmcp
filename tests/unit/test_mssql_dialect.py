@@ -40,6 +40,16 @@ class TestProtocolConformance:
         dialect = MssqlDialect()
         assert dialect.has_fast_row_counts is True
 
+    def test_default_schema_is_dbo(self):
+        """dialect.default_schema == 'dbo'."""
+        dialect = MssqlDialect()
+        assert dialect.default_schema == "dbo"
+
+    def test_max_identifier_depth_is_2(self):
+        """dialect.max_identifier_depth == 2."""
+        dialect = MssqlDialect()
+        assert dialect.max_identifier_depth == 2
+
 
 class TestQuoteIdentifier:
     """Verify bracket quoting for SQL Server identifiers."""

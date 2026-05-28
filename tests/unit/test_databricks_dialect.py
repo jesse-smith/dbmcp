@@ -34,6 +34,14 @@ class TestDatabricksDialect:
         dialect = self._make_dialect()
         assert dialect.has_fast_row_counts is False
 
+    def test_default_schema_is_none(self):
+        dialect = self._make_dialect()
+        assert dialect.default_schema is None
+
+    def test_max_identifier_depth_is_3(self):
+        dialect = self._make_dialect()
+        assert dialect.max_identifier_depth == 3
+
     def test_safe_procedures_returns_empty_frozenset(self):
         dialect = self._make_dialect()
         assert dialect.safe_procedures == frozenset()
