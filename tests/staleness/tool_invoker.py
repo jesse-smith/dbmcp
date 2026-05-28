@@ -293,7 +293,11 @@ def _get_sample_data_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect"),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.query_tools.MetadataService"),
         patch("src.mcp_server.query_tools.QueryService", return_value=mock_query_svc),
     ):
@@ -393,7 +397,11 @@ def _get_column_info_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.ColumnStatsCollector", return_value=mock_collector),
     ):
