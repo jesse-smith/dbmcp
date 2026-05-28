@@ -17,6 +17,7 @@ from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.db.connection import _classify_db_error
+from src.db.identifiers import resolve_identifier
 from src.mcp_server._errors import format_unexpected_error
 from src.mcp_server.server import get_connection_manager, mcp
 from src.serialization import encode_response
@@ -26,10 +27,11 @@ from src.serialization import encode_response
 async def get_column_info(
     connection_id: str,
     table_name: str,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     columns: list[str] | None = None,
     column_pattern: str | None = None,
     sample_size: int = 10,
+    catalog: str | None = None,
 ) -> str:
     """Retrieve per-column statistical profiles for a table.
 
@@ -44,11 +46,17 @@ async def get_column_info(
 
     Args:
         connection_id: Connection ID from connect_database
-        table_name: Table name to analyze
-        schema_name: Schema name (default: 'dbo')
+        table_name: Name of the table. May be dotted (e.g. 'schema.table' or
+            'catalog.schema.table') and is resolved against the dialect.
+        schema_name: Schema name. Defaults to the dialect's default schema
+            (e.g. 'dbo' on MSSQL) when omitted.
         columns: Explicit list of column names to analyze (takes precedence over pattern)
         column_pattern: SQL LIKE pattern to filter column names (e.g., '%_id')
         sample_size: Number of top frequent value samples for string columns (default: 10)
+        catalog: Optional Databricks catalog name. Rejected on non-Databricks
+            dialects (returns an error response). Column statistics are computed
+            against the connection's default catalog (set at connect time); see
+            the cross-catalog limitation note in the tool docs.
 
     Returns:
         TOON-encoded string with status, table/schema metadata, and column statistics:
@@ -91,25 +99,51 @@ async def get_column_info(
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         dialect = conn_manager.get_dialect(connection_id)
+        # Resolve + validate the identifier at the boundary (D-03). The resolver
+        # GATES catalog (D-07): a catalog supplied on MSSQL/generic raises
+        # ValueError -> error response below. On Databricks the resolved catalog
+        # is threaded into the existence check; the inspector-based column
+        # statistics still bind to the connection's default catalog (IDENT-01),
+        # so cross-catalog stats require connecting with that catalog as default.
+        resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
+        resolved_table = resolved.table
+        resolved_schema = resolved.schema
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check via Inspector (dialect-agnostic)
-            table_names = inspector.get_table_names(schema=schema_name)
-            if table_name not in table_names:
-                # Also check views
-                view_names = inspector.get_view_names(schema=schema_name)
-                if table_name not in view_names:
+            # Table existence check. For Databricks cross-catalog access use the
+            # catalog-aware MetadataService path (mirrors metadata.py:table_exists,
+            # SHOW TABLES IN catalog.schema); otherwise the dialect-agnostic
+            # Inspector path bound to the default catalog.
+            if resolved.catalog and dialect is not None and dialect.name == "databricks":
+                from src.db.metadata import MetadataService
+
+                metadata_svc = MetadataService(engine, dialect=dialect)
+                if not metadata_svc.table_exists(
+                    resolved_table, resolved_schema, catalog=resolved.catalog
+                ):
                     return {
                         "status": "error",
-                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                        "error_message": (
+                            f"Table '{resolved_schema}.{resolved_table}' not found"
+                        ),
                     }
+            else:
+                table_names = inspector.get_table_names(schema=resolved_schema)
+                if resolved_table not in table_names:
+                    # Also check views
+                    view_names = inspector.get_view_names(schema=resolved_schema)
+                    if resolved_table not in view_names:
+                        return {
+                            "status": "error",
+                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
+                        }
 
             collector = ColumnStatsCollector(
                 connection=connection,
-                schema_name=schema_name,
-                table_name=table_name,
+                schema_name=resolved_schema,
+                table_name=resolved_table,
                 dialect=dialect,
                 inspector=inspector,
             )
@@ -122,8 +156,8 @@ async def get_column_info(
 
             return {
                 "status": "success",
-                "table_name": table_name,
-                "schema_name": schema_name,
+                "table_name": resolved_table,
+                "schema_name": resolved_schema,
                 "total_columns_analyzed": len(column_stats),
                 "columns": [stat.to_dict() for stat in column_stats],
             }

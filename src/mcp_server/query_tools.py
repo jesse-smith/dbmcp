@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.config import get_config
 from src.db.connection import _classify_db_error
+from src.db.identifiers import resolve_identifier
 from src.db.metadata import MetadataService
 from src.db.query import QueryService
 from src.mcp_server.server import get_connection_manager, logger, mcp
@@ -24,10 +25,11 @@ from src.serialization import encode_response
 async def get_sample_data(
     connection_id: str,
     table_name: str,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     sample_size: int | None = None,
     sampling_method: str = "top",
     columns: list[str] | None = None,
+    catalog: str | None = None,
 ) -> str:
     """Retrieve sample data from a table.
 
@@ -37,14 +39,18 @@ async def get_sample_data(
 
     Args:
         connection_id: Connection ID from connect_database
-        table_name: Table name to sample from
-        schema_name: Schema name (default: 'dbo')
+        table_name: Name of the table. May be dotted (e.g. 'schema.table' or
+            'catalog.schema.table') and is resolved against the dialect.
+        schema_name: Schema name. Defaults to the dialect's default schema
+            (e.g. 'dbo' on MSSQL) when omitted.
         sample_size: Number of rows to return, 1-1000 (default: 5)
         sampling_method: Sampling strategy - 'top', 'tablesample', or 'modulo' (default: 'top')
             - 'top': Fast SELECT TOP N (not representative, just first N rows)
             - 'tablesample': SQL Server statistical sampling (more representative)
             - 'modulo': Deterministic sampling using modulo on row number (repeatable)
         columns: Optional list of column names to include (default: all columns)
+        catalog: Optional Databricks catalog name. Rejected on non-Databricks
+            dialects (returns an error response).
 
     Returns:
         TOON-encoded string with sample rows and metadata:
@@ -89,15 +95,17 @@ async def get_sample_data(
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         dialect = conn_manager.get_dialect(connection_id)
+        resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
         metadata_svc = MetadataService(engine, dialect=dialect)
         query_svc = QueryService(engine, dialect=dialect, metadata_service=metadata_svc)
 
         sample = query_svc.get_sample_data(
-            table_name=table_name,
-            schema_name=schema_name,
+            table_name=resolved.table,
+            schema_name=resolved.schema,
             sample_size=effective_sample_size,
             sampling_method=method_enum,
             columns=columns,
+            catalog=resolved.catalog,
         )
 
         return {

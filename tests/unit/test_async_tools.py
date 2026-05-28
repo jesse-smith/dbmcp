@@ -119,6 +119,11 @@ class TestQueryToolsAsyncWrapping:
 
         fake_dialect = MagicMock(name="registered_dialect")
         fake_dialect.name = "databricks"
+        # Resolver-compatible dialect facts so resolve_identifier (now called in
+        # _sync_work) parses cleanly instead of raising on MagicMock attributes.
+        fake_dialect.sqlglot_dialect = "databricks"
+        fake_dialect.max_identifier_depth = 3
+        fake_dialect.default_schema = None
         fake_engine = MagicMock(name="engine")
 
         fake_sample = MagicMock()
