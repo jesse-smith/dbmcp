@@ -74,7 +74,7 @@
 1. `list_tables`, `list_schemas`, `get_table_schema`, `get_sample_data`, `get_column_info` all parse `table_name` per dialect depth and route through the shared resolver. Extra parts → clear error.
 2. Conflicts between leading segments in `table_name` and the matching explicit param (`catalog` or `schema_name`) produce a named-conflict error across all five tools. Covered by a shared test matrix.
 3. `get_sample_data` and `get_column_info` each expose a `catalog` parameter (Databricks-only; MSSQL/generic error on its presence). `bmtct.ml_infections_ref.mv_fever_episodes` and equivalents work end-to-end without `USE CATALOG` workarounds.
-4. No tool signature in `src/tools/` carries `schema_name: str = "dbo"`. A `default_schema` property on `DialectStrategy` supplies the fallback per connected dialect.
+4. No tool signature in `src/mcp_server/` carries `schema_name: str = "dbo"`. A `default_schema` property on `DialectStrategy` supplies the fallback per connected dialect.
 5. Full test suite green; 85% coverage floor maintained.
 
 **Depends on:** Phase 14 (IDENT-01 lets the resolver assume catalog is always known post-connect for Databricks).
