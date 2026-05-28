@@ -186,8 +186,9 @@ async def get_column_info(
 async def find_pk_candidates(
     connection_id: str,
     table_name: str,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     type_filter: list[str] | None = None,
+    catalog: str | None = None,
 ) -> str:
     """Identify columns that meet primary key candidacy criteria.
 
@@ -204,11 +205,18 @@ async def find_pk_candidates(
 
     Args:
         connection_id: Connection ID from connect_database
-        table_name: Table to search for PK candidates
-        schema_name: Schema name (default: 'dbo')
+        table_name: Table to search for PK candidates. May be dotted (e.g.
+            'schema.table' or 'catalog.schema.table') and is resolved against
+            the dialect.
+        schema_name: Schema name. Defaults to the dialect's default schema
+            (e.g. 'dbo' on MSSQL) when omitted.
         type_filter: SQL types considered for structural PK candidacy.
             Default: ["int", "bigint", "smallint", "tinyint", "uniqueidentifier"].
             Set to empty list to disable type filtering.
+        catalog: Optional Databricks catalog name. Rejected on non-Databricks
+            dialects (returns an error response). On Databricks the Inspector
+            binds to the connection's default catalog (set at connect time);
+            see the cross-catalog limitation note in the tool docs.
 
     Returns:
         TOON-encoded string with status, table/schema metadata, and candidates list:
@@ -235,24 +243,32 @@ async def find_pk_candidates(
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         dialect = conn_manager.get_dialect(connection_id)
+        # Resolve + validate the identifier at the boundary (D-03/D-14). The
+        # resolver GATES catalog (D-07): a catalog supplied on MSSQL/generic
+        # raises ValueError -> error response below. On Databricks the Inspector
+        # still binds to the connection's default catalog (IDENT-01), so
+        # cross-catalog discovery requires connecting with that catalog default.
+        resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
+        resolved_table = resolved.table
+        resolved_schema = resolved.schema
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
             # Table existence check via Inspector (dialect-agnostic)
-            table_names = inspector.get_table_names(schema=schema_name)
-            if table_name not in table_names:
-                view_names = inspector.get_view_names(schema=schema_name)
-                if table_name not in view_names:
+            table_names = inspector.get_table_names(schema=resolved_schema)
+            if resolved_table not in table_names:
+                view_names = inspector.get_view_names(schema=resolved_schema)
+                if resolved_table not in view_names:
                     return {
                         "status": "error",
-                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                        "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
                     }
 
             discovery = PKDiscovery(
                 connection=connection,
-                schema_name=schema_name,
-                table_name=table_name,
+                schema_name=resolved_schema,
+                table_name=resolved_table,
                 dialect=dialect,
                 inspector=inspector,
             )
@@ -261,8 +277,8 @@ async def find_pk_candidates(
 
             return {
                 "status": "success",
-                "table_name": table_name,
-                "schema_name": schema_name,
+                "table_name": resolved_table,
+                "schema_name": resolved_schema,
                 "candidates": [c.to_dict() for c in candidates],
             }
 
@@ -291,13 +307,14 @@ async def find_fk_candidates(
     connection_id: str,
     table_name: str,
     column_name: str,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     target_schema: str | None = None,
     target_tables: list[str] | None = None,
     target_table_pattern: str | None = None,
     pk_candidates_only: bool = True,
     include_overlap: bool = False,
     limit: int = 100,
+    catalog: str | None = None,
 ) -> str:
     """Discover potential foreign key relationships for a source column.
 
@@ -313,15 +330,21 @@ async def find_fk_candidates(
 
     Args:
         connection_id: Connection ID from connect_database
-        table_name: Source table name
+        table_name: Source table name. May be dotted (e.g. 'schema.table' or
+            'catalog.schema.table') and is resolved against the dialect.
         column_name: Source column name
-        schema_name: Source schema name (default: 'dbo')
+        schema_name: Source schema name. Defaults to the dialect's default
+            schema (e.g. 'dbo' on MSSQL) when omitted.
         target_schema: Filter targets to this schema. Defaults to source schema.
         target_tables: Explicit list of target table names
         target_table_pattern: SQL LIKE pattern for target table names
         pk_candidates_only: Only compare against PK-candidate columns (default: True)
         include_overlap: Compute value overlap metrics (default: False)
         limit: Maximum candidates to return, 0 = no limit (default: 100)
+        catalog: Optional Databricks catalog name. Rejected on non-Databricks
+            dialects (returns an error response). On Databricks the Inspector
+            binds to the connection's default catalog (set at connect time);
+            see the cross-catalog limitation note in the tool docs.
 
     Returns:
         TOON-encoded string with status, source metadata, candidates list, and search info:
@@ -362,37 +385,45 @@ async def find_fk_candidates(
         conn_manager = get_connection_manager()
         engine = conn_manager.get_engine(connection_id)
         dialect = conn_manager.get_dialect(connection_id)
+        # Resolve + validate the identifier at the boundary (D-03/D-14). The
+        # resolver GATES catalog (D-07): a catalog supplied on MSSQL/generic
+        # raises ValueError -> error response below. On Databricks the Inspector
+        # still binds to the connection's default catalog (IDENT-01), so
+        # cross-catalog search requires connecting with that catalog default.
+        resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
+        resolved_table = resolved.table
+        resolved_schema = resolved.schema
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
             # Table existence check via Inspector (dialect-agnostic)
-            table_names = inspector.get_table_names(schema=schema_name)
-            if table_name not in table_names:
-                view_names = inspector.get_view_names(schema=schema_name)
-                if table_name not in view_names:
+            table_names = inspector.get_table_names(schema=resolved_schema)
+            if resolved_table not in table_names:
+                view_names = inspector.get_view_names(schema=resolved_schema)
+                if resolved_table not in view_names:
                     return {
                         "status": "error",
-                        "error_message": f"Table '{table_name}' not found in schema '{schema_name}'",
+                        "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
                     }
 
             # Column existence and type via Inspector (dialect-agnostic)
-            columns = inspector.get_columns(table_name, schema=schema_name)
+            columns = inspector.get_columns(resolved_table, schema=resolved_schema)
             col_info = next(
                 (c for c in columns if c["name"] == column_name), None
             )
             if col_info is None:
                 return {
                     "status": "error",
-                    "error_message": f"Column '{column_name}' not found in table '{schema_name}.{table_name}'",
+                    "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
                 }
 
             source_data_type = str(col_info["type"])
 
             search = FKCandidateSearch(
                 connection=connection,
-                source_schema=schema_name,
-                source_table=table_name,
+                source_schema=resolved_schema,
+                source_table=resolved_table,
                 source_column=column_name,
                 source_data_type=source_data_type,
                 dialect=dialect,
@@ -412,8 +443,8 @@ async def find_fk_candidates(
                 "status": "success",
                 "source": {
                     "column_name": column_name,
-                    "table_name": table_name,
-                    "schema_name": schema_name,
+                    "table_name": resolved_table,
+                    "schema_name": resolved_schema,
                     "data_type": source_data_type,
                 },
                 "candidates": [c.to_dict() for c in fk_result.candidates],
