@@ -6,7 +6,11 @@ preventing the async event loop from blocking.
 Imports go through src.mcp_server.server to resolve circular imports.
 """
 
-from unittest.mock import patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+from src.db.dialects.databricks import DatabricksDialect
+from src.db.dialects.mssql import MssqlDialect
 
 # Import through server to resolve circular imports
 from src.mcp_server.server import (
@@ -119,6 +123,11 @@ class TestQueryToolsAsyncWrapping:
 
         fake_dialect = MagicMock(name="registered_dialect")
         fake_dialect.name = "databricks"
+        # Resolver-compatible dialect facts so resolve_identifier (now called in
+        # _sync_work) parses cleanly instead of raising on MagicMock attributes.
+        fake_dialect.sqlglot_dialect = "databricks"
+        fake_dialect.max_identifier_depth = 3
+        fake_dialect.default_schema = None
         fake_engine = MagicMock(name="engine")
 
         fake_sample = MagicMock()
@@ -380,3 +389,143 @@ class TestSafetyNetErrorClassification:
             mock_classify.assert_not_called()
             # Generic fallback should contain the error text
             assert "something broke" in result
+
+
+# ---------------------------------------------------------------------------
+# Catalog gate + resolver routing boundary tests (IDENT-05 / IDENT-06)
+# ---------------------------------------------------------------------------
+
+
+def _patch_cm(module, dialect, engine=None):
+    """Patch a tool module's get_connection_manager to return the given dialect."""
+    mock_cm = MagicMock()
+    mock_cm.get_engine.return_value = engine if engine is not None else MagicMock()
+    mock_cm.get_dialect.return_value = dialect
+    factory = patch.object(module, "get_connection_manager", return_value=mock_cm)
+    return factory, mock_cm
+
+
+class TestCatalogGateBoundary:
+    """D-07 catalog gate: passing catalog on MSSQL/generic returns status=error."""
+
+    async def test_get_sample_data_catalog_on_mssql_errors(self):
+        from src.mcp_server import query_tools
+
+        factory, _ = _patch_cm(query_tools, MssqlDialect())
+        with factory, patch.object(query_tools, "get_config") as cfg:
+            cfg.return_value.defaults.sample_size = 5
+            result = await query_tools.get_sample_data(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_get_column_info_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+
+class TestResolverConflictBoundary:
+    """D-04 conflict: table_name segment vs explicit schema_name disagreement."""
+
+    async def test_get_sample_data_conflict_errors(self):
+        from src.mcp_server import query_tools
+
+        factory, _ = _patch_cm(query_tools, MssqlDialect())
+        with factory, patch.object(query_tools, "get_config") as cfg:
+            cfg.return_value.defaults.sample_size = 5
+            result = await query_tools.get_sample_data(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_get_column_info_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+
+class TestDatabricksThreePartHappyPath:
+    """SC3: a 3-part table_name resolves and reaches the deeper layer with
+    catalog/schema/table split apart."""
+
+    async def test_get_sample_data_three_part_routes_catalog(self):
+        from src.mcp_server import query_tools
+
+        fake_engine = MagicMock(name="engine")
+        factory, _ = _patch_cm(query_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_sample = MagicMock()
+        fake_sample.sample_id = "sid"
+        fake_sample.table_id = "tid"
+        fake_sample.sample_size = 0
+        fake_sample.rows = []
+        fake_sample.sampling_method = query_tools.SamplingMethod.TOP
+        fake_sample.truncated_columns = []
+        fake_sample.sampled_at = datetime.now()
+
+        with (
+            factory,
+            patch.object(query_tools, "MetadataService"),
+            patch.object(query_tools, "QueryService") as MockQS,
+            patch.object(query_tools, "get_config") as cfg,
+        ):
+            cfg.return_value.defaults.sample_size = 5
+            MockQS.return_value.get_sample_data.return_value = fake_sample
+
+            await query_tools.get_sample_data(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            kwargs = MockQS.return_value.get_sample_data.call_args.kwargs
+            assert kwargs["catalog"] == "cat"
+            assert kwargs["schema_name"] == "sch"
+            assert kwargs["table_name"] == "tbl"
+
+    async def test_get_column_info_three_part_routes_to_metadata(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        # Context-manager engine.connect() for the `with engine.connect()` block
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "ColumnStatsCollector") as MockCSC,
+        ):
+            MockMS.return_value.table_exists.return_value = True
+            MockCSC.return_value.get_columns_info.return_value = []
+            mock_inspect.return_value = MagicMock()
+
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            # Cross-catalog existence check routed through MetadataService with
+            # the split catalog/schema/table.
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
+            # Stats collector receives the resolved schema/table.
+            csc_kwargs = MockCSC.call_args.kwargs
+            assert csc_kwargs["schema_name"] == "sch"
+            assert csc_kwargs["table_name"] == "tbl"
+            assert "success" in result

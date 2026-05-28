@@ -82,6 +82,7 @@ class QueryService:
         sample_size: int = 5,
         sampling_method: SamplingMethod = SamplingMethod.TOP,
         columns: list[str] | None = None,
+        catalog: str | None = None,
     ) -> SampleData:
         """Retrieve sample data from a table.
 
@@ -91,6 +92,10 @@ class QueryService:
             sample_size: Number of rows to return (1-1000)
             sampling_method: Sampling strategy to use
             columns: Optional list of columns to include (None = all columns)
+            catalog: Optional Databricks catalog. When provided and the dialect
+                is Databricks, builds a 3-part ``catalog.schema.table``
+                reference so cross-catalog sampling works without
+                ``USE CATALOG``. Ignored for other dialects.
 
         Returns:
             SampleData object with rows and metadata
@@ -115,6 +120,15 @@ class QueryService:
         if self._dialect is None:
             # SQLite/test mode doesn't use schema prefixes
             full_table_name = table_name
+        elif catalog and self._dialect.name == "databricks":
+            # 3-part catalog.schema.table reference for Databricks cross-catalog
+            # access (SC3). Every segment is quoted via quote_identifier, which
+            # remains the injection defense (RESEARCH §Security) — no raw concat.
+            full_table_name = (
+                f"{self._dialect.quote_identifier(catalog)}."
+                f"{self._dialect.quote_identifier(schema_name)}."
+                f"{self._dialect.quote_identifier(table_name)}"
+            )
         else:
             full_table_name = f"{self._dialect.quote_identifier(schema_name)}.{self._dialect.quote_identifier(table_name)}"
 
