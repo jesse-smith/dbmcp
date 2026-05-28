@@ -88,6 +88,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 - [testing] Add Databricks integration tests for env-var substitution and error wrapping (`.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`)
 - [database] Unify 3-part identifier handling and require Databricks catalog (`.planning/todos/pending/2026-05-08-unify-3-part-identifier-handling-and-require-databricks-cata.md`)
+- [database] Cross-dialect ca_bundle support (Option 3) (`.planning/todos/pending/2026-05-28-cross-dialect-ca-bundle-support.md`)
+- [database] URL-mode probe engine should inherit ca_bundle for IDENT-01 enrichment (`.planning/todos/pending/2026-05-28-url-mode-probe-engine-inherit-ca-bundle-for-ident-01-enrichm.md`)
 
 ### Blockers/Concerns
 
