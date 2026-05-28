@@ -175,7 +175,8 @@ class TestDialectConfigDataclasses:
         assert c.dialect == "databricks"
         assert c.host == ""
         assert c.http_path == ""
-        assert c.catalog == "main"
+        # Empty default — required so IDENT-01 enrichment fires for catalog-omitted toml (Defect A)
+        assert c.catalog == ""
         assert c.schema_name == "default"
         assert c.token is None
 
@@ -222,6 +223,29 @@ class TestDialectDispatch:
         assert isinstance(result["warehouse"], DatabricksConnectionConfig)
         assert result["warehouse"].host == "adb-123.azuredatabricks.net"
         assert result["warehouse"].http_path == "/sql/1.0/warehouses/abc"
+        assert result["warehouse"].catalog == "analytics"
+
+    def test_parse_databricks_connection_omitted_catalog_defaults_to_empty(self):
+        """Defect A: catalog must default to "" so IDENT-01 enrichment fires for
+        catalog-omitted toml entries instead of "main" silently bypassing the guard."""
+        raw = {"warehouse": {
+            "dialect": "databricks",
+            "host": "h",
+            "http_path": "/p",
+            # catalog intentionally omitted
+        }}
+        result = _parse_connections(raw)
+        assert result["warehouse"].catalog == ""
+
+    def test_parse_databricks_connection_explicit_catalog_preserved(self):
+        """Defect A regression guard: explicit catalog must still flow through."""
+        raw = {"warehouse": {
+            "dialect": "databricks",
+            "host": "h",
+            "http_path": "/p",
+            "catalog": "analytics",
+        }}
+        result = _parse_connections(raw)
         assert result["warehouse"].catalog == "analytics"
 
     def test_generic_dialect_produces_generic_config(self):

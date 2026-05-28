@@ -925,7 +925,7 @@ class MetadataService:
 
         # Databricks-specific table properties via DESCRIBE EXTENDED (D-07)
         if self._dialect and self._dialect.name == "databricks":
-            dte_catalog = catalog or "main"  # Fall back to default catalog
+            dte_catalog = catalog or self._engine_catalog()  # IDENT-01: engine-bound catalog
             dte_props = self._parse_databricks_table_properties(
                 table_name, schema_name, dte_catalog
             )

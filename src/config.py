@@ -74,7 +74,7 @@ class DatabricksConnectionConfig:
     dialect: str = "databricks"
     host: str = ""
     http_path: str = ""
-    catalog: str = "main"
+    catalog: str = ""
     schema_name: str = "default"
     token: str | None = None
 
@@ -240,7 +240,7 @@ def _parse_databricks_connection(name: str, params: dict) -> DatabricksConnectio
     return DatabricksConnectionConfig(
         host=params.get("host", ""),
         http_path=params.get("http_path", ""),
-        catalog=params.get("catalog", "main"),
+        catalog=params.get("catalog", ""),
         schema_name=params.get("schema_name", "default"),
         token=params.get("token"),
     )

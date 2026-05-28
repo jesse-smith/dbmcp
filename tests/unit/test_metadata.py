@@ -1159,7 +1159,10 @@ class TestDatabricksTableProperties:
             "location": "dbfs:/user/hive/warehouse/my_table",
             "partition_columns": ["dt"],
         }
-        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+        with (
+            patch.object(service, "_parse_databricks_table_properties", return_value=dte_props),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
             result = service.get_table_schema("customers", "main")
 
         assert result["owner"] == "user@domain.com"
@@ -1196,7 +1199,10 @@ class TestDatabricksTableProperties:
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
-        with patch.object(service, "_parse_databricks_table_properties", return_value={}):
+        with (
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
             result = service.get_table_schema("customers", "main")
 
         assert result["table_name"] == "customers"
@@ -1359,8 +1365,11 @@ class TestSharedMetadataBehavior:
             # Databricks get_table_schema additionally calls DESCRIBE EXTENDED —
             # short-circuit it so the shared test stays dialect-agnostic.
             if dialect_inspector.name == "databricks":
-                with patch.object(service, "_parse_databricks_table_properties",
-                                  return_value={}):
+                with (
+                    patch.object(service, "_parse_databricks_table_properties",
+                                 return_value={}),
+                    patch.object(service, "_engine_catalog", return_value="main"),
+                ):
                     result = service.get_table_schema("customers", "main")
             else:
                 result = service.get_table_schema("customers", "main")
@@ -1564,6 +1573,7 @@ class TestGetTableSchemaCrossCatalogColumns:
             patch.object(service, "_parse_databricks_table_properties", return_value={}),
             patch.object(service, "get_indexes", return_value=[]),
             patch.object(service, "get_foreign_keys", return_value=[]),
+            patch.object(service, "_engine_catalog", return_value="main"),
         ):
             service.get_table_schema("customers", "main")  # no catalog kwarg
 
