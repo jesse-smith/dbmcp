@@ -77,6 +77,7 @@ class DatabricksConnectionConfig:
     catalog: str = ""
     schema_name: str = "default"
     token: str | None = None
+    ca_bundle: str = ""
 
 
 @dataclass(frozen=True)
@@ -235,7 +236,9 @@ def _parse_mssql_connection(name: str, params: dict) -> MssqlConnectionConfig:
 
 def _parse_databricks_connection(name: str, params: dict) -> DatabricksConnectionConfig:
     """Parse a Databricks connection config from raw TOML params."""
-    known_fields = {"dialect", "host", "http_path", "catalog", "schema_name", "token"}
+    known_fields = {
+        "dialect", "host", "http_path", "catalog", "schema_name", "token", "ca_bundle",
+    }
     _warn_unknown_fields(name, params, known_fields)
     return DatabricksConnectionConfig(
         host=params.get("host", ""),
@@ -243,6 +246,7 @@ def _parse_databricks_connection(name: str, params: dict) -> DatabricksConnectio
         catalog=params.get("catalog", ""),
         schema_name=params.get("schema_name", "default"),
         token=params.get("token"),
+        ca_bundle=params.get("ca_bundle", ""),
     )
 
 

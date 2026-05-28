@@ -248,6 +248,54 @@ class TestDialectDispatch:
         result = _parse_connections(raw)
         assert result["warehouse"].catalog == "analytics"
 
+    def test_databricks_config_default_ca_bundle_is_empty_string(self):
+        """260528-gsk: default ca_bundle is empty string (no TLS pin)."""
+        c = DatabricksConnectionConfig()
+        assert c.ca_bundle == ""
+
+    def test_databricks_config_round_trip_ca_bundle(self):
+        """260528-gsk: ca_bundle round-trips from toml without expansion at parse time."""
+        raw = {"dbx": {
+            "dialect": "databricks",
+            "host": "h",
+            "http_path": "/p",
+            "ca_bundle": "~/.ssl-certs/gateway-ca.pem",
+        }}
+        result = _parse_connections(raw)
+        # NO expanduser at parse time — that happens at connect time
+        assert result["dbx"].ca_bundle == "~/.ssl-certs/gateway-ca.pem"
+
+    def test_databricks_config_missing_ca_bundle_defaults_to_empty(self):
+        """260528-gsk: missing ca_bundle in toml defaults to empty string."""
+        raw = {"dbx": {
+            "dialect": "databricks",
+            "host": "h",
+            "http_path": "/p",
+        }}
+        result = _parse_connections(raw)
+        assert result["dbx"].ca_bundle == ""
+
+    def test_databricks_config_ca_bundle_is_known_field(self, monkeypatch):
+        """260528-gsk: ca_bundle is a known field (no unrecognized-field warning)."""
+        import src.config as config_mod
+
+        warnings: list[str] = []
+        original_warning = config_mod.logger.warning
+
+        def capture_warning(msg, *args):
+            warnings.append(msg % args)
+            original_warning(msg, *args)
+
+        monkeypatch.setattr(config_mod.logger, "warning", capture_warning)
+        raw = {"dbx": {
+            "dialect": "databricks",
+            "host": "h",
+            "http_path": "/p",
+            "ca_bundle": "/x",
+        }}
+        _parse_connections(raw)
+        assert not any("unrecognized field 'ca_bundle'" in w for w in warnings)
+
     def test_generic_dialect_produces_generic_config(self):
         raw = {"pg": {"dialect": "generic", "sqlalchemy_url": "postgresql://localhost/mydb"}}
         result = _parse_connections(raw)
