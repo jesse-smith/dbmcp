@@ -79,7 +79,7 @@
 
 **Depends on:** Phase 14 (IDENT-01 lets the resolver assume catalog is always known post-connect for Databricks).
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [x] 15-01-PLAN.md — Add default_schema + max_identifier_depth properties to DialectStrategy + 3 impls (IDENT-03/07)
@@ -87,7 +87,7 @@ Plans:
 - [x] 15-03-PLAN.md — TDD: resolve_identifier + ResolvedIdentifier + shared catalog-gate in src/db/identifiers.py (IDENT-03/04/07)
 - [x] 15-04-PLAN.md — Route 3 schema tools through resolver/shared gate; drop dbo; catalog Ignored→rejected (IDENT-03/04/07)
 - [x] 15-05-PLAN.md — Add catalog to get_sample_data + get_column_info; resolver routing; SC3 3-part SQL (IDENT-05/06)
-- [ ] 15-06-PLAN.md — D-14: find_pk/fk_candidates → full namespace-aware tools; dbo sweep + resolver + catalog; D-12 matrix → 7 tools (IDENT-03/04/07)
+- [x] 15-06-PLAN.md — D-14: find_pk/fk_candidates → full namespace-aware tools; dbo sweep + resolver + catalog; D-12 matrix → 7 tools (IDENT-03/04/07)
 
 ## Progress
 
