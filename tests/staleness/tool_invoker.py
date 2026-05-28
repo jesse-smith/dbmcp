@@ -75,6 +75,22 @@ def _mock_column():
     )
 
 
+def _mock_resolver_dialect():
+    """A MagicMock dialect with the concrete attributes resolve_identifier reads.
+
+    get_table_schema now routes table_name/schema_name/catalog through
+    src.db.identifiers.resolve_identifier, which calls
+    sqlglot.to_table(..., dialect=dialect.sqlglot_dialect). A bare MagicMock
+    breaks sqlglot parsing, so the resolver path needs real string attributes.
+    """
+    dialect = MagicMock(name="resolver_dialect")
+    dialect.name = "mssql"
+    dialect.sqlglot_dialect = "tsql"
+    dialect.max_identifier_depth = 2
+    dialect.default_schema = "dbo"
+    return dialect
+
+
 def _mock_connection():
     """Create a sample Connection object."""
     return Connection(
@@ -229,7 +245,11 @@ def _get_table_schema_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -243,7 +263,11 @@ def _get_table_schema_error_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
