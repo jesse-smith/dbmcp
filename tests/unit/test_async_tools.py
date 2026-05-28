@@ -431,6 +431,28 @@ class TestCatalogGateBoundary:
         assert "error" in result
         assert "catalog" in result.lower()
 
+    async def test_find_pk_candidates_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_find_fk_candidates_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="t", column_name="id", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
 
 class TestResolverConflictBoundary:
     """D-04 conflict: table_name segment vs explicit schema_name disagreement."""
@@ -454,6 +476,31 @@ class TestResolverConflictBoundary:
         with factory:
             result = await analysis_tools.get_column_info(
                 connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_find_pk_candidates_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_find_fk_candidates_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c",
+                table_name="sales.orders",
+                column_name="id",
+                schema_name="hr",
             )
         assert "error" in result
         assert "conflict" in result.lower()
@@ -528,4 +575,71 @@ class TestDatabricksThreePartHappyPath:
             csc_kwargs = MockCSC.call_args.kwargs
             assert csc_kwargs["schema_name"] == "sch"
             assert csc_kwargs["table_name"] == "tbl"
+            assert "success" in result
+
+    async def test_find_pk_candidates_three_part_routes_resolved(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch.object(analysis_tools, "PKDiscovery") as MockPK,
+        ):
+            mock_inspector = MagicMock()
+            # Inspector binds to default catalog; resolved schema "sch" used.
+            mock_inspector.get_table_names.return_value = ["tbl"]
+            mock_inspect.return_value = mock_inspector
+            MockPK.return_value.find_candidates.return_value = []
+
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            pk_kwargs = MockPK.call_args.kwargs
+            assert pk_kwargs["schema_name"] == "sch"
+            assert pk_kwargs["table_name"] == "tbl"
+            assert "success" in result
+
+    async def test_find_fk_candidates_three_part_routes_resolved(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_fk_result = MagicMock()
+        fake_fk_result.candidates = []
+        fake_fk_result.total_found = 0
+        fake_fk_result.was_limited = False
+        fake_fk_result.search_scope = "scope"
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch.object(analysis_tools, "FKCandidateSearch") as MockFK,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspector.get_table_names.return_value = ["tbl"]
+            mock_inspector.get_columns.return_value = [
+                {"name": "id", "type": "INT"}
+            ]
+            mock_inspect.return_value = mock_inspector
+            MockFK.return_value.find_candidates.return_value = fake_fk_result
+
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="cat.sch.tbl", column_name="id"
+            )
+
+            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            mock_inspector.get_columns.assert_called_once_with("tbl", schema="sch")
+            fk_kwargs = MockFK.call_args.kwargs
+            assert fk_kwargs["source_schema"] == "sch"
+            assert fk_kwargs["source_table"] == "tbl"
             assert "success" in result
