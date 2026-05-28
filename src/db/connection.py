@@ -509,6 +509,7 @@ class ConnectionManager:
         token: str,
         schema: str,
         orig_value_error: ValueError,
+        ca_bundle: str = "",
     ) -> None:
         """Raise ConnectionError enriched with accessible-catalog list.
 
@@ -532,6 +533,7 @@ class ConnectionManager:
                 token=token,
                 catalog="system",
                 schema=schema or "default",
+                ca_bundle=ca_bundle,
             )
             catalogs = dialect.list_catalogs(probe_engine)
         except SQLAlchemyError as probe_exc:
@@ -574,6 +576,12 @@ class ConnectionManager:
         token = resolve_env_vars(config.token) if config.token else ""
         catalog = resolve_env_vars(config.catalog) if config.catalog else ""
         schema = resolve_env_vars(config.schema_name) if config.schema_name else "default"
+        # 260528-gsk: ca_bundle for corp-MITM TLS gateways. Resolve ${VAR} here;
+        # tilde expansion happens in the dialect to keep symmetry with URL mode.
+        # DBMCP_CA_BUNDLE env fallback is applied inside dialect.create_engine
+        # (so URL-mode also benefits without duplicating logic here).
+        ca_bundle_raw = getattr(config, "ca_bundle", "") or ""
+        ca_bundle = resolve_env_vars(ca_bundle_raw) if ca_bundle_raw else ""
 
         # Build a canonical URL only for connection_id derivation + reuse
         # check. The dialect does NOT receive this URL — it takes the
@@ -599,6 +607,7 @@ class ConnectionManager:
                 token=token,
                 catalog=catalog,
                 schema=schema,
+                ca_bundle=ca_bundle,
             )
         except ValueError as ve:
             # IDENT-01: dialect-level catalog-required validation. Enrich with
@@ -610,6 +619,7 @@ class ConnectionManager:
                 token=token,
                 schema=schema,
                 orig_value_error=ve,
+                ca_bundle=ca_bundle,
             )
             raise  # unreachable — helper always raises
         except SQLAlchemyError as e:

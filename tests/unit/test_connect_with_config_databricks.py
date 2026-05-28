@@ -100,13 +100,13 @@ def test_connect_with_config_resolves_env_vars_and_calls_dialect_with_kwargs(mon
     manager = ConnectionManager()
     result = manager.connect_with_config(cfg, DatabricksDialect())
 
-    assert captured_kwargs == {
-        "host": "dbc-test.cloud.databricks.com",
-        "http_path": "/sql/1.0/warehouses/abc123",
-        "token": "dapi-secret-xyz",
-        "catalog": "my_catalog",
-        "schema": "my_schema",  # mapped from schema_name
-    }
+    # Bug A/B coverage: identity kwargs flow through; ca_bundle is allowed but
+    # empty here (260528-gsk added it as an additional kwarg, default "").
+    assert captured_kwargs["host"] == "dbc-test.cloud.databricks.com"
+    assert captured_kwargs["http_path"] == "/sql/1.0/warehouses/abc123"
+    assert captured_kwargs["token"] == "dapi-secret-xyz"
+    assert captured_kwargs["catalog"] == "my_catalog"
+    assert captured_kwargs["schema"] == "my_schema"  # mapped from schema_name
     # Lock Bug B: no URL-based call path.
     assert "sqlalchemy_url" not in captured_kwargs
 
@@ -590,3 +590,123 @@ def test_sqlalchemy_error_wrapped_as_connection_error(monkeypatch):
         ConnectionManager().connect_with_config(cfg, DatabricksDialect())
 
     assert "dbc-test.cloud.databricks.com" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# 260528-gsk: ca_bundle plumbing through named-config route
+# ---------------------------------------------------------------------------
+
+
+def test_named_config_ca_bundle_passed_to_dialect(monkeypatch):
+    """Config-supplied ca_bundle reaches DatabricksDialect.create_engine kwargs."""
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="/cfg/ca.pem",
+    )
+
+    captured: dict = {}
+
+    def spy_create_engine(self, **kwargs):
+        captured.update(kwargs)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured.get("ca_bundle") == "/cfg/ca.pem"
+
+
+def test_named_config_ca_bundle_env_var_resolved(monkeypatch):
+    """${VAR} in ca_bundle resolves via resolve_env_vars before reaching dialect."""
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+    monkeypatch.setenv("TEST_CA_PATH", "/resolved/ca.pem")
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="${TEST_CA_PATH}",
+    )
+
+    captured: dict = {}
+
+    def spy_create_engine(self, **kwargs):
+        captured.update(kwargs)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured.get("ca_bundle") == "/resolved/ca.pem"
+
+
+def test_named_config_no_ca_bundle_passes_empty(monkeypatch):
+    """No config ca_bundle + no env → dialect receives empty/missing, _tls_trusted_ca_file ABSENT.
+
+    Asserts at the connect_args level (one layer past the dialect kwargs) so we
+    cover the full named-config → dialect → connect_args path.
+    """
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        # no ca_bundle
+    )
+
+    captured_connect_args: dict = {}
+
+    import src.db.dialects.databricks as dbx_mod
+
+    def fake_sa_create_engine(url, **kw):
+        captured_connect_args.update(kw.get("connect_args") or {})
+        return _make_engine_spy()
+
+    monkeypatch.setattr(dbx_mod, "sa_create_engine", fake_sa_create_engine)
+    monkeypatch.setattr(dbx_mod, "_databricks_import_error", None)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert "_tls_trusted_ca_file" not in captured_connect_args
+
+
+def test_named_config_explicit_beats_env(monkeypatch):
+    """Per-connection ca_bundle wins over DBMCP_CA_BUNDLE env (cfg short-circuits env fallback)."""
+    monkeypatch.setenv("DBMCP_CA_BUNDLE", "/env/ca.pem")
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="/cfg/ca.pem",
+    )
+
+    captured_connect_args: dict = {}
+
+    import src.db.dialects.databricks as dbx_mod
+
+    def fake_sa_create_engine(url, **kw):
+        captured_connect_args.update(kw.get("connect_args") or {})
+        return _make_engine_spy()
+
+    monkeypatch.setattr(dbx_mod, "sa_create_engine", fake_sa_create_engine)
+    monkeypatch.setattr(dbx_mod, "_databricks_import_error", None)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured_connect_args.get("_tls_trusted_ca_file") == "/cfg/ca.pem"
