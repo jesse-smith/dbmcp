@@ -448,7 +448,11 @@ def _find_pk_candidates_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.PKDiscovery", return_value=mock_discovery),
     ):
@@ -510,7 +514,11 @@ def _find_fk_candidates_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.FKCandidateSearch", return_value=mock_search),
     ):
