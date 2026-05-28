@@ -5,7 +5,7 @@ milestone_name: Databricks identifier fixes
 status: ready_to_plan
 stopped_at: Phase 14 context gathered
 last_updated: "2026-05-11T20:50:13.412Z"
-last_activity: 2026-05-08 — Milestone v2.1 started
+last_activity: 2026-05-28 — Fast fix: URL-mode env-var resolution (commit 43fed65)
 progress:
   total_phases: 2
   completed_phases: 1
@@ -117,6 +117,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260515-m30 | Draft C/D fixes — Databricks connection_id collision across catalogs | 2026-05-15 | bc2244f | [260515-m30-draft-c-d-fixes](./quick/260515-m30-draft-c-d-fixes/) |
 | 260528-fks | Fix Defect A — Databricks catalog defaults bypass IDENT-01 | 2026-05-28 | 72f26f8 | [260528-fks-fix-defect-a-databricks-catalog-defaults](./quick/260528-fks-fix-defect-a-databricks-catalog-defaults/) |
 | 260528-gsk | Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways | 2026-05-28 | 269a6da | [260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca](./quick/260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca/) |
+| fast (2026-05-28) | Resolve `${VAR}` in `sqlalchemy_url` for URL-mode connect (closes URL-mode env-var gap from 260515-m30 Probe 3) | 2026-05-28 | 43fed65 | (inline /gsd:fast — no directory) |
 
 ## Session Continuity
 
