@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: planning
+status: executing
 stopped_at: Phase 15 context gathered
-last_updated: "2026-05-28T21:38:16.593Z"
-last_activity: "2026-05-28 - Completed quick task 260528-gsk: Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways"
+last_updated: "2026-05-28T22:04:27.224Z"
+last_activity: 2026-05-28 -- Phase 15 execution started
 progress:
   total_phases: 2
   completed_phases: 1
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** v2.0 shipped — next milestone not yet scoped. Use `/gsd-new-milestone` to begin.
+**Current focus:** Phase 15 — unified-identifier-resolver-cross-dialect
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-05-28 - Completed quick task 260528-gsk: Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways
+Phase: 15 (unified-identifier-resolver-cross-dialect) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 15
+Last activity: 2026-05-28 -- Phase 15 execution started
 
 ## Performance Metrics
 
