@@ -747,3 +747,152 @@ class TestDatabricksDialectListCatalogs:
 
         with pytest.raises(SQLAlchemyError, match="boom"):
             dialect.list_catalogs(engine)
+
+
+# ---------------------------------------------------------------------------
+# 260528-gsk: ca_bundle plumbing (kwargs + URL + DBMCP_CA_BUNDLE env fallback)
+# ---------------------------------------------------------------------------
+
+
+class TestDatabricksCaBundle:
+    """Plumbing tests for ca_bundle → connect_args['_tls_trusted_ca_file'].
+
+    Covers kwargs mode, URL ?ca_bundle= mode, env-var fallback, and absent-when-unset.
+    """
+
+    def _make_dialect(self):
+        from src.db.dialects import databricks as databricks_mod
+
+        databricks_mod._databricks_import_error = None
+        return databricks_mod.DatabricksDialect()
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_kwargs_passes_tls_trusted_ca_file(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """Explicit kwargs ca_bundle (absolute path) → _tls_trusted_ca_file in connect_args."""
+        monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            host="h.example.com",
+            http_path="/sql/1.0/warehouses/x",
+            token="tok",
+            catalog="c",
+            ca_bundle="/abs/ca.pem",
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == "/abs/ca.pem"
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_tilde_expansion(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """Tilde in ca_bundle gets expanduser-expanded before reaching connector."""
+        import os
+
+        monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            host="h.example.com",
+            http_path="/sql/1.0/warehouses/x",
+            token="tok",
+            catalog="c",
+            ca_bundle="~/x.pem",
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == os.path.expanduser("~/x.pem")
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_absent_when_unset(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """No kwarg, no env → _tls_trusted_ca_file MISSING (not empty string)."""
+        monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            host="h.example.com",
+            http_path="/sql/1.0/warehouses/x",
+            token="tok",
+            catalog="c",
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert "_tls_trusted_ca_file" not in connect_args
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_url_query_param(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """URL ?ca_bundle= flows through _kwargs_from_url to connect_args."""
+        monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            sqlalchemy_url=(
+                "databricks://token:T@h.example.com/"
+                "?http_path=/sql/1.0/warehouses/x&catalog=c&ca_bundle=/url/ca.pem"
+            ),
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == "/url/ca.pem"
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_env_fallback(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """DBMCP_CA_BUNDLE env var supplies value when no kwarg/URL value set."""
+        monkeypatch.setenv("DBMCP_CA_BUNDLE", "/env/ca.pem")
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            host="h.example.com",
+            http_path="/sql/1.0/warehouses/x",
+            token="tok",
+            catalog="c",
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == "/env/ca.pem"
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_kwarg_beats_env(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """Explicit kwarg wins over DBMCP_CA_BUNDLE env."""
+        monkeypatch.setenv("DBMCP_CA_BUNDLE", "/env/ca.pem")
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            host="h.example.com",
+            http_path="/sql/1.0/warehouses/x",
+            token="tok",
+            catalog="c",
+            ca_bundle="/explicit/ca.pem",
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == "/explicit/ca.pem"
+
+    @patch("src.db.dialects.databricks.sa_create_engine")
+    def test_databricks_ca_bundle_url_beats_env(
+        self, mock_sa_create_engine, monkeypatch
+    ):
+        """URL ?ca_bundle= wins over DBMCP_CA_BUNDLE env."""
+        monkeypatch.setenv("DBMCP_CA_BUNDLE", "/env/ca.pem")
+        mock_sa_create_engine.return_value = MagicMock()
+        dialect = self._make_dialect()
+
+        dialect.create_engine(
+            sqlalchemy_url=(
+                "databricks://token:T@h.example.com/"
+                "?http_path=/sql/1.0/warehouses/x&catalog=c&ca_bundle=/url/ca.pem"
+            ),
+        )
+        connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
+        assert connect_args["_tls_trusted_ca_file"] == "/url/ca.pem"

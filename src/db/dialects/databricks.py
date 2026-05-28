@@ -6,6 +6,7 @@ lazy import gating for optional dependencies, and capability flags.
 
 from __future__ import annotations
 
+import os
 from urllib.parse import quote_plus, urlencode
 
 from sqlalchemy import create_engine as sa_create_engine
@@ -156,6 +157,7 @@ class DatabricksDialect:
             "connection_id",
             "disconnect_callback",
             "connection_timeout",
+            "ca_bundle",
         }
         conflicting = [
             k
@@ -178,6 +180,11 @@ class DatabricksDialect:
             "catalog": catalog,
             "schema": schema,
         })
+        # 260528-gsk: URL ?ca_bundle= wins over original_kwargs ca_bundle
+        # (consistent with the URL-wins policy for other identity fields).
+        url_ca_bundle = query.get("ca_bundle")
+        if url_ca_bundle:
+            new_kwargs["ca_bundle"] = url_ca_bundle
         return new_kwargs
 
     def create_engine(self, **kwargs) -> Engine:
@@ -257,6 +264,20 @@ class DatabricksDialect:
             "_socket_timeout": connection_timeout,
             "_retry_stop_after_attempts_count": 2,
         }
+        # 260528-gsk: optional custom CA bundle for corp-MITM TLS gateways.
+        # Precedence: kwargs.ca_bundle (set by named-config or URL ?ca_bundle=)
+        # > DBMCP_CA_BUNDLE env > unset (omit key entirely so connector falls
+        # back to its bundled certifi store). Tilde-expanded; ${VAR} resolution
+        # happens upstream in connect_with_config so we don't double-resolve here.
+        ca_bundle = kwargs.get("ca_bundle") or os.environ.get("DBMCP_CA_BUNDLE", "")
+        if ca_bundle:
+            expanded_ca_bundle = os.path.expanduser(ca_bundle)
+            dialect_defaults["_tls_trusted_ca_file"] = expanded_ca_bundle
+            # T-gsk-05 mitigation: log custom CA path so post-incident review
+            # can correlate which trust anchor was used. Path-only, no token.
+            logger.info(
+                "Databricks TLS using custom ca_bundle: %s", expanded_ca_bundle
+            )
         # User-supplied connect_args win on matching keys; defaults fill gaps.
         user_connect_args = kwargs.get("connect_args") or {}
         merged_connect_args = {**dialect_defaults, **user_connect_args}
