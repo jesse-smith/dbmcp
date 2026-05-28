@@ -47,11 +47,18 @@ With `catalog` commented out in `dbmcp.toml` and `dbmcp-test` reconnected:
 
 | # | Probe | Result | What it proves |
 |---|---|---|---|
-| 1 | `connect_database(connection_name="databricks-test")` (catalog omitted) | Enriched ConnectionError: `Databricks connection requires a catalog, and probing SHOW CATALOGS failed (...). Pass one via ?catalog= in the URL or catalog= in the config.` | **Defect A fixed** — catalog-omitted toml routes through the IDENT-01 enrichment instead of silently substituting `"main"`. This is the D-06 branch (probe also failed → names both the catalog requirement AND the probe failure cause AND tells the user how to fix it). Pre-fix would have been `Catalog 'main' was not found` (or a silent connect-to-main if `main` existed). |
+| 1 | `connect_database(connection_name="databricks-test")` (catalog omitted) | Enriched ConnectionError: `Databricks connection requires a catalog, and probing SHOW CATALOGS failed (...). Pass one via ?catalog= in the URL or catalog= in the config.` | **Defect A fixed** — catalog-omitted toml routes through the IDENT-01 enrichment instead of silently substituting `"main"`. D-06 branch (probe also failed → names both the catalog requirement AND the probe failure cause AND the user-actionable fix). Pre-fix would have been `Catalog 'main' was not found` or a silent connect-to-main if `main` existed. |
+| 2 | `connect_database(sqlalchemy_url="databricks://...?catalog=bmtct&...")` | TLS error from `databricks-sql-connector` (`SSLCertVerificationError ... self-signed certificate in certificate chain`) | **Catalog routing past the dialect guard works** — failure is at TLS layer, not at catalog validation. Probe 2 of `260515-m30` (2026-05-15) succeeded on this exact URL/host combination, so the code path is exercised; the TLS gap is environmental drift since then (corp VPN / MITM cert chain). |
+| 3 | `connect_database(connection_name="databricks-test")` with toml `catalog = "bmtct"` uncommented | Same TLS error as probe 2 | Live success-path verification blocked by the same TLS gap. Logically subsumed by probe 2 — both routes converge on the same network call with `catalog="bmtct"` in the engine URL. |
 
-The SSL cert error embedded in the probe-failure clause is the pre-existing TLS gap from prior Phase 14 UAT (databricks-sql-connector + corp MITM cert chain), orthogonal to Defect A. The probe still propagated the right error structure: catalog requirement first, then the cause of the probe failure.
+**Positive verification status:** code-level only. The TLS gap is orthogonal to Defect A — same gap recorded as Probe 3 of quick task `260515-m30` and the pre-existing Databricks TLS gap from Phase 14 partial UAT (commit `93e106b`). It blocks all live success-path verification regardless of dialect mode (URL vs. named-config), because both routes converge on the same `databricks-sql-connector` HTTPS handshake.
 
-Positive UAT (uncomment toml `catalog = "bmtct"`, expect success) is covered by Probe 1 of quick task `260515-m30` from 2026-05-15: `connection_id d9ce935f5dbb`, 22 schemas listed. That code path is unchanged by this fix — explicit catalog flows through unchanged (regression-guarded by `test_parse_databricks_connection_explicit_catalog_preserved`).
+Code-level positive coverage is provided by:
+- `test_parse_databricks_connection_explicit_catalog_preserved` (regression guard — explicit catalog flows through unchanged)
+- `test_databricks_config_calls_dialect_with_resolved_kwargs` (existing — explicit catalog reaches `dialect.create_engine`)
+- `test_connect_with_url_catalog_param_routes_through_dialect_kwargs` family (prior task `260515-m30` URL-mode integration)
+
+A live success-path probe for this commit will need the TLS cert chain resolved separately (out of scope — same blocker as the existing pre-existing-todo for Databricks integration tests).
 
 ## Out-of-scope items observed
 
