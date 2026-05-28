@@ -60,6 +60,18 @@ Code-level positive coverage is provided by:
 
 A live success-path probe for this commit will need the TLS cert chain resolved separately (out of scope — same blocker as the existing pre-existing-todo for Databricks integration tests).
 
+## Live UAT — Closing Round (2026-05-28, post-`260528-gsk` ca_bundle fix)
+
+The TLS gap that blocked Probes 2 & 3 above was resolved by quick task `260528-gsk` (commits `ba0816d`..`269a6da` — ca_bundle config + auto-merge with certifi). Re-ran the success-path probes against live Databricks with that fix in place.
+
+| # | Probe | Result | What it proves |
+|---|---|---|---|
+| 0 | `connect_database(connection_name="databricks-test")` with toml `catalog = "bmtct"` | `status: success`, `connection_id: d9ce935f5dbb`, 22 schemas | Baseline: explicit-catalog named-config route succeeds end-to-end. (Subsumes original Probe 3.) |
+| 1 | `connect_database(connection_name="databricks-test")` with toml `catalog` commented out | Enriched ConnectionError: `Databricks connection requires a catalog. Accessible catalogs: bmtct, caboodle_src, cerner_src, ... (19 catalogs). Pass one via ?catalog= in the URL or catalog= in the config.` | **Defect A end-to-end:** catalog-omitted toml now surfaces IDENT-01 with a *populated* catalog list (probe-engine route also goes through the gateway CA via gsk's plumbing). Pre-fix would have silently substituted `"main"`. Stronger evidence than the earlier code-level run because the probe engine successfully enumerated catalogs over TLS. |
+| 2 | `connect_database(sqlalchemy_url="databricks://token:...@host?http_path=...&catalog=bmtct&ca_bundle=~/.ssl-certs/gateway-ca.pem")` then `execute_query("SELECT 1 AS probe")` | Connect: `status: success`, `connection_id: 6c8116f88cdb`, 22 schemas. Query: 1 row, 539ms. | **URL-mode catalog routing succeeds end-to-end** with full Thrift round-trip (TCP + TLS + SQL response). Different `connection_id` from Probe 0 confirms a fresh URL-route engine, not a cached named-config result. |
+
+**Positive verification status: COMPLETE.** All three originally-blocked probes (catalog-required error, URL-mode success, named-config-with-catalog success) now pass against live Databricks. Closes the only remaining UAT gap from the original report.
+
 ## Out-of-scope items observed
 
 - **URL-mode env-var resolution gap** — still pending. `${VAR}` placeholders in `sqlalchemy_url` strings are not resolved by `connect_with_url`, unlike named-config which routes through `resolve_env_vars`. Surfaced by Probe 3 of quick task `260515-m30`. Separate quick task.
