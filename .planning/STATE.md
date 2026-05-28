@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: ready_to_plan
-stopped_at: Phase 14 context gathered
-last_updated: "2026-05-11T20:50:13.412Z"
-last_activity: 2026-05-28 — Fast fix: URL-mode env-var resolution (commit 43fed65)
+status: planning
+stopped_at: Phase 15 context gathered
+last_updated: "2026-05-28T20:35:59.583Z"
+last_activity: "2026-05-28 - Completed quick task 260528-gsk: Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 4
-  completed_plans: 0
-  percent: 50
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -124,7 +124,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 14 context gathered
+Stopped at: Phase 15 context gathered
 Resume file: --resume-file
 
 **Planned Phase:** 14 (connect-time-hardening-databricks) — 4 plans — 2026-05-11T20:50:13.408Z
