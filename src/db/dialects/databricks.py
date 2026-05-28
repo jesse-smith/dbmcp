@@ -6,7 +6,9 @@ lazy import gating for optional dependencies, and capability flags.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import tempfile
 from urllib.parse import quote_plus, urlencode
 
 from sqlalchemy import create_engine as sa_create_engine
@@ -17,6 +19,45 @@ from src.logging_config import get_logger
 from src.models.schema import SamplingMethod
 
 logger = get_logger(__name__)
+
+
+def _merge_ca_bundle_with_certifi(ca_bundle_path: str) -> str:
+    """Concatenate a user-supplied CA bundle with certifi's bundle.
+
+    The Databricks SQL connector passes ``_tls_trusted_ca_file`` straight to
+    urllib3's ``ca_certs``, which *replaces* the default trust store rather
+    than augmenting it. Pointing at just a corp gateway CA loses access to
+    standard intermediates (DigiCert, etc.) that the rest of the cert chain
+    needs. We merge the user's bundle with certifi's so both are trusted.
+
+    Cached by content hash in the OS temp dir, so repeated connects reuse
+    the same merged file.
+    """
+    import certifi
+
+    with open(ca_bundle_path, "rb") as f:
+        user_bytes = f.read()
+    with open(certifi.where(), "rb") as f:
+        certifi_bytes = f.read()
+
+    combined = certifi_bytes.rstrip() + b"\n" + user_bytes.rstrip() + b"\n"
+    digest = hashlib.sha256(combined).hexdigest()[:16]
+    merged_path = os.path.join(
+        tempfile.gettempdir(), f"dbmcp-ca-merged-{digest}.pem"
+    )
+    if not os.path.exists(merged_path):
+        # Write atomically: temp file + rename, so concurrent connects don't
+        # see a half-written file.
+        fd, tmp = tempfile.mkstemp(prefix="dbmcp-ca-merged-", suffix=".pem.tmp")
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(combined)
+            os.replace(tmp, merged_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+    return merged_path
 
 try:
     import databricks.sql  # noqa: F401
@@ -272,11 +313,13 @@ class DatabricksDialect:
         ca_bundle = kwargs.get("ca_bundle") or os.environ.get("DBMCP_CA_BUNDLE", "")
         if ca_bundle:
             expanded_ca_bundle = os.path.expanduser(ca_bundle)
-            dialect_defaults["_tls_trusted_ca_file"] = expanded_ca_bundle
-            # T-gsk-05 mitigation: log custom CA path so post-incident review
-            # can correlate which trust anchor was used. Path-only, no token.
+            merged_ca_bundle = _merge_ca_bundle_with_certifi(expanded_ca_bundle)
+            dialect_defaults["_tls_trusted_ca_file"] = merged_ca_bundle
+            # T-gsk-05 mitigation: log original CA path so post-incident review
+            # can correlate which trust anchor was added. Path-only, no token.
             logger.info(
-                "Databricks TLS using custom ca_bundle: %s", expanded_ca_bundle
+                "Databricks TLS using custom ca_bundle: %s (merged with certifi)",
+                expanded_ca_bundle,
             )
         # User-supplied connect_args win on matching keys; defaults fill gaps.
         user_connect_args = kwargs.get("connect_args") or {}

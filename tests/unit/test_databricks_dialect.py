@@ -758,7 +758,16 @@ class TestDatabricksCaBundle:
     """Plumbing tests for ca_bundle → connect_args['_tls_trusted_ca_file'].
 
     Covers kwargs mode, URL ?ca_bundle= mode, env-var fallback, and absent-when-unset.
+    Stubs _merge_ca_bundle_with_certifi so assertions track the user-supplied path
+    rather than the merged temp file (merge behavior covered separately).
     """
+
+    @pytest.fixture(autouse=True)
+    def _bypass_merge(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.db.dialects.databricks._merge_ca_bundle_with_certifi",
+            lambda path: path,
+        )
 
     def _make_dialect(self):
         from src.db.dialects import databricks as databricks_mod
@@ -896,3 +905,52 @@ class TestDatabricksCaBundle:
         )
         connect_args = mock_sa_create_engine.call_args[1]["connect_args"]
         assert connect_args["_tls_trusted_ca_file"] == "/url/ca.pem"
+
+
+class TestMergeCaBundleWithCertifi:
+    """Tests for _merge_ca_bundle_with_certifi.
+
+    Connector's _tls_trusted_ca_file replaces (not augments) the trust store,
+    so a corp gateway CA alone loses access to standard intermediates. We merge
+    with certifi's bundle to keep both.
+    """
+
+    def test_merge_concatenates_certifi_and_user_bundle(self, tmp_path):
+        import os
+
+        import certifi
+
+        from src.db.dialects.databricks import _merge_ca_bundle_with_certifi
+
+        user_ca = tmp_path / "gateway.pem"
+        user_ca.write_text(
+            "-----BEGIN CERTIFICATE-----\nUSERCA\n-----END CERTIFICATE-----\n"
+        )
+
+        merged_path = _merge_ca_bundle_with_certifi(str(user_ca))
+        with open(merged_path) as f:
+            merged = f.read()
+        with open(certifi.where()) as f:
+            certifi_head = f.read()[:200]
+
+        assert "USERCA" in merged
+        assert certifi_head in merged
+        assert os.path.exists(merged_path)
+
+    def test_merge_is_deterministic_for_same_input(self, tmp_path):
+        from src.db.dialects.databricks import _merge_ca_bundle_with_certifi
+
+        user_ca = tmp_path / "gateway.pem"
+        user_ca.write_text("-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----\n")
+        first = _merge_ca_bundle_with_certifi(str(user_ca))
+        second = _merge_ca_bundle_with_certifi(str(user_ca))
+        assert first == second
+
+    def test_merge_changes_path_when_user_bundle_changes(self, tmp_path):
+        from src.db.dialects.databricks import _merge_ca_bundle_with_certifi
+
+        ca_a = tmp_path / "a.pem"
+        ca_a.write_text("-----BEGIN CERTIFICATE-----\nA\n-----END CERTIFICATE-----\n")
+        ca_b = tmp_path / "b.pem"
+        ca_b.write_text("-----BEGIN CERTIFICATE-----\nB\n-----END CERTIFICATE-----\n")
+        assert _merge_ca_bundle_with_certifi(str(ca_a)) != _merge_ca_bundle_with_certifi(str(ca_b))

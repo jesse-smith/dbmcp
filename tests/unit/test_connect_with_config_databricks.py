@@ -706,6 +706,7 @@ def test_named_config_explicit_beats_env(monkeypatch):
 
     monkeypatch.setattr(dbx_mod, "sa_create_engine", fake_sa_create_engine)
     monkeypatch.setattr(dbx_mod, "_databricks_import_error", None)
+    monkeypatch.setattr(dbx_mod, "_merge_ca_bundle_with_certifi", lambda p: p)
     _patch_no_test_connection(monkeypatch)
 
     ConnectionManager().connect_with_config(cfg, DatabricksDialect())
