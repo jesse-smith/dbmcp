@@ -343,6 +343,9 @@ class ConnectionManager:
         Raises:
             ConnectionError: If connection fails.
         """
+        from src.config import resolve_env_vars
+
+        sqlalchemy_url = resolve_env_vars(sqlalchemy_url) if sqlalchemy_url else ""
         parsed_url = make_url(sqlalchemy_url)
         connection_id = self._generate_url_connection_id(sqlalchemy_url)
 
