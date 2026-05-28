@@ -102,6 +102,16 @@ class DatabricksDialect:
         return False
 
     @property
+    def default_schema(self) -> str | None:
+        """No default schema; the connection/catalog decides."""
+        return None
+
+    @property
+    def max_identifier_depth(self) -> int:
+        """Max dotted identifier parts: catalog.schema.table."""
+        return 3
+
+    @property
     def safe_procedures(self) -> frozenset[str]:
         """No known-safe stored procedures for Databricks."""
         return frozenset()
