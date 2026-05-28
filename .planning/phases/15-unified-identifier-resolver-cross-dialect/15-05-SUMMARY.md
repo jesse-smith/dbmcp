@@ -98,3 +98,8 @@ Added the `catalog` parameter to `get_sample_data` (IDENT-05) and `get_column_in
 ## Threat Surface
 
 All threats in the plan's register (T-15-10..13, T-15-SC) are mitigated as planned. No new security-relevant surface beyond the plan's `<threat_model>` was introduced. No threat flags.
+
+## Self-Check: PASSED
+
+- FOUND: .planning/phases/15-unified-identifier-resolver-cross-dialect/15-05-SUMMARY.md
+- FOUND commits: 81866a6 (Task 1), 78d91f8 (Task 2), 202f837 (Task 3), 94d62d2 (summary)
