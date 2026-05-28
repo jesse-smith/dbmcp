@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.config import get_config
 from src.db.connection import ConnectionError, _classify_db_error
 from src.db.dialects.registry import get_dialect, resolve_dialect_from_url
+from src.db.identifiers import _assert_catalog_allowed, resolve_identifier
 from src.db.metadata import MetadataService
 from src.mcp_server._errors import format_unexpected_error
 from src.mcp_server.server import get_connection_manager, logger, mcp
@@ -323,7 +324,7 @@ async def list_tables(
         object_type: Filter by type - 'table', 'view', or None for all (default: None)
         output_mode: 'summary' (names+row counts) or 'detailed' (includes columns) (default: 'summary')
         catalog: Optional Databricks catalog name. Overrides the connection's
-            default catalog. Ignored for non-Databricks dialects.
+            default catalog. Rejected on non-Databricks dialects (raises an error).
 
     Returns:
         TOON-encoded string with table list and pagination metadata:
@@ -351,6 +352,10 @@ async def list_tables(
         return encode_response({"status": "error", "error_message": validation_error})
 
     def _sync_work():
+        conn_manager = get_connection_manager()
+        dialect = conn_manager.get_dialect(connection_id)
+        _assert_catalog_allowed(catalog, dialect)
+
         metadata_svc = _get_metadata_service(connection_id)
 
         all_tables = []
@@ -413,7 +418,7 @@ async def list_tables(
 async def get_table_schema(
     connection_id: str,
     table_name: str,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     include_indexes: bool = True,
     include_relationships: bool = True,
     catalog: str | None = None,
@@ -425,12 +430,14 @@ async def get_table_schema(
 
     Args:
         connection_id: Connection ID from connect_database
-        table_name: Name of the table
-        schema_name: Schema name (default: 'dbo')
+        table_name: Name of the table. May be dotted (e.g. 'schema.table' or
+            'catalog.schema.table') and is resolved against the dialect.
+        schema_name: Schema name. Defaults to the dialect's default schema
+            (e.g. 'dbo' on MSSQL) when omitted.
         include_indexes: Include index information (default: True)
         include_relationships: Include declared foreign keys (default: True)
         catalog: Optional Databricks catalog name. Overrides the connection's
-            default catalog. Ignored for non-Databricks dialects.
+            default catalog. Rejected on non-Databricks dialects (raises an error).
 
     Returns:
         TOON-encoded string with table schema details:
@@ -466,20 +473,28 @@ async def get_table_schema(
             error_message: string                  // on error only
     """
     def _sync_work():
+        conn_manager = get_connection_manager()
+        dialect = conn_manager.get_dialect(connection_id)
+        resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
+
         metadata_svc = _get_metadata_service(connection_id)
 
-        if not metadata_svc.table_exists(table_name, schema_name, catalog=catalog):
+        if not metadata_svc.table_exists(
+            resolved.table, resolved.schema, catalog=resolved.catalog
+        ):
             return {
                 "status": "error",
-                "error_message": f"Table '{schema_name}.{table_name}' not found",
+                "error_message": (
+                    f"Table '{resolved.schema}.{resolved.table}' not found"
+                ),
             }
 
         schema = metadata_svc.get_table_schema(
-            table_name=table_name,
-            schema_name=schema_name,
+            table_name=resolved.table,
+            schema_name=resolved.schema,
             include_indexes=include_indexes,
             include_relationships=include_relationships,
-            catalog=catalog,
+            catalog=resolved.catalog,
         )
 
         return {"status": "success", "table": schema}
