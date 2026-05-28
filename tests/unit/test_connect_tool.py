@@ -291,13 +291,14 @@ class TestConnectWithConfigDatabricks:
 
         dialect.create_engine.assert_called_once()
         kwargs = dialect.create_engine.call_args.kwargs
-        assert kwargs == {
-            "host": "workspace.cloud.databricks.com",
-            "http_path": "/sql/1.0/warehouses/abc123",
-            "token": "dapi_test_token",
-            "catalog": "analytics",
-            "schema": "production",
-        }
+        # 260528-gsk added ca_bundle as an additional kwarg (default ""); use
+        # subset assertion so identity kwargs are still locked but new optional
+        # kwargs don't break the test.
+        assert kwargs["host"] == "workspace.cloud.databricks.com"
+        assert kwargs["http_path"] == "/sql/1.0/warehouses/abc123"
+        assert kwargs["token"] == "dapi_test_token"
+        assert kwargs["catalog"] == "analytics"
+        assert kwargs["schema"] == "production"
         assert "sqlalchemy_url" not in kwargs
 
     def test_databricks_config_resolves_env_var_token(self):
