@@ -916,7 +916,8 @@ class MetadataService:
                 {
                     "constraint_name": fk.get("name"),
                     "source_columns": fk.get("constrained_columns", []),
-                    "target_schema": fk.get("referred_schema", "dbo"),
+                    "target_schema": fk.get("referred_schema")
+                    or (self._dialect.default_schema if self._dialect else None),
                     "target_table": fk.get("referred_table"),
                     "target_columns": fk.get("referred_columns", []),
                 }
