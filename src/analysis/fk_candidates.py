@@ -273,13 +273,20 @@ class FKCandidateSearch:
             columns = reflector.reflect_columns(
                 self._catalog, target_schema, target_table
             )
-            # DESCRIBE TABLE does not expose nullability; treat as nullable so
-            # no candidate is falsely excluded (mirrors PKDiscovery's contract).
+            # DESCRIBE TABLE cannot expose nullability, so reflect the REAL
+            # declared nullability from information_schema.columns and report it
+            # truthfully (WR-03). This is the same source PK _list_all_columns
+            # uses, so both tools agree for any given column. A column absent from
+            # the reflected map falls back to True (defensive, not the primary
+            # path) so a missing entry never silently asserts non-null.
+            nullability = reflector.reflect_column_nullability(
+                self._catalog, target_schema, target_table
+            )
             return [
                 {
                     "column_name": c["name"],
                     "data_type": c["data_type"],
-                    "is_nullable": True,
+                    "is_nullable": nullability.get(c["name"], True),
                 }
                 for c in columns
             ]

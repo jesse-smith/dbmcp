@@ -117,6 +117,44 @@ class CatalogAwareReflector:
 
         return columns
 
+    def reflect_column_nullability(
+        self, catalog: str, schema: str, table: str
+    ) -> dict[str, bool]:
+        """Return a ``column_name -> is_nullable`` map for ``catalog.schema.table``.
+
+        DESCRIBE TABLE (used by :meth:`reflect_columns`) does not expose
+        nullability, so it is sourced from ``{catalog}.information_schema.columns``
+        instead -- which is queryable cross-catalog without a ``USE CATALOG``
+        statement. The catalog is an *identifier* (quoted via
+        ``dialect.quote_identifier``, which escapes embedded backticks per CR-01);
+        the schema and table are *string literals* in the WHERE clause and are
+        therefore bound as ``:schema_name`` / ``:table_name`` params, never
+        interpolated (T-WR03-01). No ``USE CATALOG`` is emitted, so the query is
+        stateless over the pooled connection (T-WR03-02).
+
+        Args:
+            catalog: Catalog name (quoted identifier — IDENT-08).
+            schema: Schema (database) name (bound as a param).
+            table: Table name (bound as a param).
+
+        Returns:
+            A dict mapping ``column_name`` to ``is_nullable`` (``True`` when the
+            reflected ``is_nullable`` string equals ``"YES"`` after trim + upper).
+        """
+        qi = self.dialect.quote_identifier
+        info_schema = f"{qi(catalog)}.information_schema"
+        query = text(
+            f"SELECT column_name, is_nullable FROM {info_schema}.columns "
+            "WHERE table_schema = :schema_name AND table_name = :table_name"
+        )
+        result = self.connection.execute(
+            query, {"schema_name": schema, "table_name": table}
+        )
+        return {
+            row[0]: (str(row[1]).strip().upper() == "YES")
+            for row in result.fetchall()
+        }
+
     def list_tables(self, catalog: str, schema: str) -> list[str]:
         """Return table names in ``catalog.schema`` via SHOW TABLES IN.
 

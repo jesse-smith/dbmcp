@@ -1141,6 +1141,16 @@ class _CatalogDiscriminatingFKConnection:
             rows = [("patient_id", "PRIMARY KEY")] if targets_catalog else []
             return _mock_result(rows)
 
+        # Nullability reflection (information_schema.columns, NOT constraints).
+        # patient_id is declared nullable (YES); ssn is non-null (NO).
+        if "INFORMATION_SCHEMA" in upper and ".COLUMNS" in upper:
+            rows = (
+                [("patient_id", "YES"), ("ssn", "NO")]
+                if targets_catalog
+                else []
+            )
+            return _mock_result(rows)
+
         return _mock_result([])
 
 
@@ -1286,3 +1296,52 @@ class TestCrossCatalogFK:
         # No raw SHOW TABLES IN emitted over the connection.
         for call in conn.execute.call_args_list:
             assert "SHOW TABLES" not in str(call).upper()
+
+
+class TestWR03NullabilityAgreement:
+    """WR-03: FK get_candidate_columns(all) and PK _list_all_columns report the
+    SAME reflected nullability for a given cross-catalog column (no fabricated,
+    contradictory defaults)."""
+
+    @pytest.mark.dialects("databricks")
+    def test_fk_and_pk_agree_on_reflected_nullability(self, dialect):
+        """For patient_id (declared YES) and ssn (declared NO), the FK all-columns
+        branch and PK _list_all_columns report identical is_nullable, both sourced
+        from information_schema.columns."""
+        from src.analysis.pk_discovery import PKDiscovery
+
+        conn = _CatalogDiscriminatingFKConnection("cerner_src")
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        fk_cols = search.get_candidate_columns(
+            target_schema="dbo",
+            target_table="patients",
+            pk_candidates_only=False,
+        )
+        fk_nullable = {c["column_name"]: c["is_nullable"] for c in fk_cols}
+
+        pk_conn = _CatalogDiscriminatingFKConnection("cerner_src")
+        discovery = PKDiscovery(
+            pk_conn, "dbo", "patients",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        pk_rows = discovery._list_all_columns()
+        pk_nullable = {name: nullable for name, _dt, nullable in pk_rows}
+
+        # Reflected truth: patient_id nullable, ssn non-nullable.
+        assert fk_nullable == {"patient_id": True, "ssn": False}
+        # And the two tools AGREE for every shared column (no contradiction).
+        for col in fk_nullable.keys() & pk_nullable.keys():
+            assert fk_nullable[col] == pk_nullable[col], (
+                f"FK/PK disagree on is_nullable for {col}"
+            )
+        assert pk_nullable == {"patient_id": True, "ssn": False}

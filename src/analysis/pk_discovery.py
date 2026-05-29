@@ -343,8 +343,16 @@ class PKDiscovery:
 
         candidates = []
         for col_name, data_type, is_nullable in all_columns:
-            # Skip already-found constraint columns / nullable / wrong-type
-            if col_name in exclude_columns or is_nullable:
+            # Skip already-found constraint columns.
+            if col_name in exclude_columns:
+                continue
+            # Declared-nullable exclusion: on the default / Inspector / MSSQL
+            # branches, a column declared nullable cannot be a structural PK
+            # candidate. On the cross-catalog Databricks branch the declared
+            # nullability is REPORTED but does NOT gate (WR-03): the uniqueness
+            # probe below is the sole structural gate, since all-nullable
+            # cross-catalog tables would otherwise lose every candidate.
+            if not self._cross_catalog and is_nullable:
                 continue
             if type_filter_lower and data_type.lower() not in type_filter_lower:
                 continue
@@ -375,14 +383,26 @@ class PKDiscovery:
         SQLAlchemy Inspector when available, else INFORMATION_SCHEMA.
         """
         if self._cross_catalog:
-            # DESCRIBE TABLE does not expose nullability; treat reflected columns
-            # as non-nullable so the uniqueness probe (over the 3-part qualified
-            # table) is the sole structural gate. col_type_map keys are names.
+            # DESCRIBE TABLE cannot expose nullability, so reflect the REAL
+            # declared nullability from information_schema.columns and REPORT it
+            # truthfully (WR-03) -- the same source FK get_candidate_columns uses,
+            # so both tools agree for any given column. NOTE: this reported value
+            # must NOT gate structural candidacy on this branch (see
+            # get_structural_candidates); the uniqueness probe over the 3-part
+            # qualified table remains the sole structural gate, because
+            # all-nullable cross-catalog tables (every column declared YES) would
+            # otherwise lose every structural PK candidate.
             reflector = CatalogAwareReflector(self.connection, self._dialect)
             columns = reflector.reflect_columns(
                 self._catalog, self.schema_name, self.table_name
             )
-            return [(c["name"], c["data_type"], False) for c in columns]
+            nullability = reflector.reflect_column_nullability(
+                self._catalog, self.schema_name, self.table_name
+            )
+            return [
+                (c["name"], c["data_type"], nullability.get(c["name"], True))
+                for c in columns
+            ]
 
         if self._inspector is not None:
             columns = self._inspector.get_columns(
