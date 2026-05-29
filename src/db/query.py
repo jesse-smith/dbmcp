@@ -124,13 +124,29 @@ class QueryService:
             # 3-part catalog.schema.table reference for Databricks cross-catalog
             # access (SC3). Every segment is quoted via quote_identifier, which
             # remains the injection defense (RESEARCH §Security) — no raw concat.
+            # schema_name may be None (no hardcoded default, SC4); omit the schema
+            # segment rather than emit quote_identifier(None) -> a synthetic
+            # `None` namespace (SC3 blocker, T-qcp-02).
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            if schema_name:
+                full_table_name = (
+                    f"{quoted_catalog}."
+                    f"{self._dialect.quote_identifier(schema_name)}."
+                    f"{quoted_table}"
+                )
+            else:
+                full_table_name = f"{quoted_catalog}.{quoted_table}"
+        elif schema_name:
+            # 2-part schema.table reference (e.g. MSSQL [schema].[table]).
             full_table_name = (
-                f"{self._dialect.quote_identifier(catalog)}."
                 f"{self._dialect.quote_identifier(schema_name)}."
                 f"{self._dialect.quote_identifier(table_name)}"
             )
         else:
-            full_table_name = f"{self._dialect.quote_identifier(schema_name)}.{self._dialect.quote_identifier(table_name)}"
+            # schema_name absent (real dialect with default_schema=None): emit an
+            # unqualified, quoted table reference — no leading 'None.' qualifier.
+            full_table_name = self._dialect.quote_identifier(table_name)
 
         if sampling_method == SamplingMethod.TOP:
             query = self._build_top_query(full_table_name, column_sql, sample_size)
