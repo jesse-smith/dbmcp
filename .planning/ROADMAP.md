@@ -112,3 +112,13 @@ Plans:
 ---
 
 _Former "Phase 999.1 API consistency pass" backlog item consumed into v2.1 scope on 2026-05-08. `catalog` kwarg coverage and `"dbo"` default are now IDENT-05/06/07. Row-limit naming and `sample_size` typing inconsistencies from that backlog item are deferred — not in v2.1._
+
+### Phase 15.1: Cross-catalog metadata threading: thread resolved.catalog through Inspector and ColumnStatsCollector for find_pk_candidates, find_fk_candidates, and get_column_info column-stats (CR-02 / DISC-01) (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 15
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 15.1 to break down)

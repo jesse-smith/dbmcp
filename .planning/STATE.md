@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: milestone_complete
-stopped_at: Milestone complete (Phase 15 was final phase)
-last_updated: 2026-05-29T03:04:42.686Z
-last_activity: 2026-05-28 -- Phase 15 execution started
+status: in_progress
+stopped_at: Phase 15.1 inserted (CR-02/DISC-01 cross-catalog threading) — not planned yet
+last_updated: "2026-05-29T04:06:57.018Z"
+last_activity: "2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt cleanup (lint + WR-05 FK fallback)"
 progress:
-  total_phases: 2
-  completed_phases: 1
+  total_phases: 3
+  completed_phases: 2
   total_plans: 10
   completed_plans: 10
-  percent: 50
+  percent: 67
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** Milestone complete
+**Current focus:** Phase 15.1 (CR-02/DISC-01 cross-catalog metadata threading) — inserted, not yet planned
 
 ## Current Position
 
-Phase: 15
+Phase: 15.1
 Plan: Not started
-Status: Milestone complete
+Status: Inserted (URGENT) — not planned yet
 Last activity: 2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt cleanup (lint + WR-05 FK fallback)
 
 ## Performance Metrics
@@ -70,6 +70,7 @@ Last activity: 2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt clea
 ### Roadmap Evolution
 
 - Phase 13.1 inserted after Phase 13 (URGENT) — Close v2.0 gap: thread dialect through schema_tools/query_tools entry points (WIRING-01, WIRING-02); fix WIRING-03; fix VALID-01 and VALID-02 issues
+- Phase 15.1 inserted after Phase 15: Cross-catalog metadata threading (CR-02 / DISC-01) — thread resolved.catalog through Inspector + ColumnStatsCollector (URGENT)
 
 ### Decisions
 
