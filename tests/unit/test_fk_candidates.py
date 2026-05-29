@@ -1070,3 +1070,217 @@ class TestInspectorCandidateColumns:
             dialect=dialect.dialect,
             inspector=inspector,
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-catalog FK candidate search (IDENT-08, CR-02)
+# ---------------------------------------------------------------------------
+#
+# FK search is multi-table: catalog threading must cover BOTH the source-column
+# reads (overlap probe over the source table) AND the target-table universe
+# (RESEARCH Pitfall 3). Open Q1: cross-catalog FK targets are scoped to the
+# requested catalog ONLY (KISS) -- targets are NOT enumerated in the connection
+# default catalog.
+
+
+class _CatalogDiscriminatingFKConnection:
+    """Fake connection that returns rows only when the executed SQL carries the
+    requested catalog, and records every executed statement.
+
+    Models CR-02 silent mis-targeting: a query omitting the catalog (or
+    targeting the connection default catalog) is a false negative (no rows),
+    while a catalog-qualified query returns the real metadata. Also enforces the
+    stateless invariant -- no ``USE CATALOG`` is ever emitted (T-15.1-07).
+    """
+
+    def __init__(self, expected_catalog: str):
+        self.expected_catalog = expected_catalog
+        self.executed_sql: list[str] = []
+
+    def _carries_catalog(self, sql: str) -> bool:
+        # Match the catalog segment regardless of backtick/bracket/bare quoting.
+        return self.expected_catalog in sql
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.executed_sql.append(sql)
+
+        # Stateless invariant: never mutate the session's active catalog.
+        assert "USE CATALOG" not in sql.upper(), (
+            f"cross-catalog path must not emit USE CATALOG; got: {sql}"
+        )
+
+        targets_catalog = self._carries_catalog(sql)
+        upper = sql.upper()
+
+        # Target-table enumeration (SHOW TABLES IN catalog.schema).
+        if "SHOW TABLES" in upper:
+            # (database, tableName, isTemporary) -- row[1] is the table name.
+            rows = [("dbo", "patients", False)] if targets_catalog else []
+            return _mock_result(rows)
+
+        # Catalog-aware column reflection (DESCRIBE TABLE catalog.schema.table).
+        if "DESCRIBE TABLE" in upper:
+            rows = (
+                [("patient_id", "int"), ("ssn", "string")]
+                if targets_catalog
+                else []
+            )
+            return _mock_result(rows)
+
+        # Overlap probes (source/target value reads via INTERSECT / COUNT).
+        if "INTERSECT" in upper:
+            return _mock_result([(3,)] if targets_catalog else [(0,)])
+        if "COUNT" in upper:
+            return _mock_result([(10,)] if targets_catalog else [(0,)])
+
+        # information_schema constraint reads (PK / UNIQUE).
+        if "TABLE_CONSTRAINTS" in upper or "KEY_COLUMN_USAGE" in upper:
+            rows = [("patient_id", "PRIMARY KEY")] if targets_catalog else []
+            return _mock_result(rows)
+
+        return _mock_result([])
+
+
+class TestCrossCatalogFK:
+    """FKCandidateSearch threads an explicit catalog into source + target reads."""
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_source_targets_requested_catalog(self, dialect):
+        """With catalog set, the source-side overlap read carries the catalog.
+
+        compute_overlap reads the source table; on the cross-catalog branch the
+        source table reference must be qualified with the requested catalog so
+        the discriminating fake returns a non-zero source distinct count.
+        """
+        conn = _CatalogDiscriminatingFKConnection("cerner_src")
+
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        overlap = search.compute_overlap(
+            target_schema="dbo",
+            target_table="patients",
+            target_column="patient_id",
+        )
+
+        # Catalog reached the source/overlap SQL -> non-zero source distinct.
+        assert overlap["overlap_count"] is not None
+        # The catalog appears in the executed overlap SQL.
+        assert any("cerner_src" in sql for sql in conn.executed_sql)
+
+    @pytest.mark.dialects('databricks')
+    def test_target_tables_scoped_to_catalog(self, dialect):
+        """Pitfall 3: target enumeration is scoped to the resolved catalog.
+
+        Cross-catalog target search emits SHOW TABLES IN `catalog`.`schema`
+        (3-part-aware) and NOT a bare default-catalog 2-part enumeration.
+        """
+        conn = _CatalogDiscriminatingFKConnection("cerner_src")
+
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        tables = search.get_target_tables(target_schema="dbo")
+
+        # Catalog-qualified SHOW TABLES returned the discriminating row.
+        assert ("dbo", "patients") in tables
+        # The executed SQL contains a SHOW TABLES carrying the resolved catalog.
+        show_sql = [s for s in conn.executed_sql if "SHOW TABLES" in s.upper()]
+        assert show_sql, "expected a SHOW TABLES IN enumeration"
+        assert all("cerner_src" in s for s in show_sql)
+
+    @pytest.mark.dialects('databricks')
+    @patch("src.analysis.fk_candidates.PKDiscovery")
+    def test_nested_pkdiscovery_gets_catalog(self, mock_pk_cls, dialect):
+        """The PKDiscovery built for target columns receives the resolved catalog."""
+        mock_pk_instance = MagicMock()
+        mock_pk_instance.find_candidates.return_value = [
+            _make_pk_candidate("patient_id", "int"),
+        ]
+        mock_pk_cls.return_value = mock_pk_instance
+
+        conn = _CatalogDiscriminatingFKConnection("cerner_src")
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        search.get_candidate_columns(
+            target_schema="dbo",
+            target_table="patients",
+            pk_candidates_only=True,
+        )
+
+        _, kwargs = mock_pk_cls.call_args
+        assert kwargs.get("catalog") == "cerner_src"
+
+    @pytest.mark.dialects('databricks')
+    def test_no_use_catalog(self, dialect):
+        """No USE CATALOG is emitted on any cross-catalog read."""
+        conn = _CatalogDiscriminatingFKConnection("cerner_src")
+
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+        search.get_target_tables(target_schema="dbo")
+        search.compute_overlap(
+            target_schema="dbo",
+            target_table="patients",
+            target_column="patient_id",
+        )
+
+        for sql in conn.executed_sql:
+            assert "USE CATALOG" not in sql.upper()
+
+    @pytest.mark.dialects('databricks')
+    def test_default_path_unchanged(self, dialect):
+        """catalog=None still uses the Inspector (no reflector, no SHOW TABLES IN)."""
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["patients", "orders"]
+        conn = MagicMock()
+
+        search = FKCandidateSearch(
+            connection=conn,
+            source_schema="dbo",
+            source_table="orders",
+            source_column="customer_id",
+            source_data_type="int",
+            dialect=dialect.dialect,
+            inspector=inspector,
+        )
+        tables = search.get_target_tables(target_schema="dbo")
+
+        # Inspector path consulted; source table excluded.
+        inspector.get_table_names.assert_called_once_with(schema="dbo")
+        assert ("dbo", "patients") in tables
+        assert ("dbo", "orders") not in tables
+        # No raw SHOW TABLES IN emitted over the connection.
+        for call in conn.execute.call_args_list:
+            assert "SHOW TABLES" not in str(call).upper()
