@@ -9,6 +9,9 @@ Imports go through src.mcp_server.server to resolve circular imports.
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+from sqlalchemy.exc import SQLAlchemyError
+
 from src.db.dialects.databricks import DatabricksDialect
 from src.db.dialects.mssql import MssqlDialect
 
@@ -277,9 +280,6 @@ class TestAsyncErrorHandling:
 # ---------------------------------------------------------------------------
 # Error classification wiring tests
 # ---------------------------------------------------------------------------
-
-import pytest
-from sqlalchemy.exc import SQLAlchemyError
 
 
 # All 9 MCP tools with their module path (for patching _classify_db_error)

@@ -1608,3 +1608,72 @@ class TestGetTableSchemaCrossCatalogColumns:
         # Only "id" should appear — rows after the "#" section marker are skipped
         assert len(result["columns"]) == 1
         assert result["columns"][0]["column_name"] == "id"
+
+
+# ============================================================================
+# WR-05: dialect-aware FK target_schema fallback (quick-v61)
+# ============================================================================
+
+
+class TestForeignKeyTargetSchemaFallback:
+    """When SQLAlchemy returns referred_schema=None for an FK, get_table_schema
+    must fall back to the *dialect's* default schema, not a hardcoded "dbo".
+
+    MSSQL must still yield "dbo"; Databricks/generic must yield None.
+    Uses REAL dialect instances (not MagicMock helpers) so default_schema is a
+    concrete value rather than a truthy mock.
+    """
+
+    _FK_NULL_SCHEMA = [
+        {
+            "name": "fk1",
+            "constrained_columns": ["other_id"],
+            "referred_schema": None,
+            "referred_table": "other",
+            "referred_columns": ["id"],
+        }
+    ]
+
+    def test_databricks_fk_target_schema_is_none_when_referred_schema_none(self, test_engine):
+        """Databricks (default_schema=None): target_schema stays None, not 'dbo'."""
+        from src.db.dialects.databricks import DatabricksDialect
+
+        service = MetadataService(test_engine, dialect=DatabricksDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
+            result = service.get_table_schema("t", "main", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] is None
+
+    def test_generic_fk_target_schema_is_none_when_referred_schema_none(self, test_engine):
+        """Generic (default_schema=None): target_schema stays None, not 'dbo'."""
+        from src.db.dialects.generic import GenericDialect
+
+        service = MetadataService(test_engine, dialect=GenericDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "main", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] is None
+
+    def test_mssql_fk_target_schema_is_dbo_when_referred_schema_none(self, test_engine):
+        """MSSQL (default_schema='dbo'): target_schema falls back to 'dbo' (regression)."""
+        from src.db.dialects.mssql import MssqlDialect
+
+        service = MetadataService(test_engine, dialect=MssqlDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "dbo", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] == "dbo"
