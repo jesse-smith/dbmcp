@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 Phase: 15
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-29
+Last activity: 2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt cleanup (lint + WR-05 FK fallback)
 
 ## Performance Metrics
 
@@ -117,6 +117,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260528-tmy | Fix open threats T-15-08/T-15-12: wire D-07 catalog gate into list_schemas + add boundary tests | 2026-05-29 | c9252df,ed1c0e6 | [260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0](./quick/260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0/) |
 | 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
 | 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
+| 260528-v61 | v2.1 tech-debt cleanup: E402/ruff lint fixes + dialect-aware FK target_schema fallback (WR-05) | 2026-05-29 | 46500e2,6181e64,3e23bd0 | [260528-v61-v2-1-tech-debt-cleanup-lint-fixes-and-di](./quick/260528-v61-v2-1-tech-debt-cleanup-lint-fixes-and-di/) |
 | 260507-e8m | Fix all 8 complexity violations flagged by CI complexipy gate | 2026-05-07 | f026ca0,2e7b1b9,a3117be,7fc0531,2e1559e,de8e433,be992eb,6bbc680,76bc6c1 | [260507-e8m-fix-all-8-complexity-violations](./quick/260507-e8m-fix-all-8-complexity-violations/) |
 | 260507-h6j | Move all optional extras to hard dependencies | 2026-05-07 | 4548866 | [260507-h6j-move-all-optional-extras-to-hard-depende](./quick/260507-h6j-move-all-optional-extras-to-hard-depende/) |
 | 260515-m30 | Draft C/D fixes — Databricks connection_id collision across catalogs | 2026-05-15 | bc2244f | [260515-m30-draft-c-d-fixes](./quick/260515-m30-draft-c-d-fixes/) |
