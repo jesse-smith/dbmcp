@@ -453,6 +453,24 @@ class TestCatalogGateBoundary:
         assert "error" in result
         assert "catalog" in result.lower()
 
+    async def test_list_schemas_catalog_on_mssql_errors(self):
+        from src.mcp_server import schema_tools
+
+        factory, _ = _patch_cm(schema_tools, MssqlDialect())
+        with factory:
+            result = await schema_tools.list_schemas(connection_id="c", catalog="x")
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_list_tables_catalog_on_mssql_errors(self):
+        from src.mcp_server import schema_tools
+
+        factory, _ = _patch_cm(schema_tools, MssqlDialect())
+        with factory:
+            result = await schema_tools.list_tables(connection_id="c", catalog="x")
+        assert "error" in result
+        assert "catalog" in result.lower()
+
 
 class TestResolverConflictBoundary:
     """D-04 conflict: table_name segment vs explicit schema_name disagreement."""
