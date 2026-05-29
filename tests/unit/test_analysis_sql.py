@@ -187,3 +187,44 @@ class TestCatalogAwareReflectorStateless:
         assert "`evil.schema`" in sql
         # And it must NOT appear as a raw unquoted dotted segment.
         assert ".evil.schema." not in sql
+
+
+class TestQuoteTsqlIdentifier:
+    """quote_tsql_identifier escapes ``]`` so a value cannot break out of the
+    TSQL bracket token before sqlglot transpiles it (WR-04 injection class).
+
+    These TSQL-bracket builders feed transpile_query(read='tsql'); an unescaped
+    ``]`` in catalog/schema/table/column lets the value close the bracket and
+    inject arbitrary SQL. Doubling ``]`` -> ``]]`` keeps it contained.
+    """
+
+    def test_wraps_plain_identifier(self):
+        from src.analysis._sql import quote_tsql_identifier
+
+        assert quote_tsql_identifier("Users") == "[Users]"
+
+    def test_escapes_closing_bracket(self):
+        from src.analysis._sql import quote_tsql_identifier
+
+        assert quote_tsql_identifier("ev]il") == "[ev]]il]"
+
+    def test_break_out_attempt_stays_contained_after_transpile(self):
+        import sqlglot
+
+        from src.analysis._sql import quote_tsql_identifier
+
+        # Classic break-out: a catalog that tries to close the bracket and
+        # inject a WHERE clause / comment-out the rest.
+        malicious = "x] WHERE 1=1 --"
+        qualified = (
+            f"{quote_tsql_identifier(malicious)}."
+            f"{quote_tsql_identifier('sch')}."
+            f"{quote_tsql_identifier('tbl')}"
+        )
+        sql = f"SELECT COUNT(*) FROM {qualified} WHERE [col] IS NOT NULL"
+        out = sqlglot.transpile(sql, read="tsql", write="databricks")[0]
+        # The malicious payload is fully inside one backtick-quoted token,
+        # NOT a live WHERE clause or comment.
+        assert "`x] WHERE 1=1 --`" in out
+        assert "WHERE 1 = 1" not in out
+        assert "/*" not in out

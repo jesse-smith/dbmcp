@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import CatalogAwareReflector, transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.models.analysis import PKCandidate
 
 if TYPE_CHECKING:
@@ -59,10 +63,13 @@ class PKDiscovery:
         # 3-part TSQL brackets when cross-catalog (sqlglot transpiles to
         # `cat`.`sch`.`tbl`); 2-part otherwise. Never pre-quote with backticks
         # -- this string is fed through transpile_query(read="tsql") (Pitfall 4).
+        q = quote_tsql_identifier
         if catalog:
-            self._qualified_table = f"[{catalog}].[{schema_name}].[{table_name}]"
+            self._qualified_table = (
+                f"{q(catalog)}.{q(schema_name)}.{q(table_name)}"
+            )
         else:
-            self._qualified_table = f"[{schema_name}].[{table_name}]"
+            self._qualified_table = f"{q(schema_name)}.{q(table_name)}"
 
     def get_constraint_candidates(
         self,
@@ -408,12 +415,13 @@ class PKDiscovery:
         Unique iff COUNT(DISTINCT col) == COUNT(*) over non-null rows AND
         at least one non-null row exists.
         """
+        col_q = quote_tsql_identifier(col_name)
         uniq_sql = f"""
             SELECT
-                COUNT(DISTINCT [{col_name}]) AS distinct_count,
+                COUNT(DISTINCT {col_q}) AS distinct_count,
                 COUNT(*) AS total_non_null
             FROM {self._qualified_table}
-            WHERE [{col_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         uniq_query = text(transpile_query(uniq_sql, self._dialect))
         uniq_result = self.connection.execute(uniq_query)

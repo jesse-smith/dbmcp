@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import CatalogAwareReflector, transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.analysis.pk_discovery import PKDiscovery
 from src.models.analysis import FKCandidateData, FKCandidateResult
 
@@ -514,22 +518,26 @@ class FKCandidateSearch:
         # the resolved catalog (3-part TSQL brackets -> `cat`.`sch`.`tbl` after
         # transpile_query). Never pre-quote with backticks (Pitfall 4); no
         # catalog-switching statement is emitted -- the names are stateless.
+        q = quote_tsql_identifier
         if self._catalog:
             source_table = (
-                f"[{self._catalog}].[{self.source_schema}].[{self.source_table}]"
+                f"{q(self._catalog)}.{q(self.source_schema)}.{q(self.source_table)}"
             )
             target_table_q = (
-                f"[{self._catalog}].[{target_schema}].[{target_table}]"
+                f"{q(self._catalog)}.{q(target_schema)}.{q(target_table)}"
             )
         else:
-            source_table = f"[{self.source_schema}].[{self.source_table}]"
-            target_table_q = f"[{target_schema}].[{target_table}]"
+            source_table = f"{q(self.source_schema)}.{q(self.source_table)}"
+            target_table_q = f"{q(target_schema)}.{q(target_table)}"
+
+        src_col_q = q(self.source_column)
+        target_col_q = q(target_column)
 
         # Get source distinct count
         src_count_sql = f"""
-            SELECT COUNT(DISTINCT [{self.source_column}])
+            SELECT COUNT(DISTINCT {src_col_q})
             FROM {source_table}
-            WHERE [{self.source_column}] IS NOT NULL
+            WHERE {src_col_q} IS NOT NULL
         """
         src_count_query = text(transpile_query(src_count_sql, self._dialect))
         src_result = self.connection.execute(src_count_query)
@@ -542,11 +550,11 @@ class FKCandidateSearch:
         # Count intersection via INTERSECT
         overlap_sql = f"""
             SELECT COUNT(*) FROM (
-                SELECT [{self.source_column}] FROM {source_table}
-                    WHERE [{self.source_column}] IS NOT NULL
+                SELECT {src_col_q} FROM {source_table}
+                    WHERE {src_col_q} IS NOT NULL
                 INTERSECT
-                SELECT [{target_column}] FROM {target_table_q}
-                    WHERE [{target_column}] IS NOT NULL
+                SELECT {target_col_q} FROM {target_table_q}
+                    WHERE {target_col_q} IS NOT NULL
             ) AS overlap
         """
         overlap_query = text(transpile_query(overlap_sql, self._dialect))

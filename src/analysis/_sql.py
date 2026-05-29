@@ -11,6 +11,27 @@ if TYPE_CHECKING:
     from src.db.dialects.protocol import DialectStrategy
 
 
+def quote_tsql_identifier(identifier: str) -> str:
+    """Quote an identifier as a TSQL bracket token, escaping ``]``.
+
+    Analysis SQL is authored in TSQL syntax (bracket-quoted identifiers) and
+    then run through :func:`transpile_query` (``read="tsql"``). An untrusted
+    catalog/schema/table/column value containing ``]`` would otherwise close
+    the bracket early and inject arbitrary SQL during sqlglot's parse stage.
+    Doubling ``]`` -> ``]]`` keeps the value contained within a single token
+    (mirrors ``MSSQLDialect.quote_identifier``). On the MSSQL default path,
+    where ``transpile_query`` is a passthrough, this is the same escaping the
+    server expects.
+
+    Args:
+        identifier: A raw identifier segment (catalog, schema, table, column).
+
+    Returns:
+        The identifier wrapped in ``[...]`` with embedded ``]`` doubled.
+    """
+    return f"[{identifier.replace(']', ']]')}]"
+
+
 def transpile_query(sql: str, dialect: "DialectStrategy | None") -> str:
     """Transpile TSQL-syntax SQL to target dialect.
 

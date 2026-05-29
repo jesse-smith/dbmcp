@@ -16,7 +16,11 @@ from sqlalchemy import text
 from sqlalchemy import types as sa_types
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import CatalogAwareReflector, transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.models.analysis import (
     ColumnStatistics,
     DateTimeStats,
@@ -84,10 +88,13 @@ class ColumnStatsCollector:
         # Build qualified table using bracket quoting (TSQL base syntax for
         # transpilation). When a catalog is set, emit a 3-part name so the
         # transpiled aggregate SQL targets the requested catalog (IDENT-08).
+        q = quote_tsql_identifier
         if catalog:
-            self._qualified_table = f"[{catalog}].[{schema_name}].[{table_name}]"
+            self._qualified_table = (
+                f"{q(catalog)}.{q(schema_name)}.{q(table_name)}"
+            )
         else:
-            self._qualified_table = f"[{schema_name}].[{table_name}]"
+            self._qualified_table = f"{q(schema_name)}.{q(table_name)}"
 
     @property
     def _is_cross_catalog_databricks(self) -> bool:
@@ -252,11 +259,12 @@ class ColumnStatsCollector:
 
     def get_basic_stats(self, column_name: str) -> dict:
         """Collect basic statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         sql = f"""
             SELECT
                 COUNT(*) as total_rows,
-                COUNT(DISTINCT [{column_name}]) as distinct_count,
-                SUM(CASE WHEN [{column_name}] IS NULL THEN 1 ELSE 0 END) as null_count
+                COUNT(DISTINCT {col_q}) as distinct_count,
+                SUM(CASE WHEN {col_q} IS NULL THEN 1 ELSE 0 END) as null_count
             FROM {self._qualified_table}
         """
         query = text(transpile_query(sql, self._dialect))
@@ -279,14 +287,15 @@ class ColumnStatsCollector:
 
     def get_numeric_stats(self, column_name: str) -> NumericStats:
         """Collect numeric statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         sql = f"""
             SELECT
-                MIN(CAST([{column_name}] AS FLOAT)) as min_value,
-                MAX(CAST([{column_name}] AS FLOAT)) as max_value,
-                AVG(CAST([{column_name}] AS FLOAT)) as mean_value,
-                STDEV(CAST([{column_name}] AS FLOAT)) as std_dev
+                MIN(CAST({col_q} AS FLOAT)) as min_value,
+                MAX(CAST({col_q} AS FLOAT)) as max_value,
+                AVG(CAST({col_q} AS FLOAT)) as mean_value,
+                STDEV(CAST({col_q} AS FLOAT)) as std_dev
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         query = text(transpile_query(sql, self._dialect))
 
@@ -310,21 +319,22 @@ class ColumnStatsCollector:
 
     def get_datetime_stats(self, column_name: str) -> DateTimeStats:
         """Collect datetime statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         # Time component detection varies by dialect
         if self._dialect and self._dialect.name in ("databricks", "generic"):
             time_check = (
-                f"HOUR([{column_name}]) <> 0 "
-                f"OR MINUTE([{column_name}]) <> 0 "
-                f"OR SECOND([{column_name}]) <> 0"
+                f"HOUR({col_q}) <> 0 "
+                f"OR MINUTE({col_q}) <> 0 "
+                f"OR SECOND({col_q}) <> 0"
             )
         else:
-            time_check = f"CAST([{column_name}] AS TIME) <> '00:00:00'"
+            time_check = f"CAST({col_q} AS TIME) <> '00:00:00'"
 
         sql = f"""
             SELECT
-                MIN([{column_name}]) as min_date,
-                MAX([{column_name}]) as max_date,
-                DATEDIFF(day, MIN([{column_name}]), MAX([{column_name}])) as date_range_days,
+                MIN({col_q}) as min_date,
+                MAX({col_q}) as max_date,
+                DATEDIFF(day, MIN({col_q}), MAX({col_q})) as date_range_days,
                 CASE
                     WHEN EXISTS (
                         SELECT 1
@@ -335,7 +345,7 @@ class ColumnStatsCollector:
                     ELSE 0
                 END as has_time_component
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         query = text(transpile_query(sql, self._dialect))
 
@@ -361,14 +371,15 @@ class ColumnStatsCollector:
         self, column_name: str, sample_size: int = 10
     ) -> StringStats:
         """Collect string statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         # Get length statistics
         length_sql = f"""
             SELECT
-                MIN(LEN([{column_name}])) as min_length,
-                MAX(LEN([{column_name}])) as max_length,
-                AVG(CAST(LEN([{column_name}]) AS FLOAT)) as avg_length
+                MIN(LEN({col_q})) as min_length,
+                MAX(LEN({col_q})) as max_length,
+                AVG(CAST(LEN({col_q}) AS FLOAT)) as avg_length
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         length_query = text(transpile_query(length_sql, self._dialect))
 
@@ -382,12 +393,12 @@ class ColumnStatsCollector:
         # Get top frequent values
         sample_sql = f"""
             SELECT TOP {sample_size}
-                [{column_name}] as value,
+                {col_q} as value,
                 COUNT(*) as frequency
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
-            GROUP BY [{column_name}]
-            ORDER BY COUNT(*) DESC, [{column_name}]
+            WHERE {col_q} IS NOT NULL
+            GROUP BY {col_q}
+            ORDER BY COUNT(*) DESC, {col_q}
         """
         sample_query = text(transpile_query(sample_sql, self._dialect))
 
