@@ -108,7 +108,7 @@ Plans:
 
 **Depends on:** Phase 15
 
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 
 Plans:
 
@@ -116,7 +116,7 @@ Plans:
 - [x] 15.1-02-PLAN.md — Thread catalog through PKDiscovery (3-part _qualified_table + reflector reads) (TDD)
 - [x] 15.1-03-PLAN.md — Thread catalog through FKCandidateSearch (source + target scoped to resolved catalog) (TDD)
 - [x] 15.1-04-PLAN.md — Thread catalog through ColumnStatsCollector (aggregate + DESCRIBE-EXTENDED fast path) (TDD)
-- [ ] 15.1-05-PLAN.md — Wire catalog + cross-catalog existence check into all 3 tool entry points; full-suite/coverage gate (TDD)
+- [x] 15.1-05-PLAN.md — Wire catalog + cross-catalog existence check into all 3 tool entry points; full-suite/coverage gate (TDD)
 - [ ] 15.1-06-PLAN.md — Live cross-catalog UAT (bmtct → cerner_src) via dbmcp-test; record 15.1-UAT.md (autonomous: false)
 
 **Cross-cutting constraints:**
