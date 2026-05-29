@@ -7,6 +7,7 @@ structural candidate analysis, and type filtering.
 from unittest.mock import MagicMock
 
 import pytest
+import sqlglot
 
 from src.analysis.pk_discovery import DEFAULT_PK_TYPE_FILTER, PKDiscovery
 
@@ -672,3 +673,156 @@ class TestDialectBackwardCompat:
         candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert candidates[0].constraint_enforced is None
+
+
+# ---------------------------------------------------------------------------
+# Cross-catalog PK discovery (IDENT-08, CR-02)
+# ---------------------------------------------------------------------------
+
+class _CatalogDiscriminatingConnection:
+    """Fake connection whose constraint/column reads only return rows when the
+    executed SQL carries the requested catalog in its 3-part name.
+
+    Models the CR-02 silent mis-targeting: a query that omits the catalog (or
+    targets the connection's default catalog) is a false negative -- it returns
+    no rows -- whereas a query qualified to the requested catalog returns the
+    real metadata. Also asserts no ``USE CATALOG`` is ever emitted (the
+    cross-catalog path must be stateless, T-15.1-04).
+    """
+
+    def __init__(self, expected_catalog: str, schema: str, table: str):
+        self.expected_catalog = expected_catalog
+        self.schema = schema
+        self.table = table
+        self.executed_sql: list[str] = []
+
+    def _carries_catalog(self, sql: str) -> bool:
+        # Match the catalog segment regardless of backtick/bracket/bare quoting.
+        return self.expected_catalog in sql
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.executed_sql.append(sql)
+
+        # Stateless invariant: never mutate the session's active catalog.
+        assert "USE CATALOG" not in sql.upper(), (
+            f"cross-catalog path must not emit USE CATALOG; got: {sql}"
+        )
+
+        targets_catalog = self._carries_catalog(sql)
+        upper = sql.upper()
+
+        # PK / constraint reads (information_schema.table_constraints or
+        # key_column_usage). Return a PK row only when catalog-qualified.
+        if "TABLE_CONSTRAINTS" in upper or "KEY_COLUMN_USAGE" in upper:
+            rows = (
+                [("order_id", "int", "PRIMARY KEY")] if targets_catalog else []
+            )
+            return _mock_result(rows)
+
+        # Anything else (uniqueness probes, DESCRIBE, etc.): no rows.
+        return _mock_result([])
+
+
+def _make_databricks_dialect():
+    """Minimal Databricks dialect stub (name + backtick quoting + transpile)."""
+    dialect = MagicMock()
+    type(dialect).name = type("P", (), {"__get__": lambda *_: "databricks"})()
+    return dialect
+
+
+class TestCrossCatalogPK:
+    """PKDiscovery threads an explicit catalog into its metadata reads."""
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_pk_targets_requested_catalog(self, dialect):
+        """With catalog set, constraint reads target that catalog (rows returned).
+
+        Without the catalog the same fake returns [] -- the CR-02 false negative.
+        """
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+            catalog="cerner_src",
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        # Catalog reached the SQL -> the discriminating fake returned the PK row.
+        assert len(candidates) >= 1
+        assert any(c.column_name == "order_id" for c in candidates)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_without_catalog_is_false_negative(self, dialect):
+        """Same fake, no catalog -> no rows (proves the fake discriminates)."""
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        # No catalog: Inspector path is used, which does not query the fake's
+        # information_schema, so the PK row is never surfaced.
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert candidates == []
+
+    @pytest.mark.dialects('databricks')
+    def test_qualified_table_three_part(self, dialect):
+        """_qualified_table is 3-part TSQL brackets, transpiling to backticks."""
+        discovery = PKDiscovery(
+            MagicMock(), "sch", "tbl",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cat",
+        )
+
+        assert discovery._qualified_table == "[cat].[sch].[tbl]"
+
+        transpiled = sqlglot.transpile(
+            f"SELECT * FROM {discovery._qualified_table}",
+            read="tsql", write="databricks",
+        )[0]
+        assert "`cat`.`sch`.`tbl`" in transpiled
+
+    @pytest.mark.dialects('databricks')
+    def test_no_use_catalog(self, dialect):
+        """No USE CATALOG is emitted on the cross-catalog branch."""
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+            catalog="cerner_src",
+        )
+        # The fake asserts internally, but assert explicitly too for clarity.
+        discovery.get_constraint_candidates(type_filter=[])
+
+        for sql in conn.executed_sql:
+            assert "USE CATALOG" not in sql.upper()
+
+    @pytest.mark.dialects('databricks')
+    def test_default_path_unchanged(self, dialect):
+        """catalog=None still routes through the Inspector (no reflector use)."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "BIGINT"), "nullable": False},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(
+            conn, "main", "products",
+            dialect=dialect.dialect, inspector=inspector,
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        # Inspector still consulted for columns + PK constraint.
+        inspector.get_columns.assert_called()
+        inspector.get_pk_constraint.assert_called()
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "id"
