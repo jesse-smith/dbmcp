@@ -844,3 +844,209 @@ class TestTranspilation:
         # specifically that there's no "AS TIME)" pattern (the MSSQL time check)
         assert "AS TIME)" not in sql_text.upper()
         assert "HOUR" in sql_text.upper()
+
+
+class TestCrossCatalogColumnStats:
+    """Cross-catalog (IDENT-08) tests for ColumnStatsCollector.
+
+    Covers BOTH catalog-scoped paths:
+    - The transpiled aggregate-SQL path (3-part ``_qualified_table`` brackets
+      transpiled to 3-part backticks via sqlglot).
+    - The DESCRIBE EXTENDED fast path (native backticks, NOT transpiled —
+      Pitfall 5: must be 3-part when a catalog is set).
+
+    Plus the existence/pattern reads (catalog-aware reflection on Databricks)
+    and the statelessness gate (no ``USE CATALOG`` on either path).
+
+    The catalog-discriminating fake returns rows ONLY when the executed SQL
+    carries the resolved-catalog 3-part backtick name
+    (``​`cerner_src`.`dbo`.`orders```). Both the transpiled aggregate form
+    and the native-backtick fast-path form produce the same 3-part token, so a
+    single discriminator covers both. SQL that omits the catalog (default-path
+    2-part name) gets the empty/default result, proving the catalog is threaded.
+    """
+
+    CATALOG = "cerner_src"
+    SCHEMA = "dbo"
+    TABLE = "orders"
+
+    @property
+    def _three_part(self) -> str:
+        """The resolved-catalog 3-part backtick name both paths must emit."""
+        return f"`{self.CATALOG}`.`{self.SCHEMA}`.`{self.TABLE}`"
+
+    def _make_catalog_fake(self, dialect, *, catalog_rows, default_rows):
+        """Build a connection whose execute() discriminates on the 3-part name.
+
+        Asserts no executed SQL contains ``USE CATALOG`` (statelessness gate),
+        then returns ``catalog_rows`` when the resolved-catalog 3-part name is
+        present in the SQL, else ``default_rows``.
+        """
+        three_part = self._three_part
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            assert "USE CATALOG" not in sql.upper(), (
+                f"statelessness violated: USE CATALOG emitted in: {sql}"
+            )
+            result = MagicMock()
+            if three_part in sql:
+                result.fetchone.return_value = catalog_rows
+                result.fetchall.return_value = [catalog_rows] if catalog_rows else []
+            else:
+                result.fetchone.return_value = default_rows
+                result.fetchall.return_value = [default_rows] if default_rows else []
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        return conn
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_aggregate_targets_catalog(self, dialect):
+        """Aggregate basic-stats SQL targets the requested catalog (3-part)."""
+        catalog_rows = (100, 80, 5)   # populated only for the catalog 3-part name
+        default_rows = (0, 0, 0)      # what a catalog-blind 2-part name would see
+        conn = self._make_catalog_fake(
+            dialect.dialect, catalog_rows=catalog_rows, default_rows=default_rows
+        )
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+
+        stats = collector.get_basic_stats("amount")
+
+        # If the catalog were not threaded, the SQL would carry a 2-part name and
+        # the fake would return the empty default result.
+        assert stats["total_rows"] == 100
+        assert stats["distinct_count"] == 80
+        assert stats["null_count"] == 5
+
+    @pytest.mark.dialects('databricks')
+    def test_qualified_table_three_part(self, dialect):
+        """_qualified_table is 3-part TSQL brackets and transpiles to 3-part backticks."""
+        import sqlglot
+
+        collector = ColumnStatsCollector(
+            Mock(spec=Connection), self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+        assert collector._qualified_table == "[cerner_src].[dbo].[orders]"
+
+        transpiled = sqlglot.transpile(
+            f"SELECT 1 FROM {collector._qualified_table}",
+            read="tsql", write=dialect.dialect.sqlglot_dialect,
+        )[0]
+        assert self._three_part in transpiled
+
+    @pytest.mark.dialects('databricks')
+    def test_describe_extended_fast_path_three_part(self, dialect):
+        """Pitfall 5: DESCRIBE EXTENDED SQL is 3-part native backticks, not 2-part."""
+        captured = {}
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            assert "USE CATALOG" not in sql.upper()
+            captured["sql"] = sql
+            result = MagicMock()
+            result.fetchall.return_value = [
+                ("col_name", "amount"),
+                ("data_type", "int"),
+                ("min", "1"),
+                ("max", "1000"),
+                ("num_nulls", "5"),
+                ("distinct_count", "995"),
+            ]
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+
+        stats = collector._try_describe_extended_stats("amount")
+
+        assert stats is not None
+        assert self._three_part in captured["sql"], (
+            f"fast path must emit 3-part {self._three_part}, got: {captured['sql']}"
+        )
+        # Must NOT be the catalog-blind 2-part name.
+        assert f"`{self.SCHEMA}`.`{self.TABLE}`" != captured["sql"].split("DESCRIBE EXTENDED ")[1].split(" ")[0]
+
+    @pytest.mark.dialects('databricks')
+    def test_column_exists_cross_catalog(self, dialect):
+        """column_exists reflects from the requested catalog on Databricks."""
+        captured = {}
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            assert "USE CATALOG" not in sql.upper()
+            captured.setdefault("sqls", []).append(sql)
+            result = MagicMock()
+            result.fetchall.return_value = [
+                ("amount", "int"),
+                ("customer_id", "bigint"),
+            ]
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+
+        assert collector.column_exists("amount") is True
+        assert collector.column_exists("missing") is False
+        # The reflection SQL must carry the requested catalog 3-part name.
+        assert any(self._three_part in s for s in captured["sqls"]), (
+            f"column_exists must reflect from {self._three_part}, got: {captured['sqls']}"
+        )
+
+    @pytest.mark.dialects('databricks')
+    def test_no_use_catalog(self, dialect):
+        """No path emits USE CATALOG (statelessness, T-15.1-11)."""
+        # The discriminating fake asserts on every execute; exercising both the
+        # aggregate path and the fast path here proves neither emits USE CATALOG.
+        conn = self._make_catalog_fake(
+            dialect.dialect, catalog_rows=(100, 80, 5), default_rows=(0, 0, 0)
+        )
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+        collector.get_basic_stats("amount")  # aggregate path (asserts inside fake)
+
+    def test_default_path_unchanged(self, mock_connection):
+        """catalog=None keeps the 2-part _qualified_table and Inspector reads."""
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "test_table",
+        )
+        assert collector._qualified_table == "[dbo].[test_table]"
+
+    @pytest.mark.dialects('databricks')
+    def test_default_path_two_part_fast_path(self, dialect):
+        """catalog=None keeps a 2-part DESCRIBE EXTENDED name (default unchanged)."""
+        captured = {}
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            captured["sql"] = sql
+            result = MagicMock()
+            result.fetchall.return_value = [("min", "1"), ("max", "9")]
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE, dialect=dialect.dialect,
+        )
+
+        collector._try_describe_extended_stats("amount")
+
+        # 2-part name, no catalog segment.
+        assert f"`{self.SCHEMA}`.`{self.TABLE}`" in captured["sql"]
+        assert self._three_part not in captured["sql"]
