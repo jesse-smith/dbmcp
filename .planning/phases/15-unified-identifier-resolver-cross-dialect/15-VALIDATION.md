@@ -75,11 +75,22 @@ No framework install needed (pytest 9.0.3 present).
 
 ## Manual-Only Verifications
 
-| Behavior | Requirement | Why Manual | Test Instructions |
-|----------|-------------|------------|-------------------|
-| Databricks `bmtct.ml_infections_ref.mv_fever_episodes` end-to-end without `USE CATALOG` | IDENT-05 (SC3) | Requires live Databricks connection | Connect to Databricks; call get_sample_data with the 3-part table_name; confirm rows return without a catalog workaround. |
+| Behavior | Requirement | Why Manual | Status | Test Instructions |
+|----------|-------------|------------|--------|-------------------|
+| Databricks `bmtct.ml_infections_ref.mv_fever_episodes` end-to-end without `USE CATALOG` | IDENT-05 (SC3) | Requires live Databricks connection (`dbmcp-test` → `databricks-test`, catalog `bmtct`) | ✅ VERIFIED 2026-05-28 | Connect to Databricks; call get_sample_data with the 3-part table_name; confirm rows return without a catalog workaround. |
 
-*All resolver/routing/gate behaviors have automated unit coverage via the resolver matrix + the 7-tool boundary matrix; only live-Databricks SC3 is manual.*
+*All resolver/routing/gate behaviors have automated unit coverage via the resolver matrix + the 7-tool boundary matrix. The live-Databricks SC3 item was executed against `dbmcp-test` (see Live Verification below).*
+
+### Live Verification 2026-05-28
+
+Executed against the `databricks-test` connection (catalog `bmtct`) via the `dbmcp-test` MCP server:
+
+| Probe | Input | Result |
+|-------|-------|--------|
+| SC3 3-part dotted | `get_sample_data(table_name="bmtct.ml_infections_ref.mv_fever_episodes")` | ✅ 3 rows returned, no `USE CATALOG` / no `catalog=` param |
+| IDENT-05 explicit catalog | `get_sample_data(table_name="ml_infections_ref.mv_fever_episodes", catalog="bmtct")` | ✅ same rows returned |
+
+Both paths return real data end-to-end, confirming the resolver + Databricks 3-part `quote_identifier` SQL building works against a live cluster.
 
 ---
 
