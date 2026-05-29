@@ -244,7 +244,7 @@ async def list_schemas(connection_id: str, catalog: str | None = None) -> str:
         catalog: Optional Databricks catalog name. Overrides the connection's
             default catalog. If omitted on a Databricks connection, the
             connection's configured default catalog is used (SHOW SCHEMAS IN).
-            Ignored for non-Databricks dialects.
+            Rejected on non-Databricks dialects (raises an error).
 
     Returns:
         TOON-encoded string with schema list:
@@ -261,6 +261,10 @@ async def list_schemas(connection_id: str, catalog: str | None = None) -> str:
         - Invalid connection_id: returns status "error" with error_message
     """
     def _sync_work():
+        conn_manager = get_connection_manager()
+        dialect = conn_manager.get_dialect(connection_id)
+        _assert_catalog_allowed(catalog, dialect)
+
         metadata_svc = _get_metadata_service(connection_id)
         schemas = metadata_svc.list_schemas(connection_id=connection_id, catalog=catalog)
         return {
