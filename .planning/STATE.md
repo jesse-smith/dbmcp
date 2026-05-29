@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
 status: in_progress
-stopped_at: Phase 15.1 inserted (CR-02/DISC-01 cross-catalog threading) — not planned yet
-last_updated: "2026-05-29T04:06:57.018Z"
+stopped_at: Phase 15.1 planned (6 plans, 4 waves) — ready to execute; Wave 4 UAT needs live Databricks (bmtct + cerner_src)
+last_updated: "2026-05-29T15:01:35.985Z"
 last_activity: "2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt cleanup (lint + WR-05 FK fallback)"
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 10
+  total_plans: 16
   completed_plans: 10
-  percent: 67
+  percent: 63
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** Phase 15.1 (CR-02/DISC-01 cross-catalog metadata threading) — inserted, not yet planned
+**Current focus:** Phase 15.1 (CR-02/DISC-01 cross-catalog metadata threading) — planned, ready to execute
 
 ## Current Position
 
 Phase: 15.1
-Plan: Not started
-Status: Inserted (URGENT) — not planned yet
-Last activity: 2026-05-29 - Completed quick task 260528-v61: v2.1 tech-debt cleanup (lint + WR-05 FK fallback)
+Plan: Not started (6 plans planned)
+Status: Planned — ready to execute (/gsd:execute-phase 15.1)
+Last activity: 2026-05-29 - Planned Phase 15.1 (6 plans, 4 waves; IDENT-08 proposed)
 
 ## Performance Metrics
 
