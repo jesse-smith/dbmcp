@@ -6,7 +6,7 @@ response shapes for staleness guard testing.
 """
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from src.mcp_server.server import (
@@ -25,12 +25,11 @@ from src.models.schema import (
     AuthenticationMethod,
     Column,
     Connection,
-    Schema,
     SamplingMethod,
+    Schema,
     Table,
     TableType,
 )
-
 
 # =============================================================================
 # Mock helpers
@@ -119,7 +118,7 @@ def _connect_database_success_mocks():
     with (
         patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=mock_dialect),
         patch.object(get_connection_manager(), "connect_with_url", return_value=conn),
-        patch.object(get_connection_manager(), "get_engine") as mock_engine,
+        patch.object(get_connection_manager(), "get_engine"),
     ):
         mock_metadata_svc = MagicMock()
         mock_metadata_svc.list_schemas.return_value = schemas
@@ -285,7 +284,7 @@ def _get_sample_data_success_mocks():
         sampling_method=SamplingMethod.TOP,
         rows=[{"id": 1, "name": "test"}],
         truncated_columns=[],
-        sampled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        sampled_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
     mock_query_svc = MagicMock()
