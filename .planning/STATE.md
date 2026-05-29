@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 Phase: 15 (unified-identifier-resolver-cross-dialect) — EXECUTING
 Plan: 1 of 6
 Status: Executing Phase 15
-Last activity: 2026-05-28 -- Completed quick task 260528-qcp: Fix Phase 15 SC3 blocker (get_sample_data None-schema)
+Last activity: 2026-05-29 -- Completed quick task 260528-tmy: Fix open threats T-15-08/T-15-12 (D-07 catalog gate on list_schemas)
 
 ## Performance Metrics
 
@@ -113,6 +113,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-o1k | Fix MSSQL driver override — URL-supplied driver query param wins over dialect default | 2026-05-05 | 40358bc,bcc3360 | [260505-o1k-fix-mssql-driver-override-url-supplied-d](./quick/260505-o1k-fix-mssql-driver-override-url-supplied-d/) |
 | 260528-qcp | Fix Phase 15 SC3 blocker: get_sample_data builds corrupt SQL when resolved schema is None | 2026-05-28 | 8263dc0,b303326 | [260528-qcp-fix-phase-15-sc3-blocker-get-sample-data](./quick/260528-qcp-fix-phase-15-sc3-blocker-get-sample-data/) |
 | 260505-o6n | Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url — mirrors MSSQL fix) | 2026-05-05 | b50268f,10e56a6 | [260505-o6n-fix-databricksdialect-url-parsing-parse-](./quick/260505-o6n-fix-databricksdialect-url-parsing-parse-/) |
+| 260528-tmy | Fix open threats T-15-08/T-15-12: wire D-07 catalog gate into list_schemas + add boundary tests | 2026-05-29 | c9252df,ed1c0e6 | [260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0](./quick/260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0/) |
 | 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
 | 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
 | 260507-e8m | Fix all 8 complexity violations flagged by CI complexipy gate | 2026-05-07 | f026ca0,2e7b1b9,a3117be,7fc0531,2e1559e,de8e433,be992eb,6bbc680,76bc6c1 | [260507-e8m-fix-all-8-complexity-violations](./quick/260507-e8m-fix-all-8-complexity-violations/) |
