@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 Phase: 15.1
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-29
+Last activity: 2026-05-29 - Completed quick task 260529-jwa: Fix WR-03 (cross-catalog nullability contradiction)
 
 ## Performance Metrics
 
@@ -126,6 +126,7 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260528-fks | Fix Defect A — Databricks catalog defaults bypass IDENT-01 | 2026-05-28 | 72f26f8 | [260528-fks-fix-defect-a-databricks-catalog-defaults](./quick/260528-fks-fix-defect-a-databricks-catalog-defaults/) |
 | 260528-gsk | Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways | 2026-05-28 | 269a6da | [260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca](./quick/260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca/) |
 | fast (2026-05-28) | Resolve `${VAR}` in `sqlalchemy_url` for URL-mode connect (closes URL-mode env-var gap from 260515-m30 Probe 3) | 2026-05-28 | 43fed65 | (inline /gsd:fast — no directory) |
+| 260529-jwa | Fix WR-03 — reflect real cross-catalog nullability from information_schema.columns so find_fk_candidates & find_pk_candidates agree; probe stays sole structural PK gate | 2026-05-29 | 67245ba,0bcb466 | [260529-jwa-fix-wr-03](./quick/260529-jwa-fix-wr-03/) |
 
 ## Session Continuity
 
