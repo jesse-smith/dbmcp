@@ -119,6 +119,113 @@ class TestCatalogAwareReflectorColumns:
 
 
 @pytest.mark.dialects("databricks")
+class TestCatalogAwareReflectorColumnNullability:
+    """reflect_column_nullability() — catalog-scoped information_schema.columns.
+
+    DESCRIBE TABLE cannot expose nullability, so nullability is reflected from
+    ``{catalog}.information_schema.columns`` (catalog identifier quoted via
+    dialect.quote_identifier; schema/table bound as :params).
+    """
+
+    def test_maps_yes_no_to_bool(self, dialect):
+        """'NO' -> False, 'YES' -> True, keyed by column_name."""
+        conn = _discriminating_connection(
+            "`cerner_src`.information_schema.columns",
+            [("id", "NO"), ("name", "YES")],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        nullability = reflector.reflect_column_nullability(
+            catalog="cerner_src", schema="dbo", table="orders"
+        )
+
+        assert nullability == {"id": False, "name": True}
+
+    def test_sql_targets_catalog_information_schema_columns(self, dialect):
+        """SQL targets {qi(catalog)}.information_schema.columns (catalog quoted)."""
+        conn = _discriminating_connection(
+            "`cerner_src`.information_schema.columns",
+            [("id", "NO")],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        result = reflector.reflect_column_nullability(
+            catalog="cerner_src", schema="dbo", table="orders"
+        )
+
+        sql = _executed_sql(conn)[0]
+        assert "`cerner_src`.information_schema.columns" in sql
+        assert result  # the right catalog reached the SQL
+
+    def test_schema_and_table_bound_as_params_not_interpolated(self, dialect):
+        """schema/table are bound :params, not f-string interpolated."""
+        conn = _discriminating_connection(
+            "`cerner_src`.information_schema.columns",
+            [("id", "NO")],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        reflector.reflect_column_nullability(
+            catalog="cerner_src", schema="dbo", table="orders"
+        )
+
+        call = conn.execute.call_args_list[0]
+        sql = str(call.args[0])
+        # Bound placeholders present, literal values absent from the SQL text.
+        assert ":schema_name" in sql
+        assert ":table_name" in sql
+        assert "dbo" not in sql
+        assert "orders" not in sql
+        # Params dict carries the literal values.
+        params = call.args[1]
+        assert params == {"schema_name": "dbo", "table_name": "orders"}
+
+    def test_catalog_discriminates_results(self, dialect):
+        """A non-matching catalog yields an empty map (catalog threaded into SQL)."""
+        conn = _discriminating_connection(
+            "`cerner_src`.information_schema.columns",
+            [("id", "NO")],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        right = reflector.reflect_column_nullability(
+            catalog="cerner_src", schema="dbo", table="orders"
+        )
+        wrong = reflector.reflect_column_nullability(
+            catalog="other_cat", schema="dbo", table="orders"
+        )
+
+        assert right == {"id": False}
+        assert wrong == {}
+
+    def test_yes_no_trimmed_and_case_insensitive(self, dialect):
+        """Whitespace-padded / mixed-case 'YES'/'NO' values are tolerated."""
+        conn = _discriminating_connection(
+            "`c`.information_schema.columns",
+            [("a", " yes "), ("b", "No"), ("c", "YES")],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        nullability = reflector.reflect_column_nullability(
+            catalog="c", schema="s", table="t"
+        )
+
+        assert nullability == {"a": True, "b": False, "c": True}
+
+    def test_never_emits_use_catalog(self, dialect):
+        """No executed SQL string may contain USE CATALOG (stateless)."""
+        conn = _discriminating_connection(
+            "`c`.information_schema.columns", [("id", "NO")]
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        reflector.reflect_column_nullability(catalog="c", schema="s", table="t")
+
+        for sql in _executed_sql(conn):
+            assert "USE CATALOG" not in sql.upper()
+
+
+@pytest.mark.dialects("databricks")
 class TestCatalogAwareReflectorTables:
     """list_tables() — catalog-scoped SHOW TABLES IN."""
 
