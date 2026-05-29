@@ -89,6 +89,34 @@ Plans:
 - [x] 15-05-PLAN.md — Add catalog to get_sample_data + get_column_info; resolver routing; SC3 3-part SQL (IDENT-05/06)
 - [x] 15-06-PLAN.md — D-14: find_pk/fk_candidates → full namespace-aware tools; dbo sweep + resolver + catalog; D-12 matrix → 7 tools (IDENT-03/04/07)
 
+#### Phase 15.1: Cross-catalog metadata threading (CR-02 / DISC-01) (INSERTED)
+
+**Goal:** Thread the resolved catalog (`ResolvedIdentifier.catalog`) through to actual cross-catalog targeting for `find_pk_candidates`, `find_fk_candidates`, and `get_column_info` (column-stats) on Databricks, so an explicit non-default `catalog` reflects metadata FROM that catalog instead of silently returning the connection-default result (the CR-02 silent mis-targeting bug). The default-catalog path and the MSSQL/generic catalog gate remain unchanged. Mechanism: bypass the catalog-blind SQLAlchemy Inspector with stateless raw 3-part SQL (no `USE CATALOG`), reusing the established `MetadataService` pattern via a shared `CatalogAwareReflector` helper.
+
+**Requirements covered:** IDENT-08 (PROPOSED — see note below)
+
+**Success Criteria:**
+1. `find_pk_candidates`, `find_fk_candidates`, and `get_column_info` (column-stats) called with an explicit non-default Databricks `catalog` return metadata FROM that catalog (columns/constraints/stats), not the connection default.
+2. FK target-table enumeration is scoped to the resolved catalog (no target search in the default catalog).
+3. The DESCRIBE EXTENDED fast path in column stats is catalog-scoped (3-part) alongside the aggregate path.
+4. No `USE CATALOG` is emitted on any cross-catalog path (stateless 3-part names only); a unit test guards this.
+5. Default-catalog path unchanged (Inspector still used); MSSQL/generic catalog gate unchanged (resolver still rejects).
+6. Full suite green; coverage ≥ 85%; live cross-catalog UAT (bmtct → cerner_src) recorded in 15.1-UAT.md.
+
+**Depends on:** Phase 15
+
+**Plans:** 6/6 plans
+
+Plans:
+- [ ] 15.1-01-PLAN.md — Extract shared CatalogAwareReflector helper (DESCRIBE TABLE columns + SHOW TABLES IN) in src/analysis/_sql.py (TDD)
+- [ ] 15.1-02-PLAN.md — Thread catalog through PKDiscovery (3-part _qualified_table + reflector reads) (TDD)
+- [ ] 15.1-03-PLAN.md — Thread catalog through FKCandidateSearch (source + target scoped to resolved catalog) (TDD)
+- [ ] 15.1-04-PLAN.md — Thread catalog through ColumnStatsCollector (aggregate + DESCRIBE-EXTENDED fast path) (TDD)
+- [ ] 15.1-05-PLAN.md — Wire catalog + cross-catalog existence check into all 3 tool entry points; full-suite/coverage gate (TDD)
+- [ ] 15.1-06-PLAN.md — Live cross-catalog UAT (bmtct → cerner_src) via dbmcp-test; record 15.1-UAT.md (autonomous: false)
+
+> **IDENT-08 proposed wording** (pending user ratification before REQUIREMENTS.md edit): "`find_pk_candidates`, `find_fk_candidates`, and the `get_column_info` column-statistics path actually TARGET the resolved Databricks catalog (not the connection default) when a non-default `catalog` is supplied. When the requested catalog differs from the connection default and cross-catalog targeting is achievable, results come from the requested catalog; the silent mis-targeting documented as CR-02 is eliminated. The default-catalog path and the MSSQL/generic catalog gate are unchanged."
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -96,7 +124,7 @@ Plans:
 | 1-2 | v1.0 | 5/5 | Complete | 2026-03-05 |
 | 3-7 | v1.1 | 11/11 | Complete | 2026-03-10 |
 | 8-13.1 | v2.0 | 20/20 | Complete | 2026-05-06 |
-| 14-15 | v2.1 | 10/10 (+15.1 pending) | In Progress | — |
+| 14-15 | v2.1 | 10/10 (+15.1: 0/6) | In Progress | — |
 
 ## Backlog
 
@@ -109,16 +137,10 @@ Plans:
 
 **Why deferred:** pure additive feature, independent of the resolver refactor. Can share the `SHOW CATALOGS` helper introduced in Phase 14 (IDENT-01) once that lands.
 
+### Deferred: Cross-catalog FK targets (different catalog than source)
+
+**Captured:** 2026-05-29 (Phase 15.1 planning, RESEARCH Open Q1). Phase 15.1 scopes FK target enumeration to the resolved catalog only (KISS). Allowing FK targets in a *different* catalog than the source is deferred — not in v2.1.
+
 ---
 
 _Former "Phase 999.1 API consistency pass" backlog item consumed into v2.1 scope on 2026-05-08. `catalog` kwarg coverage and `"dbo"` default are now IDENT-05/06/07. Row-limit naming and `sample_size` typing inconsistencies from that backlog item are deferred — not in v2.1._
-
-### Phase 15.1: Cross-catalog metadata threading: thread resolved.catalog through Inspector and ColumnStatsCollector for find_pk_candidates, find_fk_candidates, and get_column_info column-stats (CR-02 / DISC-01) (INSERTED)
-
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
-**Depends on:** Phase 15
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd-plan-phase 15.1 to break down)
