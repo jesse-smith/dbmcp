@@ -14,6 +14,8 @@ LLM agents can explore and query databases safely, with validated read-only acce
 
 dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQLAlchemy URL (Generic) — via a `DialectStrategy` protocol. MSSQL behavior is preserved verbatim; Databricks runs optimized paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats); Generic falls back to Inspector-only metadata. All 9 MCP tools dispatch dialect-specific behavior through the strategy.
 
+**Phase 15.1 complete (2026-05-29):** Cross-catalog metadata threading (IDENT-08). `find_pk_candidates`, `find_fk_candidates`, and `get_column_info` now target an explicit non-default Databricks catalog via stateless raw 3-part SQL (shared `CatalogAwareReflector`, no `USE CATALOG`), eliminating the CR-02 silent mis-targeting bug. Verified live (bmtct → cerner_src, 7/7 UAT). Also hardened `DatabricksDialect.quote_identifier` to escape embedded backticks (CR-01).
+
 ## Current Milestone: v2.1 Databricks identifier fixes
 
 **Goal:** Fix Databricks catalog handling and unify 3-part identifier resolution across MCP tools. API is changing — existing Databricks connections without a catalog in the URL will break, by design.
@@ -152,4 +154,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-08 after v2.1 milestone scoped — Databricks identifier fixes (require catalog at connect, unified 3-part resolver, fix `get_sample_data`/`get_column_info` catalog gap, drop `dbo` default, residual regression tests).*
+*Last updated: 2026-05-29 after Phase 15.1 complete — cross-catalog metadata threading (IDENT-08, CR-02 fix) verified live; Databricks backtick-escaping hardening (CR-01).*
