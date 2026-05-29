@@ -13,6 +13,7 @@ import asyncio
 from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 
+from src.analysis._sql import CatalogAwareReflector
 from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
@@ -54,9 +55,10 @@ async def get_column_info(
         column_pattern: SQL LIKE pattern to filter column names (e.g., '%_id')
         sample_size: Number of top frequent value samples for string columns (default: 10)
         catalog: Optional Databricks catalog name. Rejected on non-Databricks
-            dialects (returns an error response). Column statistics are computed
-            against the connection's default catalog (set at connect time); see
-            the cross-catalog limitation note in the tool docs.
+            dialects (returns an error response). On Databricks the catalog is
+            threaded end-to-end: the existence check and column statistics are
+            computed against the requested catalog (cross-catalog supported via
+            catalog-scoped reflection — IDENT-08).
 
     Returns:
         TOON-encoded string with status, table/schema metadata, and column statistics:
@@ -102,12 +104,16 @@ async def get_column_info(
         # Resolve + validate the identifier at the boundary (D-03). The resolver
         # GATES catalog (D-07): a catalog supplied on MSSQL/generic raises
         # ValueError -> error response below. On Databricks the resolved catalog
-        # is threaded into the existence check; the inspector-based column
-        # statistics still bind to the connection's default catalog (IDENT-01),
-        # so cross-catalog stats require connecting with that catalog as default.
+        # is threaded end-to-end (IDENT-08): cross-catalog existence check +
+        # catalog-scoped column statistics, no default-catalog binding required.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
         resolved_table = resolved.table
         resolved_schema = resolved.schema
+        cross_catalog = (
+            bool(resolved.catalog)
+            and dialect is not None
+            and dialect.name == "databricks"
+        )
 
         with engine.connect() as connection:
             inspector = inspect(engine)
@@ -116,7 +122,7 @@ async def get_column_info(
             # catalog-aware MetadataService path (mirrors metadata.py:table_exists,
             # SHOW TABLES IN catalog.schema); otherwise the dialect-agnostic
             # Inspector path bound to the default catalog.
-            if resolved.catalog and dialect is not None and dialect.name == "databricks":
+            if cross_catalog:
                 from src.db.metadata import MetadataService
 
                 metadata_svc = MetadataService(engine, dialect=dialect)
@@ -146,6 +152,7 @@ async def get_column_info(
                 table_name=resolved_table,
                 dialect=dialect,
                 inspector=inspector,
+                catalog=resolved.catalog if cross_catalog else None,
             )
 
             column_stats = collector.get_columns_info(
@@ -214,9 +221,10 @@ async def find_pk_candidates(
             Default: ["int", "bigint", "smallint", "tinyint", "uniqueidentifier"].
             Set to empty list to disable type filtering.
         catalog: Optional Databricks catalog name. Rejected on non-Databricks
-            dialects (returns an error response). On Databricks the Inspector
-            binds to the connection's default catalog (set at connect time);
-            see the cross-catalog limitation note in the tool docs.
+            dialects (returns an error response). On Databricks the catalog is
+            threaded end-to-end (IDENT-08): the existence check and PK discovery
+            run against the requested catalog via catalog-scoped reflection
+            (cross-catalog supported — no default-catalog binding required).
 
     Returns:
         TOON-encoded string with status, table/schema metadata, and candidates list:
@@ -245,25 +253,46 @@ async def find_pk_candidates(
         dialect = conn_manager.get_dialect(connection_id)
         # Resolve + validate the identifier at the boundary (D-03/D-14). The
         # resolver GATES catalog (D-07): a catalog supplied on MSSQL/generic
-        # raises ValueError -> error response below. On Databricks the Inspector
-        # still binds to the connection's default catalog (IDENT-01), so
-        # cross-catalog discovery requires connecting with that catalog default.
+        # raises ValueError -> error response below. On Databricks the resolved
+        # catalog is threaded end-to-end (IDENT-08): cross-catalog existence
+        # check + catalog-scoped PK discovery, no default-catalog binding.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
         resolved_table = resolved.table
         resolved_schema = resolved.schema
+        cross_catalog = (
+            bool(resolved.catalog)
+            and dialect is not None
+            and dialect.name == "databricks"
+        )
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check via Inspector (dialect-agnostic)
-            table_names = inspector.get_table_names(schema=resolved_schema)
-            if resolved_table not in table_names:
-                view_names = inspector.get_view_names(schema=resolved_schema)
-                if resolved_table not in view_names:
+            # Table existence check. Cross-catalog Databricks uses the
+            # catalog-aware MetadataService path (SHOW TABLES IN catalog.schema,
+            # mirrors get_column_info); otherwise the dialect-agnostic Inspector.
+            if cross_catalog:
+                from src.db.metadata import MetadataService
+
+                metadata_svc = MetadataService(engine, dialect=dialect)
+                if not metadata_svc.table_exists(
+                    resolved_table, resolved_schema, catalog=resolved.catalog
+                ):
                     return {
                         "status": "error",
-                        "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
+                        "error_message": (
+                            f"Table '{resolved_schema}.{resolved_table}' not found"
+                        ),
                     }
+            else:
+                table_names = inspector.get_table_names(schema=resolved_schema)
+                if resolved_table not in table_names:
+                    view_names = inspector.get_view_names(schema=resolved_schema)
+                    if resolved_table not in view_names:
+                        return {
+                            "status": "error",
+                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
+                        }
 
             discovery = PKDiscovery(
                 connection=connection,
@@ -271,6 +300,7 @@ async def find_pk_candidates(
                 table_name=resolved_table,
                 dialect=dialect,
                 inspector=inspector,
+                catalog=resolved.catalog if cross_catalog else None,
             )
 
             candidates = discovery.find_candidates(type_filter=type_filter)
@@ -342,9 +372,11 @@ async def find_fk_candidates(
         include_overlap: Compute value overlap metrics (default: False)
         limit: Maximum candidates to return, 0 = no limit (default: 100)
         catalog: Optional Databricks catalog name. Rejected on non-Databricks
-            dialects (returns an error response). On Databricks the Inspector
-            binds to the connection's default catalog (set at connect time);
-            see the cross-catalog limitation note in the tool docs.
+            dialects (returns an error response). On Databricks the catalog is
+            threaded end-to-end (IDENT-08): the existence check, source-column
+            type reflection, and FK search run against the requested catalog via
+            catalog-scoped reflection (cross-catalog supported — no
+            default-catalog binding required).
 
     Returns:
         TOON-encoded string with status, source metadata, candidates list, and search info:
@@ -387,38 +419,77 @@ async def find_fk_candidates(
         dialect = conn_manager.get_dialect(connection_id)
         # Resolve + validate the identifier at the boundary (D-03/D-14). The
         # resolver GATES catalog (D-07): a catalog supplied on MSSQL/generic
-        # raises ValueError -> error response below. On Databricks the Inspector
-        # still binds to the connection's default catalog (IDENT-01), so
-        # cross-catalog search requires connecting with that catalog default.
+        # raises ValueError -> error response below. On Databricks the resolved
+        # catalog is threaded end-to-end (IDENT-08): cross-catalog existence
+        # check, catalog-scoped source-column reflection, and catalog-scoped FK
+        # search — no default-catalog binding required.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
         resolved_table = resolved.table
         resolved_schema = resolved.schema
+        cross_catalog = (
+            bool(resolved.catalog)
+            and dialect is not None
+            and dialect.name == "databricks"
+        )
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check via Inspector (dialect-agnostic)
-            table_names = inspector.get_table_names(schema=resolved_schema)
-            if resolved_table not in table_names:
-                view_names = inspector.get_view_names(schema=resolved_schema)
-                if resolved_table not in view_names:
+            # Table existence check. Cross-catalog Databricks uses the
+            # catalog-aware MetadataService path (mirrors get_column_info);
+            # otherwise the dialect-agnostic Inspector.
+            if cross_catalog:
+                from src.db.metadata import MetadataService
+
+                metadata_svc = MetadataService(engine, dialect=dialect)
+                if not metadata_svc.table_exists(
+                    resolved_table, resolved_schema, catalog=resolved.catalog
+                ):
                     return {
                         "status": "error",
-                        "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
+                        "error_message": (
+                            f"Table '{resolved_schema}.{resolved_table}' not found"
+                        ),
                     }
+            else:
+                table_names = inspector.get_table_names(schema=resolved_schema)
+                if resolved_table not in table_names:
+                    view_names = inspector.get_view_names(schema=resolved_schema)
+                    if resolved_table not in view_names:
+                        return {
+                            "status": "error",
+                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
+                        }
 
-            # Column existence and type via Inspector (dialect-agnostic)
-            columns = inspector.get_columns(resolved_table, schema=resolved_schema)
-            col_info = next(
-                (c for c in columns if c["name"] == column_name), None
-            )
-            if col_info is None:
-                return {
-                    "status": "error",
-                    "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
-                }
-
-            source_data_type = str(col_info["type"])
+            # Source-column existence and type. Cross-catalog Databricks reads
+            # the type via catalog-scoped DESCRIBE TABLE (CatalogAwareReflector,
+            # data_type already a string); otherwise the dialect-agnostic
+            # Inspector path bound to the default catalog.
+            if cross_catalog:
+                reflector = CatalogAwareReflector(connection, dialect)
+                columns = reflector.reflect_columns(
+                    resolved.catalog, resolved_schema, resolved_table
+                )
+                col_info = next(
+                    (c for c in columns if c["name"] == column_name), None
+                )
+                if col_info is None:
+                    return {
+                        "status": "error",
+                        "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
+                    }
+                source_data_type = col_info["data_type"]
+            else:
+                columns = inspector.get_columns(resolved_table, schema=resolved_schema)
+                col_info = next(
+                    (c for c in columns if c["name"] == column_name), None
+                )
+                if col_info is None:
+                    return {
+                        "status": "error",
+                        "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
+                    }
+                source_data_type = str(col_info["type"])
 
             search = FKCandidateSearch(
                 connection=connection,
@@ -428,6 +499,7 @@ async def find_fk_candidates(
                 source_data_type=source_data_type,
                 dialect=dialect,
                 inspector=inspector,
+                catalog=resolved.catalog if cross_catalog else None,
             )
 
             fk_result = search.find_candidates(

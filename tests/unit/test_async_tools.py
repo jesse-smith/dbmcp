@@ -606,22 +606,26 @@ class TestDatabricksThreePartHappyPath:
         with (
             factory,
             patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
             patch.object(analysis_tools, "PKDiscovery") as MockPK,
         ):
             mock_inspector = MagicMock()
-            # Inspector binds to default catalog; resolved schema "sch" used.
-            mock_inspector.get_table_names.return_value = ["tbl"]
             mock_inspect.return_value = mock_inspector
+            # Cross-catalog 3-part name -> catalog-aware existence check.
+            MockMS.return_value.table_exists.return_value = True
             MockPK.return_value.find_candidates.return_value = []
 
             result = await analysis_tools.find_pk_candidates(
                 connection_id="c", table_name="cat.sch.tbl"
             )
 
-            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
             pk_kwargs = MockPK.call_args.kwargs
             assert pk_kwargs["schema_name"] == "sch"
             assert pk_kwargs["table_name"] == "tbl"
+            assert pk_kwargs["catalog"] == "cat"
             assert "success" in result
 
     async def test_find_fk_candidates_three_part_routes_resolved(self):
@@ -641,25 +645,33 @@ class TestDatabricksThreePartHappyPath:
         with (
             factory,
             patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "CatalogAwareReflector") as MockReflector,
             patch.object(analysis_tools, "FKCandidateSearch") as MockFK,
         ):
             mock_inspector = MagicMock()
-            mock_inspector.get_table_names.return_value = ["tbl"]
-            mock_inspector.get_columns.return_value = [
-                {"name": "id", "type": "INT"}
-            ]
             mock_inspect.return_value = mock_inspector
+            # Cross-catalog 3-part name -> catalog-aware existence + reflection.
+            MockMS.return_value.table_exists.return_value = True
+            MockReflector.return_value.reflect_columns.return_value = [
+                {"name": "id", "data_type": "INT"}
+            ]
             MockFK.return_value.find_candidates.return_value = fake_fk_result
 
             result = await analysis_tools.find_fk_candidates(
                 connection_id="c", table_name="cat.sch.tbl", column_name="id"
             )
 
-            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
-            mock_inspector.get_columns.assert_called_once_with("tbl", schema="sch")
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
+            MockReflector.return_value.reflect_columns.assert_called_once_with(
+                "cat", "sch", "tbl"
+            )
             fk_kwargs = MockFK.call_args.kwargs
             assert fk_kwargs["source_schema"] == "sch"
             assert fk_kwargs["source_table"] == "tbl"
+            assert fk_kwargs["catalog"] == "cat"
             assert "success" in result
 
 
