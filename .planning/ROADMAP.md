@@ -96,7 +96,7 @@ Plans:
 | 1-2 | v1.0 | 5/5 | Complete | 2026-03-05 |
 | 3-7 | v1.1 | 11/11 | Complete | 2026-03-10 |
 | 8-13.1 | v2.0 | 20/20 | Complete | 2026-05-06 |
-| 14-15 | v2.1 | 0/TBD | In Progress | — |
+| 14-15 | v2.1 | 10/10 (+15.1 pending) | In Progress | — |
 
 ## Backlog
 
