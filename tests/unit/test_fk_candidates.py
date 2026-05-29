@@ -192,6 +192,7 @@ class TestPKFilter:
             table_name="Customers",
             dialect=None,
             inspector=None,
+            catalog=None,
         )
         assert len(columns) == 1
         assert columns[0]["column_name"] == "id"
@@ -1069,6 +1070,7 @@ class TestInspectorCandidateColumns:
             table_name="Customers",
             dialect=dialect.dialect,
             inspector=inspector,
+            catalog=None,
         )
 
 
