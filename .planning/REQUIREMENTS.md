@@ -16,7 +16,7 @@
 - [x] **IDENT-05**: `get_sample_data` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Passing `catalog` on MSSQL or generic dialects produces a dialect-inappropriate-parameter error.
 - [x] **IDENT-06**: `get_column_info` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Same dialect gate as IDENT-05.
 - [x] **IDENT-07**: Each dialect advertises its own default schema (if any) on `DialectStrategy`. Tool signatures no longer hardcode `schema_name='dbo'`; the default resolves per connected dialect (MSSQL → `dbo`, Databricks → session default, generic → no default).
-- [ ] **IDENT-08**: `find_pk_candidates`, `find_fk_candidates`, and the `get_column_info` column-statistics path actually TARGET the resolved Databricks catalog (not the connection default) when a non-default `catalog` is supplied. When the requested catalog differs from the connection default, results (columns / constraints / statistics) come from the requested catalog — the silent mis-targeting documented as CR-02 (Phase 15) is eliminated. Mechanism: stateless raw 3-part SQL (no `USE CATALOG`), bypassing the catalog-blind SQLAlchemy Inspector. The default-catalog path and the MSSQL/generic catalog gate (IDENT-05/06) remain unchanged. _(Added Phase 15.1 — closes CR-02; partially overlaps the deferred DISC-01 cross-catalog goal.)_
+- [x] **IDENT-08**: `find_pk_candidates`, `find_fk_candidates`, and the `get_column_info` column-statistics path actually TARGET the resolved Databricks catalog (not the connection default) when a non-default `catalog` is supplied. When the requested catalog differs from the connection default, results (columns / constraints / statistics) come from the requested catalog — the silent mis-targeting documented as CR-02 (Phase 15) is eliminated. Mechanism: stateless raw 3-part SQL (no `USE CATALOG`), bypassing the catalog-blind SQLAlchemy Inspector. The default-catalog path and the MSSQL/generic catalog gate (IDENT-05/06) remain unchanged. _(Added Phase 15.1 — closes CR-02; partially overlaps the deferred DISC-01 cross-catalog goal.)_
 
 ### Regression Tests (residual from v2.0 audit)
 
@@ -58,6 +58,7 @@ Populated by the roadmap step.
 | IDENT-05 | Phase 15 | Complete |
 | IDENT-06 | Phase 15 | Complete |
 | IDENT-07 | Phase 15 | Complete |
+| IDENT-08 | Phase 15.1 | Complete |
 
 **Coverage:**
 - v2.1 requirements: 9 total
