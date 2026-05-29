@@ -108,11 +108,11 @@ Plans:
 
 **Depends on:** Phase 15
 
-**Plans:** 6/6 plans
+**Plans:** 1/6 plans executed
 
 Plans:
 
-- [ ] 15.1-01-PLAN.md — Extract shared CatalogAwareReflector helper (DESCRIBE TABLE columns + SHOW TABLES IN) in src/analysis/_sql.py (TDD)
+- [x] 15.1-01-PLAN.md — Extract shared CatalogAwareReflector helper (DESCRIBE TABLE columns + SHOW TABLES IN) in src/analysis/_sql.py (TDD)
 - [ ] 15.1-02-PLAN.md — Thread catalog through PKDiscovery (3-part _qualified_table + reflector reads) (TDD)
 - [ ] 15.1-03-PLAN.md — Thread catalog through FKCandidateSearch (source + target scoped to resolved catalog) (TDD)
 - [ ] 15.1-04-PLAN.md — Thread catalog through ColumnStatsCollector (aggregate + DESCRIBE-EXTENDED fast path) (TDD)
