@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: executing
-stopped_at: Phase 15 context gathered
-last_updated: "2026-05-28T22:04:27.224Z"
+status: milestone_complete
+stopped_at: Milestone complete (Phase 15 was final phase)
+last_updated: 2026-05-29T03:04:42.686Z
 last_activity: 2026-05-28 -- Phase 15 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 10
-  completed_plans: 4
-  percent: 40
+  completed_plans: 10
+  percent: 50
 ---
 
 # Project State
@@ -21,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** Phase 15 — unified-identifier-resolver-cross-dialect
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: 15 (unified-identifier-resolver-cross-dialect) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 15
-Last activity: 2026-05-29 -- Completed quick task 260528-tmy: Fix open threats T-15-08/T-15-12 (D-07 catalog gate on list_schemas)
+Phase: 15
+Plan: Not started
+Status: Milestone complete
+Last activity: 2026-05-29
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 40 (v1.0: 5, v1.1: 11)
+- Total plans completed: 46 (v1.0: 5, v1.1: 11)
 - Average duration: ~4 min (v1.1 measured)
 - Total execution time: ~1.5 hours (v1.1 measured)
 
@@ -55,6 +55,7 @@ Last activity: 2026-05-29 -- Completed quick task 260528-tmy: Fix open threats T
 | 13 | 4 | - | - |
 | 13.1 | 4 | - | - |
 | 14 | 4 | - | - |
+| 15 | 6 | - | - |
 
 *Updated after each plan completion*
 | Phase 12 P01 | 13min | 3 tasks | 9 files |

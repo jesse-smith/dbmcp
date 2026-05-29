@@ -1,10 +1,16 @@
 ---
 phase: 15-unified-identifier-resolver-cross-dialect
 verified: 2026-05-28T23:45:00Z
-status: gaps_found
-score: 4/5 must-haves verified
+reconciled: 2026-05-29T03:05:00Z
+status: verified
+score: 5/5 must-haves verified
 overrides_applied: 0
-gaps:
+gaps_resolved:
+  - truth: "get_sample_data produces valid SQL for all dialect/schema combinations (SC3 + implicit SC4 correctness)"
+    closed_by: ["260528-qcp", "src/db/query.py None-guard (else + Databricks elif branches)"]
+    evidence: "tests/unit/test_query.py:1095 real-dialect schema_name=None regression test; live Databricks probe (get_sample_data 3-part dotted, catalog bmtct) returns rows with no corrupt 'None'.'table' SQL; 15-UAT.md Test 6 PASS; full suite 1069 passed / 78 skipped / 91% coverage."
+    note: "Original gaps_found record (CR-01) preserved verbatim below under the historical body for audit trail."
+gaps_historical:
   - truth: "get_sample_data produces valid SQL for all dialect/schema combinations (SC3 + implicit SC4 correctness)"
     status: failed
     reason: >
@@ -183,3 +189,25 @@ None. All gaps are programmatically verifiable.
 
 _Verified: 2026-05-28T23:45:00Z_
 _Verifier: Claude (gsd-verifier)_
+
+---
+
+## Reconciliation 2026-05-29 — gap closed, status → verified
+
+The single BLOCKER gap (CR-01: `query.py` None-schema corrupt SQL) recorded above
+was closed after the initial verification and is now confirmed closed through four
+independent lines of evidence:
+
+| Evidence | Result |
+|----------|--------|
+| Code fix | `src/db/query.py` else-branch + Databricks elif-branch now guard `if schema_name:`; bare quoted table emitted when schema is None (quick task `260528-qcp`) |
+| Regression test | `tests/unit/test_query.py:1095` — real-dialect (`GenericDialect`/`MssqlDialect`) `schema_name=None` produces an unqualified reference, not `"None"."table"` |
+| Live UAT | `15-UAT.md` Test 6 — Databricks 3-part `bmtct.playground.caboodle_tests` returns 3 live rows, no `USE CATALOG`, no corrupt SQL (PASS) |
+| Full suite | 1069 passed, 78 skipped, 91% coverage (> 85% floor) |
+
+All 5 observable truths now verified (Truth 3 flipped ✗ → ✓). The CR-02 find_pk/fk
+cross-catalog limitation remains a documented WARNING (within D-14's KISS posture),
+not a goal failure. Frontmatter `status` advanced `gaps_found` → `verified`; the
+original gap record is preserved as `gaps_historical` for the audit trail.
+
+_Reconciled: 2026-05-29T03:05:00Z — Claude (verify-work post-UAT gate)_

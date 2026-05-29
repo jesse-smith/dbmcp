@@ -11,11 +11,11 @@
 
 - [x] **IDENT-01**: `connect_database` rejects Databricks connections without a catalog in the SQLAlchemy URL (or the named-connection config equivalent). The error lists accessible catalogs from `SHOW CATALOGS` and explains that a catalog is required.
 - [x] **IDENT-02**: `list_schemas` no longer silently falls through to returning catalog names when schema lookup fails against the configured default catalog. With IDENT-01 in place, this path is unreachable for valid connections; the fallback code is removed.
-- [ ] **IDENT-03**: A shared identifier resolver parses `table_name` into 1, 2, or 3 parts per dialect depth (Databricks=3, MSSQL=2, generic/SQLite=1). Supplying more parts than the dialect allows produces a clear error naming the expected depth.
-- [ ] **IDENT-04**: When `table_name` carries a leading segment (catalog or schema) AND the matching explicit parameter (`catalog` or `schema_name`) is also provided AND the two values disagree, the tool returns an error naming the specific conflict. No silent overrides.
-- [ ] **IDENT-05**: `get_sample_data` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Passing `catalog` on MSSQL or generic dialects produces a dialect-inappropriate-parameter error.
-- [ ] **IDENT-06**: `get_column_info` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Same dialect gate as IDENT-05.
-- [ ] **IDENT-07**: Each dialect advertises its own default schema (if any) on `DialectStrategy`. Tool signatures no longer hardcode `schema_name='dbo'`; the default resolves per connected dialect (MSSQL → `dbo`, Databricks → session default, generic → no default).
+- [x] **IDENT-03**: A shared identifier resolver parses `table_name` into 1, 2, or 3 parts per dialect depth (Databricks=3, MSSQL=2, generic/SQLite=1). Supplying more parts than the dialect allows produces a clear error naming the expected depth.
+- [x] **IDENT-04**: When `table_name` carries a leading segment (catalog or schema) AND the matching explicit parameter (`catalog` or `schema_name`) is also provided AND the two values disagree, the tool returns an error naming the specific conflict. No silent overrides.
+- [x] **IDENT-05**: `get_sample_data` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Passing `catalog` on MSSQL or generic dialects produces a dialect-inappropriate-parameter error.
+- [x] **IDENT-06**: `get_column_info` accepts an optional `catalog` parameter on Databricks and routes through the shared resolver. Same dialect gate as IDENT-05.
+- [x] **IDENT-07**: Each dialect advertises its own default schema (if any) on `DialectStrategy`. Tool signatures no longer hardcode `schema_name='dbo'`; the default resolves per connected dialect (MSSQL → `dbo`, Databricks → session default, generic → no default).
 
 ### Regression Tests (residual from v2.0 audit)
 
@@ -52,11 +52,11 @@ Populated by the roadmap step.
 | IDENT-02 | Phase 14 | Complete |
 | TEST-01 | Phase 14 | Complete |
 | TEST-02 | Phase 14 | Complete |
-| IDENT-03 | Phase 15 | Pending |
-| IDENT-04 | Phase 15 | Pending |
-| IDENT-05 | Phase 15 | Pending |
-| IDENT-06 | Phase 15 | Pending |
-| IDENT-07 | Phase 15 | Pending |
+| IDENT-03 | Phase 15 | Complete |
+| IDENT-04 | Phase 15 | Complete |
+| IDENT-05 | Phase 15 | Complete |
+| IDENT-06 | Phase 15 | Complete |
+| IDENT-07 | Phase 15 | Complete |
 
 **Coverage:**
 - v2.1 requirements: 9 total
