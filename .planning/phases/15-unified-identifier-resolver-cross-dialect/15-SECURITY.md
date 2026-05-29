@@ -4,7 +4,7 @@
 **ASVS Level:** 1
 **block_on:** high
 **Audited at HEAD:** branch `gsd/v2.1-databricks-identifier-fixes`
-**Result:** OPEN_THREATS — 1 declared mitigation absent (T-15-08 / T-15-12 partial), phase must not ship as-claimed.
+**Result:** SECURED — `threats_open: 0`. Initial State-B audit found T-15-08 / T-15-12 OPEN; both remediated on branch and verified CLOSED at HEAD `79a8f18` (see Re-Audit 2026-05-28 below).
 
 Implementation files are READ-ONLY for this audit. No implementation file was modified.
 
@@ -21,37 +21,24 @@ Implementation files are READ-ONLY for this audit. No implementation file was mo
 | T-15-05 | DoS | mitigate | CLOSED | identifiers.py:85-88 `try: sqlglot.to_table(...) except sqlglot.ParseError as e: raise ValueError(...) from e`. ParseError normalized to ValueError. |
 | T-15-06 | Info Disclosure | accept | CLOSED | Error messages (identifiers.py:100-103, 114-122) echo caller-supplied identifier segments, not secrets. Acceptance rationale holds. |
 | T-15-07 | Tampering | mitigate(downstream) | CLOSED | metadata.py Databricks routing quotes every segment via `quote_identifier` (lines 176, 353-354, 966-968, 1025-1027, 1143-1144). Resolver does not bypass quoting. |
-| T-15-08 | Spoofing/Elevation | mitigate | **OPEN** | D-07 gate present on `list_tables` (schema_tools.py:357) and `get_table_schema` (via resolve_identifier, :478). **ABSENT on `list_schemas`**: `_sync_work` (schema_tools.py:263-277) never calls `_assert_catalog_allowed`; catalog passes ungated to `metadata_svc.list_schemas(catalog=catalog)`. metadata.list_schemas (metadata.py:79-118) silently ignores catalog on non-Databricks (docstring :94 "Ignored for non-Databricks dialects") — no compensating control. Docstring at schema_tools.py:247 still reads "Ignored for non-Databricks dialects." |
+| T-15-08 | Spoofing/Elevation | mitigate | CLOSED | `list_schemas._sync_work` now fetches the dialect (schema_tools.py:265) and calls `_assert_catalog_allowed(catalog, dialect)` (schema_tools.py:266) before the metadata call. Gate raises `ValueError` (identifiers.py:45-57) when `catalog` truthy and `dialect.max_identifier_depth < 3`; caught at schema_tools.py:286 → `status=error`. Docstring flipped to "Rejected on non-Databricks dialects (raises an error)" (schema_tools.py:247). Verified at HEAD `79a8f18`. |
 | T-15-09 | DoS | mitigate | CLOSED | get_table_schema: resolver (:478) inside `_sync_work` under `except ValueError` (:505). list_tables: gate (:357) under `except ValueError` (:400). (list_schemas has no gate to catch — see T-15-08.) |
 | T-15-10 | Tampering | mitigate | CLOSED | query.py:130-139 builds 3-part Databricks ref with `quote_identifier` on every segment; no raw concat of user input. |
 | T-15-11 | Tampering | mitigate | CLOSED | get_column_info gates catalog via resolve_identifier (analysis_tools.py:108); inspector binds engine default catalog (no raw catalog interpolated). |
-| T-15-12 | Spoofing/Elevation | mitigate | **OPEN** | Same root cause as T-15-08. Of the tools this threat covers, `list_schemas` is not gated and not tested. `TestCatalogGateBoundary` (test_async_tools.py:408) covers get_sample_data/get_column_info/find_pk/find_fk only — `list_schemas` and `list_tables` have NO catalog-gate test. |
+| T-15-12 | Spoofing/Elevation | mitigate | CLOSED | `TestCatalogGateBoundary` (test_async_tools.py:408) now covers `list_schemas` (test_async_tools.py:456-463) and `list_tables` (test_async_tools.py:465-472). Both patch `MssqlDialect` via `_patch_cm` (depth < 3), call the tool with `catalog="x"`, and assert `error` + `catalog` in the response — genuinely exercising the gate rejection path. Both pass at HEAD `79a8f18`. |
 | T-15-13 | DoS | mitigate | CLOSED | query_tools.py: resolver (:98) in `_sync_work` under `except ValueError` (:126). analysis_tools get_column_info: resolver (:108) under `except ValueError` (:168). |
 | T-15-14 | Tampering | mitigate | CLOSED | find_pk/fk resolver calls (analysis_tools.py:251, :393) decompose only; inspector parameterizes schema/table; no string concat into SQL. |
 | T-15-15 | Spoofing/Elevation | mitigate | CLOSED | catalog gated by resolve_identifier in find_pk (:251) and find_fk (:393); tested by TestCatalogGateBoundary (test_async_tools.py:434, :445). |
 | T-15-16 | DoS | mitigate | CLOSED | find_pk resolver (:251) under `except ValueError` (:288); find_fk resolver (:393) under `except ValueError` (:459). Tested by TestResolverConflictBoundary (:457). |
 | T-15-SC | Tampering | accept | CLOSED | `sqlglot>=30.7.0,<31.0.0` pinned in pyproject.toml:27. No new package installs. Acceptance rationale holds. |
 
-**Closed:** 14/17 — **Open:** 2/17 (T-15-08, T-15-12; same root cause).
+**Closed:** 16/17 — **Open:** 0/17. (T-15-08 / T-15-12 closed at HEAD `79a8f18` by branch fix commits c9252df / ed1c0e6 / 79a8f18. Note: register has 16 numbered threats T-15-01..T-15-16 plus T-15-SC = 17 total; all CLOSED.)
 
 ---
 
 ## Open Threats (BLOCKER)
 
-### T-15-08 / T-15-12 — `list_schemas` catalog gate (D-07) absent
-
-| Field | Detail |
-|-------|--------|
-| Category | Spoofing / Elevation of Privilege |
-| Disposition | mitigate |
-| Expected mitigation | `list_schemas._sync_work` calls `_assert_catalog_allowed(catalog, dialect)` so MSSQL/generic callers passing `catalog` get a `status=error` response (D-07), per Plan 04 Task 2. Docstring flipped to "Rejected on non-Databricks dialects." |
-| Actual state | `list_schemas._sync_work` (schema_tools.py:263-277) passes `catalog` straight to `metadata_svc.list_schemas(catalog=catalog)` with no gate. `metadata.list_schemas` silently ignores catalog on non-Databricks (metadata.py:94). Docstring at schema_tools.py:247 still says "Ignored for non-Databricks dialects." No catalog-gate test exists for `list_schemas`. |
-| Files searched | src/mcp_server/schema_tools.py (lines 235-291), src/db/metadata.py (lines 79-118), tests/unit/test_async_tools.py (TestCatalogGateBoundary :408, _TOOL_PARAMS :288). |
-| Severity | Backward-incompatible-gate gap. On non-Databricks, `list_schemas(catalog="x")` is silently ignored rather than rejected — the exact silent-ignore ambiguity T-15-08/T-15-12 declare mitigated. This is a soft confidentiality/clarity issue (no SQL injection: catalog never reaches SQL on the non-Databricks path), but the declared mitigation is genuinely absent. |
-
-**Note on executor self-report divergence:** The Plan 04 SUMMARY (15-04-SUMMARY.md lines 49, 57, 59-60, 86) claims `list_schemas` was gated via `_assert_catalog_allowed`, its docstring flipped to "Rejected", a `TestCatalogGateD07` class added covering all 3 schema tools, and grep counts of `Ignored`=0 / `_assert_catalog_allowed`=3 / `Rejected`=3. The committed code at the Plan 04 completion commit (`500f37d`) and at HEAD contradicts every one of these: `Ignored`=1, `_assert_catalog_allowed`=2 (import + list_tables only), `Rejected`=2, and the test class is named `TestCatalogGateBoundary` and excludes `list_schemas`/`list_tables`. The self-report described work that was not performed. Documentation/intent was not accepted as evidence.
-
-**Next:** Add `_assert_catalog_allowed(catalog, dialect)` to `list_schemas._sync_work` (after fetching the dialect — note list_schemas currently does not fetch the dialect at all; it must), flip the schema_tools.py:247 docstring to "Rejected on non-Databricks dialects (raises an error)", and extend the catalog-gate boundary test to cover `list_schemas` (and `list_tables`, which is gated in code but untested). Then re-run the security audit. Alternatively, if silent-ignore on `list_schemas` is an acceptable risk, document it explicitly in this file's accepted-risks log with sign-off.
+None. T-15-08 and T-15-12 were remediated on branch `gsd/v2.1-databricks-identifier-fixes` and verified closed at HEAD `79a8f18` (see re-audit below).
 
 ---
 
@@ -74,6 +61,25 @@ Implementation files are READ-ONLY for this audit. No implementation file was mo
 | Open | 2 |
 
 Result: **OPEN_THREATS** — phase advancement BLOCKED until `threats_open: 0`. User chose "Block & fix the gap" over accepting the risk. T-15-08 / T-15-12 (`list_schemas` catalog gate absent) remain open; see "Open Threats (BLOCKER)" above for the remediation path.
+
+---
+
+## Re-Audit 2026-05-28 (HEAD `79a8f18`) — T-15-08 / T-15-12 verification
+
+Targeted re-verification of the two remaining OPEN threats after branch fix commits c9252df (wire D-07 gate into list_schemas), ed1c0e6 (boundary tests for list_schemas/list_tables), 79a8f18 (docs). Implementation files unchanged by this audit.
+
+| Threat ID | Disposition | Verdict | Evidence (committed code at HEAD `79a8f18`) |
+|-----------|-------------|---------|---------------------------------------------|
+| T-15-08 | mitigate | CLOSED | `list_schemas._sync_work` fetches dialect (schema_tools.py:265) and calls `_assert_catalog_allowed(catalog, dialect)` (schema_tools.py:266) before `metadata_svc.list_schemas`. Gate raises `ValueError` (identifiers.py:52-57), caught at schema_tools.py:286 → `status=error`. Docstring flipped to "Rejected on non-Databricks dialects (raises an error)" (schema_tools.py:247). |
+| T-15-12 | mitigate | CLOSED | `TestCatalogGateBoundary` extended: `test_list_schemas_catalog_on_mssql_errors` (test_async_tools.py:456-463) and `test_list_tables_catalog_on_mssql_errors` (test_async_tools.py:465-472). Both patch `MssqlDialect` (depth < 3) via `_patch_cm`, invoke with `catalog="x"`, assert `error` + `catalog` in response. Both PASS at HEAD. |
+
+| Metric | Count |
+|--------|-------|
+| Threats found | 17 |
+| Closed | 17 |
+| Open | 0 |
+
+Result: **SECURED** — `threats_open: 0`. Both declared mitigations verified present in committed code via file:line evidence and passing tests; no documentation/intent accepted as proof. Prior Plan 04 self-report divergence resolved: at HEAD `_assert_catalog_allowed` = 3 matches (import + list_tables + list_schemas), `Rejected on non-Databricks` = 3, `Ignored for non-Databricks` = 0 in schema_tools.py.
 
 ---
 
