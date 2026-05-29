@@ -50,6 +50,15 @@ class TestDatabricksDialect:
         dialect = self._make_dialect()
         assert dialect.quote_identifier("my_table") == "`my_table`"
 
+    def test_quote_identifier_escapes_embedded_backtick(self):
+        # CR-01: an embedded backtick must be doubled so an untrusted
+        # catalog/schema/table/column value cannot break out of the quoted
+        # token (mirrors MSSQL ']' -> ']]').
+        dialect = self._make_dialect()
+        assert dialect.quote_identifier("ev`il") == "`ev``il`"
+        # A classic break-out attempt stays fully contained within the backticks.
+        assert dialect.quote_identifier("a`.`b") == "`a``.``b`"
+
     def test_fast_row_counts_returns_empty_dict(self):
         dialect = self._make_dialect()
         engine = MagicMock()

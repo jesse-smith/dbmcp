@@ -122,8 +122,13 @@ class DatabricksDialect:
         return frozenset({"SHOW", "DESCRIBE", "DESC", "EXPLAIN"})
 
     def quote_identifier(self, identifier: str) -> str:
-        """Quote using Databricks backticks."""
-        return f"`{identifier}`"
+        """Quote using Databricks backticks, escaping embedded backticks.
+
+        A backtick inside the identifier is doubled (`` ` `` -> ``` `` ```), so an
+        untrusted catalog/schema/table/column value cannot break out of the
+        backtick-quoted token (mirrors MSSQL's ``]`` -> ``]]`` escaping).
+        """
+        return f"`{identifier.replace('`', '``')}`"
 
     def build_sample_query(
         self,
