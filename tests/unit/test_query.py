@@ -1090,3 +1090,75 @@ class TestSampleDataSchemaDefault:
         assert "dbo." not in captured["sql"]
         # table_id reflects the unqualified reference, not 'dbo.Customers'.
         assert sample.table_id == "Customers"
+
+    def test_get_sample_data_none_schema_real_generic_dialect_unqualified(self, mock_engine):
+        """Real dialect + schema_name=None must build an unqualified reference.
+
+        Regression for the Phase 15 SC3 blocker: when a real dialect has
+        ``default_schema=None`` and ``schema_name`` reaches ``get_sample_data``
+        as ``None``, the ``else`` branch must not pass ``None`` to
+        ``quote_identifier`` — doing so emits a synthetic ``"None"`` schema
+        segment (and raises ``AttributeError`` on dialects that escape via
+        ``str.replace``). The reference must be the bare quoted table only.
+        """
+        from src.db.dialects import GenericDialect
+
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine, dialect=GenericDialect())
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        sql = captured["sql"]
+        # The bare, quoted table reference is present (ANSI double-quote).
+        assert '"Customers"' in sql
+        # No synthetic None schema segment in any form.
+        assert "None." not in sql
+        assert '"None"' not in sql
+        # table_id reflects the unqualified reference.
+        assert sample.table_id == "Customers"
+
+    def test_get_sample_data_mssql_two_part_reference_preserved(self, mock_engine):
+        """MSSQL 2-part schema.table reference is unchanged when schema is given.
+
+        No-regression guard: the schema-present path must still emit the
+        bracketed ``[schema].[table]`` reference after the None-schema fix.
+        """
+        from src.db.dialects import MssqlDialect
+
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine, dialect=MssqlDialect())
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name="sales",
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        assert "[sales].[Customers]" in captured["sql"]
+        assert sample.table_id == "sales.Customers"
