@@ -14,9 +14,20 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 | ID | Item | Area | Priority | Effort | Source |
 |----|------|------|----------|--------|--------|
 | TD-04 | Unify the two "table not found" message templates in `analysis_tools.py` | analysis | low | ~5 LOC + 2 tests | feature 012 (IN-04 residue) |
+| TD-05 | Query-in-loop / N+1 inefficiency across analysis + listing paths (SRC-04/06/07/08/09) | analysis, db, mcp_server | medium | refactor + cache, ~per-site | feature 012 (US2 sweep) |
+| TD-06 | Rule-of-Three knowledge duplication (cross-catalog constraint SQL, modulo sampling, proc allowlist, config defaults) (SRC-10/11/12/15) | analysis, db | low | refactor + tests | feature 012 (US2 sweep) |
+| TD-07 | `connection.py` robustness: undisposed engine on probe failure + `connect()` `dialect_name` mislabel (SRC-01/02) | db | medium | ~10 LOC + tests, 3 sites | feature 012 (US2 sweep) |
+| TD-08 | Contract-sensitive correctness edges: `list_tables` multi-schema pagination, cross-catalog detailed columns, count-query ORDER BY (SRC-03/05/30) | mcp_server, db | medium | needs contract decision | feature 012 (US2 sweep) |
+| TD-09 | Clarity/cleanup grab-bag: dead scalar guards, error-tail dedup, identity handlers, stale legacy-log migration, doc drift, etc. (SRC-13/14/16-29) | all | low | many small | feature 012 (US2 sweep) |
 
 > ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
 > 2026-06-01)**; struck below in *Closed / superseded*.
+>
+> **TD-05…TD-09** were surfaced by feature 012's full-`src/` review sweep (US2, all 34 modules).
+> The sweep found **zero reachable correctness bugs**; every actionable item fell outside the
+> US1-touched code, so per the triage bar (simplifications fixed only when local to TD-touched
+> code) all 30 findings (`SRC-01`…`SRC-30`) were *logged here*, not fixed in 012. Full per-finding
+> detail with locations lives in [`specs/012-hardening-cleanup/findings.md`](./012-hardening-cleanup/findings.md).
 >
 > Cross-dialect `ca_bundle` promotion is **future feature scope**, not active debt — it
 > lives in [`BACKLOG.md`](./BACKLOG.md). The "unify-3-part identifier" todo was verified
@@ -43,6 +54,133 @@ it touches two production branches, and it nudges an externally observable `erro
 catalog, while the cross-catalog path carries the dotted `schema.table` because catalog
 context matters. **Action:** pick one template (or a catalog-aware single template), update
 the two pinned tests, and confirm no downstream parser depends on the old wording.
+
+---
+
+## TD-05 — Query-in-loop / N+1 inefficiency across analysis + listing paths
+
+**Priority:** medium · **Effort:** per-site refactor + caching · Surfaced by feature 012 US2 sweep
+(SRC-04, SRC-06, SRC-07, SRC-08, SRC-09). Constitution V ("no I/O in loops where a batch exists").
+
+Five independent spots issue one query (often one connection) per item inside a loop:
+
+- **SRC-04** `schema_tools.py:58-67,388` — detailed-mode `list_tables` calls `get_columns`
+  (3 reflection round-trips) per table; ~300 serial reflections for 100 tables. No batch
+  metadata path exists on `MetadataService`.
+- **SRC-06** `column_stats.py:664-707` — cross-catalog `get_columns_info` issues a per-column
+  `DESCRIBE TABLE` (uncached `_reflect_catalog_columns`) **and** a second per-column
+  `DESCRIBE EXTENDED`. The reflected column list is identical every call — cache it on the collector.
+- **SRC-07** `fk_candidates.py:505-577,693` — source-side `COUNT(DISTINCT)` recomputed once per
+  target column though it's invariant for the search; compute once before the loop.
+- **SRC-08** `pk_discovery.py:432-453` — one `COUNT(DISTINCT)/COUNT(*)` per structural candidate
+  column; combinable into a single multi-aggregate table scan. Dominant cost on wide tables.
+- **SRC-09** `metadata.py:580-595` — generic `list_tables` opens a fresh `engine.connect()` +
+  `COUNT(*)` per table; reuse one connection across the loop (MSSQL already uses one DMV CTE).
+
+**Action:** address opportunistically per module; SRC-06 (collector-level column cache) and
+SRC-08 (multi-aggregate) are the highest value. Each needs a regression/round-trip-count test.
+
+---
+
+## TD-06 — Rule-of-Three knowledge duplication
+
+**Priority:** low · **Effort:** refactor + tests · Surfaced by feature 012 US2 sweep
+(SRC-10, SRC-11, SRC-12, SRC-15).
+
+Four spots where the *same knowledge* is restated ≥3× (not mere code-shape similarity):
+
+- **SRC-10** the `information_schema.table_constraints JOIN key_column_usage` PK/UNIQUE query
+  against a backtick-quoted `{catalog}.information_schema` is written 3× across
+  `pk_discovery._get_constraint_candidates_cross_catalog` (PK + UNIQUE) and
+  `fk_candidates._get_constraints_cross_catalog`. Centralize as
+  `CatalogAwareReflector.reflect_constraints(catalog, schema, table)`.
+- **SRC-11** the MODULO sampling SQL body is duplicated near-verbatim across `databricks.py`,
+  `generic.py`, `mssql.py`; deltas are only LIMIT/TOP + ORDER BY tiebreaker.
+- **SRC-12** `validation._check_execute` and `_check_stored_procedure` restate the same
+  allowlist + `sp_executesql` policy + denial structure; risk of policy drift.
+- **SRC-15** `config.py` duplicates dialect defaults between `DefaultsConfig` field defaults and
+  `_DEFAULTS_BOUNDS`, and restates dataclass fields in 3 per-dialect `known_fields` literals.
+
+**Action:** extract the shared knowledge per item. SRC-12 (security policy) is the most
+drift-dangerous despite low effort.
+
+---
+
+## TD-07 — `connection.py` robustness gaps
+
+**Priority:** medium · **Effort:** ~10 LOC + tests, 3 call sites · Surfaced by feature 012 US2
+sweep (SRC-01, SRC-02).
+
+- **SRC-01** When `_register_engine`'s `_test_connection` raises `SQLAlchemyError`, the engine
+  created just above (`connect_with_url` ~358, `_connect_databricks_from_config` ~612, and the
+  MSSQL `connect()` ~206) is orphaned — never stored in `self._engines`, never `dispose()`d —
+  leaking a connection pool until GC. Dispose in the failure path.
+- **SRC-02** `connect()` builds `Connection(...)` without `dialect_name`, relying on the model
+  default `"mssql"`, although it accepts a `dialect` param. Latent mislabel if a non-MSSQL
+  dialect is ever routed through `connect()` (only MSSQL reaches it today). `_register_engine`
+  already sets `dialect_name=dialect.name` correctly — mirror that.
+
+**Action:** both are small, well-localized fixes with clear regression tests; do them together.
+
+---
+
+## TD-08 — Contract-sensitive correctness edges (need a contract decision first)
+
+**Priority:** medium · **Effort:** fix gated on a contract decision · Surfaced by feature 012
+US2 sweep (SRC-03, SRC-05, SRC-30). These are genuine wrong-result paths, but fixing them
+changes externally observable tool behavior (FR-014), so they were **not** patched silently.
+
+- **SRC-03** `schema_tools.py:358-399` — `list_tables` with a **multi-schema** `schema_filter`
+  applies `limit`/`offset` per-schema then concatenates + `[:limit]`: global offset spanning
+  schema boundaries is wrong, sort order holds only within each schema, and `has_more` can
+  mislead after truncation. Single-schema / `None` path is correct.
+- **SRC-30** `schema_tools.py:58-67` + `metadata.py:731` — detailed-mode `get_columns` has no
+  `catalog` param, so with an explicit Databricks `catalog` the summary rows resolve
+  cross-catalog but `columns` are fetched from the connection's **default** catalog (wrong/empty
+  if a same-named table differs across catalogs). Ties into the SRC-04 N+1 (TD-05).
+- **SRC-05** `query.py:764-778` — `_get_total_row_count` wraps the original query in
+  `SELECT COUNT(*) FROM (<orig>) AS …`; a top-level `ORDER BY` makes that invalid T-SQL → COUNT
+  silently returns `None`, so `total_rows_available` is absent on exactly the ordered queries
+  users run most. Strip a trailing top-level ORDER BY before wrapping, or accept best-effort.
+
+**Action:** decide the intended pagination/ordering contract for multi-schema `list_tables` and
+the cross-catalog detailed-columns semantics, *then* fix + update the pinned tests.
+
+---
+
+## TD-09 — Clarity / cleanup grab-bag
+
+**Priority:** low · **Effort:** many small independent edits · Surfaced by feature 012 US2 sweep
+(SRC-13, SRC-14, SRC-16 … SRC-29). None are correctness bugs; all are clarity-budget, dead-code,
+doc-drift, or minor-dedup items safe to pick off opportunistically. Highlights:
+
+- **SRC-13** dead `x = row[0] if row else 0` scalar guards survive in `fk_candidates.py` /
+  `pk_discovery.py` — the same class WR-02 removed in `column_stats.py`; now inconsistent.
+- **SRC-14** 5 tool handlers hand-roll the `SQLAlchemyError`→classify-vs-fallback split instead
+  of reusing `_errors.format_unexpected_error` (only the per-tool prefix differs).
+- **SRC-16** `type_registry._handle_bool/int/float` are byte-identical pass-throughs →
+  one `_handle_identity`.
+- **SRC-17** `logging_config._migrate_legacy_log` TODO "remove after v2.1" — v2.1 shipped
+  2026-05-31; the migration still stats the legacy path every `setup_logging`. Confirm no
+  environment still carries a stale `./dbmcp.log`, then remove.
+- **SRC-18** `logging_config.py:135-140` recomputes `_compute_default_log_path` only to log a
+  path already in `log_path`.
+- **SRC-19** `CredentialFilter` (correctly wired at `server.py:26`) redacts `record.msg` only,
+  not `record.args` — a secret passed as a `%s` arg is not redacted. Narrow but real.
+- **SRC-20** `models/relationship.py:78` function-local `import hashlib` with no benefit.
+- **SRC-21** `src/db/azure_auth.py` is a re-export shim with a single test-only importer →
+  delete + repoint the test.
+- **SRC-22** `DatabricksDialect.list_catalogs` not declared on the `DialectStrategy` Protocol.
+- **SRC-23** `databricks.py:62-69` comment inverted vs code.
+- **SRC-24/25** `mssql.create_engine` (~123 lines) and `metadata.get_table_schema` (~95 lines)
+  exceed the >50-line clarity budget.
+- **SRC-26** `query._inject_top_in_cte` hand-rolls paren-depth parsing where sqlglot is on hand.
+- **SRC-27** `query._get_validated_columns` hardcodes MSSQL `[{schema}].[{table}]` brackets in an
+  error message for all dialects; `schema_name` can be `None` → `"[None].[t]"`.
+- **SRC-28** `models/analysis.py` `to_dict`s restate field names + repeat "omit when None".
+- **SRC-29** `validate_query` docstring omits the `safe_operational_commands` parameter.
+
+**Action:** opportunistic — fold individual items into any future edit that touches the file.
 
 ---
 

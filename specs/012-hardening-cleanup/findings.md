@@ -2,9 +2,9 @@
 phase: 012-hardening-cleanup
 reviewed: 2026-06-01
 src_modules_total: 34
-src_modules_reviewed: 0
-findings: { critical: 0, warning: 0, info: 0, total: 0 }
-dispositions: { fixed: 0, verified: 0, logged: 0 }
+src_modules_reviewed: 34
+findings: { critical: 0, warning: 10, info: 20, total: 30 }
+dispositions: { fixed: 0, verified: 0, logged: 30 }
 ---
 
 # Findings Ledger — 012 Hardening & Cleanup Pass
@@ -86,40 +86,40 @@ server runs session-start code).
 
 (SC-002 evidence — unchecked = unreviewed. Reviewed in the US2 sweep, T017-T020.)
 
-- [ ] src/__init__.py
-- [ ] src/analysis/__init__.py
-- [ ] src/analysis/_sql.py
-- [ ] src/analysis/column_stats.py
-- [ ] src/analysis/fk_candidates.py
-- [ ] src/analysis/pk_discovery.py
-- [ ] src/config.py
-- [ ] src/db/__init__.py
-- [ ] src/db/azure_auth.py
-- [ ] src/db/connection.py
-- [ ] src/db/dialects/__init__.py
-- [ ] src/db/dialects/azure_auth.py
-- [ ] src/db/dialects/databricks.py
-- [ ] src/db/dialects/generic.py
-- [ ] src/db/dialects/mssql.py
-- [ ] src/db/dialects/protocol.py
-- [ ] src/db/dialects/registry.py
-- [ ] src/db/identifiers.py
-- [ ] src/db/metadata.py
-- [ ] src/db/query.py
-- [ ] src/db/validation.py
-- [ ] src/logging_config.py
-- [ ] src/mcp_server/__init__.py
-- [ ] src/mcp_server/_errors.py
-- [ ] src/mcp_server/analysis_tools.py
-- [ ] src/mcp_server/query_tools.py
-- [ ] src/mcp_server/schema_tools.py
-- [ ] src/mcp_server/server.py
-- [ ] src/models/__init__.py
-- [ ] src/models/analysis.py
-- [ ] src/models/relationship.py
-- [ ] src/models/schema.py
-- [ ] src/serialization.py
-- [ ] src/type_registry.py
+- [x] src/__init__.py
+- [x] src/analysis/__init__.py
+- [x] src/analysis/_sql.py
+- [x] src/analysis/column_stats.py
+- [x] src/analysis/fk_candidates.py
+- [x] src/analysis/pk_discovery.py
+- [x] src/config.py
+- [x] src/db/__init__.py
+- [x] src/db/azure_auth.py
+- [x] src/db/connection.py
+- [x] src/db/dialects/__init__.py
+- [x] src/db/dialects/azure_auth.py
+- [x] src/db/dialects/databricks.py
+- [x] src/db/dialects/generic.py
+- [x] src/db/dialects/mssql.py
+- [x] src/db/dialects/protocol.py
+- [x] src/db/dialects/registry.py
+- [x] src/db/identifiers.py
+- [x] src/db/metadata.py
+- [x] src/db/query.py
+- [x] src/db/validation.py
+- [x] src/logging_config.py
+- [x] src/mcp_server/__init__.py
+- [x] src/mcp_server/_errors.py
+- [x] src/mcp_server/analysis_tools.py
+- [x] src/mcp_server/query_tools.py
+- [x] src/mcp_server/schema_tools.py
+- [x] src/mcp_server/server.py
+- [x] src/models/__init__.py
+- [x] src/models/analysis.py
+- [x] src/models/relationship.py
+- [x] src/models/schema.py
+- [x] src/serialization.py
+- [x] src/type_registry.py
 
 ---
 
@@ -141,7 +141,53 @@ server runs session-start code).
 
 ## src/ findings (SRC-NN)
 
-_(none yet — populated during the US2 sweep, T017-T021)_
+US2 sweep — all 34 modules reviewed (4 parallel reviewers, T017-T020). **Result: 0 critical, 0
+reachable correctness bug.** Every actionable item is outside the US1-touched spots, so per the
+triage bar (correctness fixed always; simplifications fixed only when *local to TD-touched code*)
+all 30 are **logged** — US2 lands no `src/` change. Grouped into TD-05…TD-09 in `TECH-DEBT.md`.
+
+> **Two reviewer claims corrected on verification** (debugging directive — don't pass uncertainty
+> downstream as fact): (1) `src/metrics.py` was reported "still has the `Generator` nit" — it was
+> **deleted** (commit `1fda3e7`); the nit is fully resolved, project memory is stale on this. (2)
+> `CredentialFilter` was reported "unattached / dead code / false redaction" — it **IS** wired
+> (`server.py:26 logger.addFilter(CredentialFilter())`). The real, narrower finding (SRC-19) is
+> that it inspects `record.msg` only, not `record.args`.
+
+| ID | Sev | Location | Finding | Disp → group |
+|----|-----|----------|---------|--------------|
+| SRC-01 | warning | `db/connection.py:391-408,643-652` (+MSSQL `connect()`) | Engine created then orphaned (never `dispose()`d) when `_test_connection` raises `SQLAlchemyError` before `_register_engine` stores it — leaks a pool until GC. Uncommon path (probe is `SELECT 1` post-`create_engine`). | logged → TD-07 |
+| SRC-02 | warning | `db/connection.py:231-239` (`connect()`) | Builds `Connection(...)` without `dialect_name`, relying on model default `"mssql"`, though `connect()` accepts a `dialect` param. Latent mislabel if a non-MSSQL dialect is ever routed through `connect()` (only MSSQL reaches it today). `_register_engine` does it right. | logged → TD-07 |
+| SRC-03 | warning | `mcp_server/schema_tools.py:358-399` (`list_tables` multi-schema) | **Verified real.** `schemas_to_query = schema_filter or [None]`; each schema queried with the *same* `limit`/`offset`, concatenated, then `all_tables[:limit]`. Multi-schema + `offset>0` ⇒ offset applied per-schema (wrong global skip); sort honored only within each schema; `has_more` can mislead after truncation. Single-schema/`None` path correct. Contract-sensitive (FR-014). | logged → TD-08 |
+| SRC-04 | warning | `mcp_server/schema_tools.py:58-67,388` (`_build_table_entry` detailed) | N+1: detailed-mode listing calls `get_columns` (→ 3 reflection round-trips) per table inside the comprehension. ~300 serial reflections for 100 tables. No batch metadata path exists (Constitution V). | logged → TD-05 |
+| SRC-05 | warning | `db/query.py:764-778` (`_build_count_query`) | `_get_total_row_count` wraps the original query in `SELECT COUNT(*) FROM (<orig>) AS …`; a top-level `ORDER BY` makes that invalid T-SQL → COUNT silently returns `None`, so `total_rows_available` is absent on exactly the ordered queries users run most. Best-effort by design, but the ORDER BY interaction is frequent. | logged → TD-08 |
+| SRC-06 | warning | `analysis/column_stats.py:664-707` (`get_columns_info` cross-catalog) | Per-column `DESCRIBE TABLE` (via `get_column_data_type`→`_reflect_catalog_columns`, uncached) **and** a second `DESCRIBE EXTENDED` per column. ~1 + N×2 round-trips cross-catalog; the reflected column list is identical every call and should be cached on the collector (Constitution V). | logged → TD-05 |
+| SRC-07 | warning | `analysis/fk_candidates.py:505-577,693` (`compute_overlap`) | Source-side `COUNT(DISTINCT)` is identical for every candidate yet recomputed once per target column (full source-table scan each time). Should be computed once before the loop; only the INTERSECT varies per target. | logged → TD-05 |
+| SRC-08 | warning | `analysis/pk_discovery.py:432-453` (`_column_is_unique`) | One `COUNT(DISTINCT)/COUNT(*)` per structural-candidate column inside the loop — K full-table scans for K type-matching columns. Combinable into one multi-aggregate scan; dominant cost of PK discovery on wide tables. | logged → TD-05 |
+| SRC-09 | warning | `db/metadata.py:580-595` (generic `list_tables`) | Generic path opens a fresh `engine.connect()` + `SELECT COUNT(*)` **per table** in the listing loop (MSSQL avoids this via one DMV CTE). Generic has no cheap batch row-count, but per-table connect is avoidable — reuse one connection across the loop. | logged → TD-05 |
+| SRC-10 | warning | `analysis/pk_discovery.py:235-323` + `fk_candidates.py:437-476` | Rule-of-Three crossed: the `information_schema.table_constraints JOIN key_column_usage` PK/UNIQUE query against a backtick-quoted `{catalog}.information_schema` is written 3× (PK, UNIQUE, FK-constraints). A `reflect_constraints()` on `CatalogAwareReflector` would centralize the catalog-quoting + bound-param contract. | logged → TD-06 |
+| SRC-11 | info | `db/dialects/{databricks,generic,mssql}.py` (modulo sample) | The MODULO sampling SQL body (`ROW_NUMBER() OVER … % CASE …`) is duplicated near-verbatim across all three dialects; deltas are only LIMIT/TOP + ORDER BY tiebreaker. Rule of Three crossed. | logged → TD-06 |
+| SRC-12 | info | `db/validation.py:150-178,225-249` | `_check_execute` and `_check_stored_procedure` restate the same allowlist + `sp_executesql` policy + denial structure; differ only in AST name extraction. Policy could drift across the two copies. | logged → TD-06 |
+| SRC-13 | info | `analysis/fk_candidates.py:552,570`; `pk_discovery.py:448-451` | Dead `x = row[0] if row else 0` scalar guards survive — the same class WR-02 removed in `column_stats.py`; now inconsistent across the package (a no-GROUP-BY aggregate always returns one row). | logged → TD-09 |
+| SRC-14 | info | `mcp_server/{query_tools,schema_tools}.py` (5 sites) | 5 tool handlers hand-roll the `SQLAlchemyError → _classify_db_error` vs fallback split instead of reusing `_errors.format_unexpected_error`; only the per-tool prefix (shipped contract) differs. | logged → TD-09 |
+| SRC-15 | info | `config.py:32-35,48-51,217-259` | Defaults duplicated between `DefaultsConfig` field defaults and `_DEFAULTS_BOUNDS`; per-dialect `known_fields` literals restate dataclass fields 3×. Out-of-range vs absent values can resolve to *different* defaults if the two drift. | logged → TD-06 |
+| SRC-16 | info | `type_registry.py:30-43,104-107` | `_handle_bool/_handle_int/_handle_float` are byte-identical pass-throughs; one shared `_handle_identity` reused for the 3 chain entries removes the triplication without touching ordering. | logged → TD-09 |
+| SRC-17 | info | `logging_config.py:50` | `_migrate_legacy_log` TODO says "remove after v2.1"; v2.1 shipped 2026-05-31. Dead-code-on-a-timer still stats `_LEGACY_LOG_FILE` every `setup_logging`. | logged → TD-09 |
+| SRC-18 | info | `logging_config.py:135-140` | Success branch recomputes `_compute_default_log_path(...)` (blake2b + `cwd().resolve()`) only to log the path already in `log_path`. Reuse the local. | logged → TD-09 |
+| SRC-19 | info | `logging_config.py:157-179` (`CredentialFilter`) | **Filter IS wired** (server.py:26 — reviewer claim corrected). Real gap: redacts `record.msg` only, not `record.args`, so a secret passed as a `%s` arg slips through. Narrow but worth a note. | logged → TD-09 |
+| SRC-20 | info | `models/relationship.py:78` | `import hashlib` is function-local with no benefit (stdlib, not optional/heavy); least-surprise wants it module-level. | logged → TD-09 |
+| SRC-21 | info | `db/azure_auth.py:1-9` | Backward-compat shim re-exporting from `db/dialects/azure_auth.py`; only importer is `tests/unit/test_azure_auth.py`. Not a logic dup (9-line re-export) — candidate deletion + repoint the one test. | logged → TD-09 |
+| SRC-22 | info | `db/dialects/protocol.py` | `DatabricksDialect.list_catalogs` is consumed by `connection.py` but not declared on the `DialectStrategy` Protocol; call sites are `isinstance`-guarded so contract-clarity only. | logged → TD-09 |
+| SRC-23 | info | `db/dialects/databricks.py:62-69` | Comment "Set to None to allow import" is inverted vs code (sets `_databricks_import_error = e` on failure, `None` on success). Logic correct; comment misleads. | logged → TD-09 |
+| SRC-24 | info | `db/dialects/mssql.py:138-261` | `create_engine` ~123 lines + 14-kwarg unpack (>50-line / readable-arity clarity budget). Already partly decomposed; residual is the kwargs unpack + branch. | logged → TD-09 |
+| SRC-25 | info | `db/metadata.py:849-943` | `get_table_schema` ~95 lines (>50-line budget); cohesive but the column/index/FK dict-comprehensions could each be a small builder. | logged → TD-09 |
+| SRC-26 | info | `db/query.py:475-520` (`_inject_top_in_cte`) | Hand-rolled char-by-char paren-depth scan to find the final top-level SELECT, when sqlglot (already used in `parse_query_type`) is on hand. Correct for common cases, brittle vs string-literal/bracket parens. | logged → TD-09 |
+| SRC-27 | info | `db/query.py:300-329` (`_get_validated_columns`) | Error-message context hardcodes MSSQL `[{schema}].[{table}]` brackets for all dialects, and `schema_name` can be `None` → `"[None].[t]"`. Message-only, no functional impact. | logged → TD-09 |
+| SRC-28 | info | `models/analysis.py` (every `to_dict`) | Hand-written `to_dict`s restate field names as string literals + repeat "omit when None" across `ColumnStatistics`/`PKCandidate`/`FKCandidateData` — duplicated against the dataclass fields. (Partly deliberate: controls omission + isoformat timing.) | logged → TD-09 |
+| SRC-29 | info | `db/validation.py:46-68` | `validate_query` docstring omits the real `safe_operational_commands` parameter from Args. Doc drift. | logged → TD-09 |
+| SRC-30 | info | `mcp_server/schema_tools.py:58-67` + `metadata.py:731` | Cross-catalog correctness edge: detailed-mode `get_columns` has no `catalog` param, so with an explicit Databricks `catalog` the summary rows resolve cross-catalog but `columns` come from the connection's **default** catalog. Wrong/empty columns if a same-named table differs across catalogs. Ties to SRC-04. | logged → TD-08 |
+
+**Counts:** 0 critical, 10 warning, 20 info = 30 total; dispositions 0 fixed / 0 verified / 30 logged.
+**Suite unchanged by US2** (no `src/` edit) → baseline 1150 passed / 166 skipped / 91.92% holds.
 
 ---
 
