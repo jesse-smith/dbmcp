@@ -60,6 +60,9 @@ Thumbs.db
 
 # Documentation cache (generated)
 docs/*/
+# ...but keep the frozen GSD planning archive under version control
+!docs/archive/
+!docs/archive/**
 
 # Credentials (never commit)
 credentials.json

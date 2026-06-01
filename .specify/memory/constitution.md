@@ -2,13 +2,13 @@
 ================================================================================
 SYNC IMPACT REPORT
 ================================================================================
-Version change: N/A (initial) → 1.0.0
-Modified principles: N/A (initial creation)
-Added sections:
-  - Core Principles (7 principles)
-  - Quality Gates section
-  - Development Workflow section
-  - Governance section
+Version change: 1.0.0 → 1.1.0
+Modified principles:
+  - III. Test-First Development — added live-warehouse validation clause for
+    multi-dialect / cross-namespace work (carried forward from the GSD v2.0/v2.1
+    retrospective on migration back to spec-kit, 2026-06-01)
+Added sections: None (1.1.0); initial 1.0.0 added Core Principles (7),
+  Quality Gates, Development Workflow, Governance
 Removed sections: None
 Templates requiring updates:
   - .specify/templates/plan-template.md ✅ (Constitution Check section already present)
@@ -68,10 +68,16 @@ fulfills it.
 - Tests MUST run fast; slow tests indicate design problems
 - Test names MUST describe behavior, not implementation (`user_can_login` not `test_login_function`)
 - MUST maintain test isolation—no shared mutable state between tests
+- For multi-dialect / cross-namespace database work, mock-based unit tests are NOT sufficient
+  evidence of correctness: any feature that generates dialect-specific SQL or resolves
+  multi-part identifiers MUST be validated against a real warehouse before a milestone closes.
 
 **Rationale:** Tests written after implementation tend to test what was built rather than what
 was needed. Test-first forces clear thinking about requirements and produces naturally
-testable designs.
+testable designs. The live-validation clause is hard-won (v2.0 + v2.1): the majority of
+defects in dialect work — Unity Catalog three-part naming, env-var substitution quirks, SQL
+syntax divergence, stale-catalog bleed on pooled connections — surfaced only against a live
+Databricks warehouse and were invisible to unit mocks. See `specs/LEARNINGS.md`.
 
 ### IV. Robustness Through Explicit Error Handling
 
@@ -202,4 +208,4 @@ this document and other guidelines resolve in favor of this constitution.
 - Violations require explicit justification and approval
 - Repeated unjustified violations trigger process review
 
-**Version**: 1.0.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-01-17
+**Version**: 1.1.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-06-01

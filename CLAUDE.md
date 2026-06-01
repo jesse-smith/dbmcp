@@ -57,6 +57,15 @@ When a feature branch is merged to main:
 
 See `specs/STATUS.md` for the current feature registry.
 
+## Project History & Cross-cutting Context
+
+- **Frozen GSD-era history** (milestones v1.0–v2.1, phases 1–15.1) lives at
+  `docs/archive/gsd-planning/` — read-only, superseded by `specs/`. Start with its
+  `README.md`, then `RETROSPECTIVE.md` / `MILESTONES.md` for the richest context.
+- **Cross-cutting registries** (project-wide state spec-kit has no native slot for):
+  `specs/TECH-DEBT.md` (open fixes), `specs/BACKLOG.md` (deferred features),
+  `specs/LEARNINGS.md` (operating lessons). Check `TECH-DEBT.md` before a hardening pass.
+
 ## Companion Artifacts
 
 When implementing phased features that need companion artifacts (e.g., example notebooks for each phase):
@@ -65,3 +74,8 @@ When implementing phased features that need companion artifacts (e.g., example n
 - This keeps implementation and documentation synchronized
 
 <!-- MANUAL ADDITIONS END -->
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
