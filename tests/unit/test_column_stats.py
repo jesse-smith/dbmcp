@@ -1118,3 +1118,153 @@ class TestCrossCatalogColumnStats:
         # 2-part name, no catalog segment.
         assert f"`{self.SCHEMA}`.`{self.TABLE}`" in captured["sql"]
         assert self._three_part not in captured["sql"]
+
+
+class TestCrossCatalogTypeEngine:
+    """WR-05 Option B: cross-catalog get_column_data_type returns a TypeEngine.
+
+    Before the fix the cross-catalog branch returned the raw DESCRIBE-TABLE
+    *string* (e.g. "int"), so the isinstance(type_info, TypeEngine) gate in
+    get_columns_info/get_column_statistics was always False and the Databricks
+    DESCRIBE EXTENDED fast path never fired cross-catalog. After the fix it
+    returns a TypeEngine so the gate passes and precomputed stats are used.
+    """
+
+    CATALOG = "cerner_src"
+    SCHEMA = "dbo"
+    TABLE = "orders"
+
+    def _collector_with_catalog_columns(self, dialect, columns):
+        """A cross-catalog collector whose reflected columns are `columns`
+        (list of {"name", "data_type"} dicts), with no inspector."""
+        conn = Mock(spec=Connection)
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+        assert collector._is_cross_catalog_databricks is True
+        # Stub reflection so we control the DESCRIBE-TABLE type strings.
+        collector._reflect_catalog_columns = lambda: columns
+        return collector
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_known_type_returns_type_engine(self, dialect):
+        """A known DESCRIBE token (e.g. 'int') resolves to a TypeEngine so the
+        fast-path isinstance gate fires cross-catalog."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amount", "data_type": "int"}]
+        )
+
+        result = collector.get_column_data_type("amount")
+
+        assert isinstance(result, sa_types.TypeEngine), (
+            f"cross-catalog type must be a TypeEngine (gate-firing), got {result!r}"
+        )
+        assert isinstance(result, sa_types.Integer)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_string_type_returns_type_engine(self, dialect):
+        """'string' DESCRIBE token resolves to a String TypeEngine."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "name", "data_type": "string"}]
+        )
+
+        result = collector.get_column_data_type("name")
+
+        assert isinstance(result, sa_types.TypeEngine)
+        assert isinstance(result, sa_types.String)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_decimal_preserves_precision(self, dialect):
+        """A 'decimal(10,2)' DESCRIBE token resolves to Numeric(10, 2)."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "price", "data_type": "decimal(10,2)"}]
+        )
+
+        result = collector.get_column_data_type("price")
+
+        assert isinstance(result, sa_types.Numeric)
+        assert result.precision == 10
+        assert result.scale == 2
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_bare_decimal_falls_back_to_numeric(self, dialect):
+        """A bare 'decimal' token (no precision) resolves to a plain Numeric
+        TypeEngine rather than raising (the dialect's parse fn needs a
+        precision; we guard that case)."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amt", "data_type": "decimal"}]
+        )
+
+        result = collector.get_column_data_type("amt")
+
+        assert isinstance(result, sa_types.Numeric)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_unknown_type_returns_nulltype(self, dialect):
+        """An unmapped DESCRIBE token resolves to NullType() (still a TypeEngine,
+        so it takes the fast path and lands in the 'other' category) — symmetric
+        with the default-catalog Inspector path's NullType() for unknowns."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "weird", "data_type": "some_future_type"}]
+        )
+
+        result = collector.get_column_data_type("weird")
+
+        assert isinstance(result, sa_types.NullType)
+        assert isinstance(result, sa_types.TypeEngine)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_missing_column_returns_nulltype(self, dialect):
+        """A column absent from the reflected set resolves to NullType() (not a
+        raw 'unknown' string) so the gate still behaves predictably."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amount", "data_type": "int"}]
+        )
+
+        result = collector.get_column_data_type("does_not_exist")
+
+        assert isinstance(result, sa_types.NullType)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_full_stats_uses_fast_path(self, dialect):
+        """End-to-end: get_column_statistics on a cross-catalog column now fires
+        the DESCRIBE EXTENDED fast path (type gate passes) and returns the same
+        ColumnStatistics shape Tier-2 produced — sourced from precomputed stats."""
+        from src.models.analysis import ColumnStatistics
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            result = MagicMock()
+            if "DESCRIBE EXTENDED" in sql:
+                result.fetchall.return_value = [
+                    ("col_name", "amount"),
+                    ("data_type", "int"),
+                    ("min", "1"),
+                    ("max", "1000"),
+                    ("num_nulls", "5"),
+                    ("distinct_count", "995"),
+                ]
+            else:
+                # column_exists / DESCRIBE TABLE reflection
+                result.fetchall.return_value = [("amount", "int")]
+                result.fetchone.return_value = (100, 80, 5)
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+
+        stats = collector.get_column_statistics("amount")
+
+        assert isinstance(stats, ColumnStatistics)
+        # Fast-path provenance: distinct_count/null_count come from DESCRIBE
+        # EXTENDED, and total_rows is 0 (the fast path does not compute it).
+        assert stats.distinct_count == 995
+        assert stats.null_count == 5
+        assert stats.total_rows == 0
+        # data_type now str(TypeEngine) — the converged format (FR-014).
+        assert stats.data_type == "INTEGER"

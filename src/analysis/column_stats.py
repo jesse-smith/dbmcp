@@ -35,6 +35,43 @@ if TYPE_CHECKING:
     from src.db.dialects.protocol import DialectStrategy
 
 
+def _databricks_type_string_to_engine(type_string: str) -> sa_types.TypeEngine:
+    """Convert a Databricks DESCRIBE-TABLE type token to a SQLAlchemy TypeEngine.
+
+    WR-05 (Option B): the cross-catalog reflector yields raw DESCRIBE-TABLE type
+    strings (e.g. ``"int"``, ``"string"``, ``"decimal(10,2)"``). Returning a
+    ``TypeEngine`` lets the ``isinstance(..., TypeEngine)`` fast-path gate fire
+    cross-catalog. Reuses the Databricks dialect's own ``GET_COLUMNS_TYPE_MAP``
+    (DRY — no hand-rolled type table), special-casing ``decimal`` to preserve
+    precision/scale, and falling back to ``NullType()`` for any unmapped token
+    (symmetric with the default-catalog Inspector path, which also returns
+    ``NullType()`` for unknowns — both still TypeEngines, so they take the fast
+    path and land in the "other" category).
+
+    The ``databricks.sqlalchemy`` import is local so non-Databricks paths never
+    import the package.
+    """
+    from databricks.sqlalchemy._parse import (
+        GET_COLUMNS_TYPE_MAP,
+        parse_numeric_type_precision_and_scale,
+    )
+
+    # DESCRIBE tokens are lowercase ("decimal(10,2)"); the map is keyed on the
+    # leading word ("decimal").
+    token = type_string.strip().lower()
+    base = token.split("(", 1)[0].strip()
+    mapped = GET_COLUMNS_TYPE_MAP.get(base)
+    if mapped is None:
+        return sa_types.NullType()
+    if base == "decimal":
+        # parse_numeric_type_precision_and_scale needs an uppercase
+        # DECIMAL(p,s); a bare "decimal" (no precision) → plain Numeric.
+        if "(" in token:
+            return parse_numeric_type_precision_and_scale(token.upper())
+        return sa_types.Numeric()
+    return mapped()
+
+
 class ColumnStatsCollector:
     """Collect per-column statistical profiles for a table.
 
@@ -197,13 +234,20 @@ class ColumnStatsCollector:
     ) -> "sa_types.TypeEngine | str":
         """Get the data type for a column.
 
-        Returns TypeEngine when Inspector available, else data_type string.
+        Returns a ``TypeEngine`` on the Inspector path AND on the cross-catalog
+        Databricks path (WR-05: the cross-catalog DESCRIBE-TABLE type string is
+        converted to a ``TypeEngine`` so the fast-path ``isinstance`` gate fires
+        — see :func:`_databricks_type_string_to_engine`). Only the
+        INFORMATION_SCHEMA fallback (no Inspector, non-cross-catalog) returns a
+        bare string.
         """
         if self._is_cross_catalog_databricks:
             for c in self._reflect_catalog_columns():
                 if c["name"] == column_name:
-                    return c["data_type"]
-            return "unknown"
+                    return _databricks_type_string_to_engine(c["data_type"])
+            # Symmetric with the Inspector path: unknown column → NullType()
+            # (still a TypeEngine, so the gate behaves predictably).
+            return sa_types.NullType()
         if self._inspector is not None:
             columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
             for c in columns:
@@ -511,7 +555,15 @@ class ColumnStatsCollector:
     def get_column_statistics(
         self, column_name: str, sample_size: int = 10
     ) -> ColumnStatistics:
-        """Collect complete statistical profile for a single column."""
+        """Collect complete statistical profile for a single column.
+
+        On Databricks the DESCRIBE EXTENDED fast path fires for BOTH the
+        default-catalog and the cross-catalog branch (WR-05): the type resolves
+        to a ``TypeEngine`` in both cases, so the ``isinstance`` gate passes and
+        precomputed stats are used instead of Tier-2 aggregates. On the
+        cross-catalog path the ``data_type`` response field is ``str(TypeEngine)``
+        (e.g. ``"INTEGER"``), converged onto the default-catalog format (FR-014).
+        """
         if not self.column_exists(column_name):
             raise ValueError(
                 f"Column '{column_name}' not found in table "
@@ -615,7 +667,13 @@ class ColumnStatsCollector:
         column_pattern: str | None = None,
         sample_size: int = 10,
     ) -> list[ColumnStatistics]:
-        """Collect statistics for multiple columns with optional filtering."""
+        """Collect statistics for multiple columns with optional filtering.
+
+        The Databricks DESCRIBE EXTENDED fast path fires for both default-catalog
+        and cross-catalog columns (WR-05): ``get_column_data_type`` returns a
+        ``TypeEngine`` on both branches, so the per-column ``isinstance`` gate
+        below passes cross-catalog and precomputed stats are used.
+        """
         columns_to_analyze = self._resolve_columns_to_analyze(columns, column_pattern)
 
         # Databricks fast path: probe first column to decide bulk strategy
