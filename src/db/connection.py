@@ -375,6 +375,11 @@ class ConnectionManager:
                     token=db_kwargs.get("token", ""),
                     schema=db_kwargs.get("schema", "default"),
                     orig_value_error=ve,
+                    # TD-02: forward ca_bundle so the SHOW CATALOGS probe engine
+                    # survives corp-MITM TLS, mirroring the named-config path.
+                    # _tls_trusted_ca_file is derived from this inside
+                    # create_engine, so ca_bundle alone is sufficient (D-02).
+                    ca_bundle=db_kwargs.get("ca_bundle", ""),
                 )
             raise  # non-Databricks ValueError or unreachable after helper
         except SQLAlchemyError as e:
