@@ -22,16 +22,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp[cli]>=1.27.0",
-    "sqlalchemy>=2.0.0",
-    "sqlglot>=30.7.0,<31.0.0",
+    "mcp[cli]>=1.27.1",
+    "sqlalchemy>=2.0.50",
+    "sqlglot>=30.8.0,<31.0.0",
     "toon-format @ git+https://github.com/toon-format/toon-python.git@v0.9.0-beta.1",
     "pyodbc>=5.0.0",
     "azure-identity>=1.14.0",
     "databricks-sqlalchemy>=2.0.0",
-    "databricks-sql-connector>=4.0.0",
+    "databricks-sql-connector>=4.2.6",
     "jupyter>=1.0.0",
-    "notebook>=7.0.0",
+    "notebook>=7.5.6",
 ]
 
 [project.scripts]
@@ -96,11 +96,11 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
-    "complexipy>=5.4.1",
+    "complexipy>=5.5.0",
     "jupyter>=1.1.1",
     "pyright>=1.1.409",
     "pytest>=9.0.3",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
-    "ruff>=0.15.12",
+    "ruff>=0.15.14",
 ]
