@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy import types as sa_types
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.analysis._sql import (
     CatalogAwareReflector,
@@ -270,11 +271,13 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: a no-GROUP-BY aggregate always returns exactly one full-width
+        # row, so index directly and trust the contract. The former
+        # `row[N] if row else 0` guards were misleading — they guarded None but
+        # still blindly indexed row[1]/row[2], so a short row would IndexError
+        # anyway.
         row = result.fetchone()
-
-        total_rows = row[0] if row else 0
-        distinct_count = row[1] if row else 0
-        null_count = row[2] if row else 0
+        total_rows, distinct_count, null_count = row[0], row[1], row[2]
 
         null_percentage = (null_count / total_rows * 100.0) if total_rows > 0 else 0.0
 
@@ -300,15 +303,10 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: the aggregate always returns one full-width row; the all-NULL
+        # case is (None, None, None, None) — a truthy tuple handled directly
+        # below. The former `if not row` early return was dead code.
         row = result.fetchone()
-
-        if not row:
-            return NumericStats(
-                min_value=None,
-                max_value=None,
-                mean_value=None,
-                std_dev=None,
-            )
 
         return NumericStats(
             min_value=row[0],
@@ -350,9 +348,13 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: full-width single-row aggregate. The meaningful guard is
+        # `row[0] is None` (all-NULL column → no min/max date); the former
+        # `not row` disjunct was dead (a no-GROUP-BY aggregate never returns
+        # an empty result).
         row = result.fetchone()
 
-        if not row or row[0] is None:
+        if row[0] is None:
             return DateTimeStats(
                 min_date=None,
                 max_date=None,
@@ -384,11 +386,14 @@ class ColumnStatsCollector:
         length_query = text(transpile_query(length_sql, self._dialect))
 
         length_result = self.connection.execute(length_query)
+        # WR-02: full-width single-row aggregate; all-NULL column yields
+        # (None, None, None). Index directly, drop the misleading guards.
         length_row = length_result.fetchone()
-
-        min_length = length_row[0] if length_row else None
-        max_length = length_row[1] if length_row else None
-        avg_length = length_row[2] if length_row else None
+        min_length, max_length, avg_length = (
+            length_row[0],
+            length_row[1],
+            length_row[2],
+        )
 
         # Get top frequent values
         sample_sql = f"""
@@ -436,7 +441,12 @@ class ColumnStatsCollector:
         try:
             result = self.connection.execute(text(sql))
             rows = result.fetchall()
-        except Exception:
+        except SQLAlchemyError:
+            # WR-01: narrow from bare `except Exception`. "DESCRIBE EXTENDED
+            # unsupported / no stats" surfaces as a SQLAlchemyError subclass
+            # (e.g. ProgrammingError) and legitimately degrades to Tier-2.
+            # Non-SQLAlchemy errors (auth/network/injection-induced) now
+            # propagate instead of being silently masked.
             return None
 
         stat_keys = {"min", "max", "num_nulls", "distinct_count", "avg_col_len", "max_col_len"}

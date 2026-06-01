@@ -119,6 +119,27 @@ class TestBasicStats:
         assert stats["null_count"] == 0
         assert stats["null_percentage"] == 0.0
 
+    def test_basic_stats_trusts_full_width_aggregate_row(
+        self, stats_collector, mock_connection
+    ):
+        """WR-02: a no-GROUP-BY aggregate always returns exactly one full-width
+        (3-column) row. get_basic_stats reads row[0..2] directly, trusting that
+        contract rather than relying on the removed `row[N] if row else 0`
+        guards (which guarded None but still blindly indexed row[1]/row[2]).
+
+        Pins the intent: every element of the single returned row maps straight
+        to its stat with no defensive fallback masking a malformed shape.
+        """
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = (1234, 1200, 34)
+        mock_connection.execute.return_value = mock_result
+
+        stats = stats_collector.get_basic_stats("col")
+
+        assert stats["total_rows"] == 1234
+        assert stats["distinct_count"] == 1200
+        assert stats["null_count"] == 34
+
 
 class TestNumericStats:
     """Test numeric statistics collection."""
@@ -708,6 +729,53 @@ class TestDatabricksFastPath:
 
         stats = collector._try_describe_extended_stats("id")
         assert stats is None
+
+    @pytest.mark.dialects('databricks')
+    def test_fast_path_sqlalchemy_error_degrades_to_none(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """WR-01: a SQLAlchemyError (e.g. ProgrammingError for 'DESCRIBE EXTENDED
+        unsupported') still degrades gracefully to None -> Tier-2 fallback.
+
+        This is the case the narrowed handler MUST keep catching: an unsupported-
+        syntax / no-stats condition surfaces as a SQLAlchemyError subclass, and
+        the fast path is legitimately absent.
+        """
+        from sqlalchemy.exc import ProgrammingError
+
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        mock_connection.execute.side_effect = ProgrammingError(
+            "DESCRIBE EXTENDED ... unsupported", {}, Exception("orig")
+        )
+
+        stats = collector._try_describe_extended_stats("id")
+        assert stats is None
+
+    @pytest.mark.dialects('databricks')
+    def test_fast_path_non_sqlalchemy_error_propagates(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """WR-01: a non-SQLAlchemy infra/programming error (auth failure, network
+        error, injection-induced Python error) MUST propagate rather than being
+        silently swallowed to None.
+
+        Before the fix, the bare `except Exception: return None` masked all of
+        these, treating an auth failure identically to 'stats unavailable'. After
+        narrowing to SQLAlchemyError, anything outside that hierarchy escapes.
+        """
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        mock_connection.execute.side_effect = PermissionError(
+            "token expired / auth failure"
+        )
+
+        with pytest.raises(PermissionError):
+            collector._try_describe_extended_stats("id")
 
     @pytest.mark.dialects('mssql', 'generic')
     def test_fast_path_skipped_for_non_databricks(
