@@ -13,17 +13,45 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 
 | ID | Item | Area | Priority | Effort | Source |
 |----|------|------|----------|--------|--------|
-| TD-01 | Residual Databricks `connect_with_config` regression tests | testing | low | ~35 LOC | [todo](../docs/archive/gsd-planning/todos/pending/2026-05-05-add-databricks-integration-tests.md) |
-| TD-02 | URL-mode probe engine should inherit `ca_bundle` | database | medium | ~10 LOC | [todo](../docs/archive/gsd-planning/todos/pending/2026-05-28-url-mode-probe-engine-inherit-ca-bundle-for-ident-01-enrichm.md) |
-| TD-03 | Phase 15.1 code-review follow-ups (WR-01/02/05, IN-01–04) | analysis | low | see below | [todo](../docs/archive/gsd-planning/todos/pending/2026-05-31-phase-15.1-code-review-followups.md) |
+| TD-04 | Unify the two "table not found" message templates in `analysis_tools.py` | analysis | low | ~5 LOC + 2 tests | feature 012 (IN-04 residue) |
 
+> ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
+> 2026-06-01)**; struck below in *Closed / superseded*.
+>
 > Cross-dialect `ca_bundle` promotion is **future feature scope**, not active debt — it
 > lives in [`BACKLOG.md`](./BACKLOG.md). The "unify-3-part identifier" todo was verified
 > **resolved** and is recorded as closed at the bottom of this file.
 
 ---
 
-## TD-01 — Residual Databricks `connect_with_config` regression tests
+## TD-04 — Unify the two "table not found" message templates (IN-04 residue)
+
+**Priority:** low · **Effort:** ~5 LOC + 2 test updates · Surfaced by feature 012 (IN-04).
+
+`_check_table_exists` (`src/mcp_server/analysis_tools.py`) emits two different
+"table not found" `error_message` strings depending on the branch:
+
+- cross-catalog: `Table 'schema.table' not found`
+- default: `Table 'table' not found in schema 'schema'`
+
+Downstream `error_message` parsers see the drift. Feature 012's IN-02/03/04 verification
+(D-04) confirmed the *dedup* is complete (one shared helper, one hoisted import) — this is
+the residual divergence. It was **not** unified in 012 because it is not a one-line local
+change: both templates are pinned by tests in `tests/unit/test_analysis_tools_helpers.py`,
+it touches two production branches, and it nudges an externally observable `error_message`
+(FR-014 territory). The divergence is also partly justified — the default path has no
+catalog, while the cross-catalog path carries the dotted `schema.table` because catalog
+context matters. **Action:** pick one template (or a catalog-aware single template), update
+the two pinned tests, and confirm no downstream parser depends on the old wording.
+
+---
+
+## ~~TD-01~~ — Residual Databricks `connect_with_config` regression tests · ✅ RESOLVED (feature 012, 2026-06-01)
+
+> **Resolved:** the two regression tests already existed (commit `48a2c5b`, tag v2.1,
+> predating feature 012) — verified genuine by mutation-checking each against its target
+> production line. No production change needed. See `specs/012-hardening-cleanup/findings.md`.
+> Detail retained below for provenance.
 
 **Priority:** low · **Effort:** ~35 LOC · **No production code changes.**
 
@@ -44,7 +72,13 @@ Both go in `tests/unit/test_connect_with_config_databricks.py` (reuse `_make_eng
 
 ---
 
-## TD-02 — URL-mode probe engine should inherit `ca_bundle` for IDENT-01 enrichment
+## ~~TD-02~~ — URL-mode probe engine should inherit `ca_bundle` for IDENT-01 enrichment · ✅ RESOLVED (feature 012, 2026-06-01)
+
+> **Resolved:** commit `76d48c0` — `connect_with_url` now forwards `ca_bundle` from the parsed
+> URL kwargs into `_require_databricks_catalog`, mirroring the config path. D-02 clarified that
+> `_tls_trusted_ca_file` is derived from `ca_bundle` inside `create_engine`, so forwarding
+> `ca_bundle` alone suffices (FR-003 over-spec corrected). Live corp-MITM probe deferred to UAT
+> (FR-017). Detail retained below for provenance.
 
 **Priority:** medium · **Effort:** ~10 LOC, surgical · Matches the v2.1 audit WARNING.
 
@@ -65,7 +99,18 @@ UAT needs the corp-MITM environment).
 
 ---
 
-## TD-03 — Phase 15.1 code-review follow-ups (WR-01/02/05, IN-01–04)
+## ~~TD-03~~ — Phase 15.1 code-review follow-ups (WR-01/02/05, IN-01–04) · ✅ RESOLVED (feature 012, 2026-06-01)
+
+> **Resolved** across feature 012:
+> - **WR-01** narrowed `except Exception`→`SQLAlchemyError` (commit `280a874`).
+> - **WR-02** dropped dead/misleading row guards (commit `280a874`).
+> - **WR-05** (Option B) DESCRIBE EXTENDED fast path now fires cross-catalog (commit `1dedd71`);
+>   live SC-008 "after" capture pending a `dbmcp-test` server restart (unit-proven).
+> - **IN-01** fail-fast on SHOW TABLES row shape (commit `21d738d`).
+> - **IN-02/03/04** verified already-refactored (D-04); IN-04 message-template residue moved to
+>   **TD-04** above (not a one-line local change).
+>
+> See `specs/012-hardening-cleanup/findings.md` for the full audit trail. Detail retained below.
 
 **Priority:** low · 7 non-blocking robustness/clarity/dedup findings from the Phase 15.1
 code review (`15.1-REVIEW.md`: 1 critical + 5 warnings + 4 info; 5 files reviewed). The
