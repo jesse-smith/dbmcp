@@ -1162,3 +1162,57 @@ class TestSampleDataSchemaDefault:
 
         assert "[sales].[Customers]" in captured["sql"]
         assert sample.table_id == "sales.Customers"
+
+    def test_get_sample_data_databricks_catalog_without_schema(self, mock_engine):
+        r"""Databricks catalog + schema_name=None builds a 2-part catalog.table ref.
+
+        Covers the cross-catalog branch in ``_build_sample_table_ref`` where a
+        catalog is supplied but the schema is absent: the reference must be
+        ``\`catalog\`.\`table\``` (no schema segment, no synthetic ``None.``),
+        without emitting ``USE CATALOG``.
+        """
+        from src.db.dialects import DatabricksDialect
+
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine, dialect=DatabricksDialect())
+        service.get_sample_data(
+            table_name="events",
+            schema_name=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+            catalog="analytics",
+        )
+
+        sql = captured["sql"]
+        # 2-part catalog.table reference, both segments backtick-quoted.
+        assert "`analytics`.`events`" in sql
+        # No synthetic None schema segment crept in between catalog and table.
+        assert "None" not in sql
+        assert "USE CATALOG" not in sql
+
+    def test_build_sample_query_unknown_method_raises(self, mock_engine):
+        """_build_sample_query raises ValueError for an unrecognized method.
+
+        The enum dispatch has a fallthrough guard; a non-enum sentinel must hit
+        the ``raise ValueError`` rather than silently returning None. Exercised
+        directly because the public API cannot pass a bad SamplingMethod.
+        """
+        service = QueryService(mock_engine)
+        with pytest.raises(ValueError, match="Unknown sampling method"):
+            service._build_sample_query(
+                sampling_method="bogus_method",
+                full_table_name='"Customers"',
+                column_sql="*",
+                sample_size=5,
+            )

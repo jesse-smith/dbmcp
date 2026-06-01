@@ -914,3 +914,86 @@ class TestCrossCatalogWiring:
                 connection_id="c", table_name="t", column_name="id", catalog="x"
             )
         assert "error" in r3 and "catalog" in r3.lower()
+
+
+class TestAnalysisToolsNotFoundEarlyExit:
+    """Drive each analysis tool to its in-tool not-found early-exit.
+
+    These cover the ``return missing`` / ``return col_error`` branches that the
+    tools take when ``_check_table_exists`` / ``_reflect_source_column`` report
+    an absent table or column. The non-cross-catalog path runs synchronously via
+    a mocked SQLAlchemy Inspector (no DB, no catalog gate). Equivalent to the
+    integration ``test_table_not_found`` cases, but inside the CI selection.
+    """
+
+    def _empty_inspector(self):
+        """Inspector reporting no tables, views, or columns."""
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = []
+        inspector.get_view_names.return_value = []
+        inspector.get_columns.return_value = []
+        return inspector
+
+    async def test_get_column_info_table_not_found(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory, patch.object(
+            analysis_tools, "inspect", return_value=self._empty_inspector()
+        ):
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="ghost", schema_name="dbo"
+            )
+        assert "error" in result and "not found" in result.lower()
+        assert "ghost" in result
+
+    async def test_find_pk_candidates_table_not_found(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory, patch.object(
+            analysis_tools, "inspect", return_value=self._empty_inspector()
+        ):
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="ghost", schema_name="dbo"
+            )
+        assert "error" in result and "not found" in result.lower()
+        assert "ghost" in result
+
+    async def test_find_fk_candidates_table_not_found(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory, patch.object(
+            analysis_tools, "inspect", return_value=self._empty_inspector()
+        ):
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c",
+                table_name="ghost",
+                column_name="id",
+                schema_name="dbo",
+            )
+        assert "error" in result and "not found" in result.lower()
+        assert "ghost" in result
+
+    async def test_find_fk_candidates_column_not_found(self):
+        """Table present but the source column is absent -> column not-found exit."""
+        from src.mcp_server import analysis_tools
+
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["orders"]
+        inspector.get_view_names.return_value = []
+        inspector.get_columns.return_value = [{"name": "order_id", "type": "INTEGER"}]
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory, patch.object(
+            analysis_tools, "inspect", return_value=inspector
+        ):
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c",
+                table_name="orders",
+                column_name="ghost_col",
+                schema_name="dbo",
+            )
+        assert "error" in result and "not found" in result.lower()
+        assert "ghost_col" in result
