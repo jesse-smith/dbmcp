@@ -175,4 +175,17 @@ class CatalogAwareReflector:
         result = self.connection.execute(text(f"SHOW TABLES IN {qualified}"))
         rows = result.fetchall()
 
-        return [row[1] if len(row) > 1 else row[0] for row in rows]
+        # IN-01: SHOW TABLES returns (database, tableName, isTemporary); the
+        # table name is row[1]. Fail fast on any row lacking that column rather
+        # than silently falling back to row[0] (a *database* name) — that
+        # fallback masked a contract violation the docstring says never occurs.
+        table_names: list[str] = []
+        for row in rows:
+            if len(row) < 2:
+                raise ValueError(
+                    "SHOW TABLES returned an unexpected row shape "
+                    f"(width {len(row)}): expected (database, tableName, "
+                    f"isTemporary). Row: {row!r}"
+                )
+            table_names.append(row[1])
+        return table_names
