@@ -116,46 +116,10 @@ class QueryService:
             sanitized_columns = self._get_validated_columns(columns, table_name, schema_name)
             column_sql = ", ".join(sanitized_columns)
 
-        # Build query based on sampling method
-        if self._dialect is None:
-            # SQLite/test mode doesn't use schema prefixes
-            full_table_name = table_name
-        elif catalog and self._dialect.name == "databricks":
-            # 3-part catalog.schema.table reference for Databricks cross-catalog
-            # access (SC3). Every segment is quoted via quote_identifier, which
-            # remains the injection defense (RESEARCH §Security) — no raw concat.
-            # schema_name may be None (no hardcoded default, SC4); omit the schema
-            # segment rather than emit quote_identifier(None) -> a synthetic
-            # `None` namespace (SC3 blocker, T-qcp-02).
-            quoted_catalog = self._dialect.quote_identifier(catalog)
-            quoted_table = self._dialect.quote_identifier(table_name)
-            if schema_name:
-                full_table_name = (
-                    f"{quoted_catalog}."
-                    f"{self._dialect.quote_identifier(schema_name)}."
-                    f"{quoted_table}"
-                )
-            else:
-                full_table_name = f"{quoted_catalog}.{quoted_table}"
-        elif schema_name:
-            # 2-part schema.table reference (e.g. MSSQL [schema].[table]).
-            full_table_name = (
-                f"{self._dialect.quote_identifier(schema_name)}."
-                f"{self._dialect.quote_identifier(table_name)}"
-            )
-        else:
-            # schema_name absent (real dialect with default_schema=None): emit an
-            # unqualified, quoted table reference — no leading 'None.' qualifier.
-            full_table_name = self._dialect.quote_identifier(table_name)
-
-        if sampling_method == SamplingMethod.TOP:
-            query = self._build_top_query(full_table_name, column_sql, sample_size)
-        elif sampling_method == SamplingMethod.TABLESAMPLE:
-            query = self._build_tablesample_query(full_table_name, column_sql, sample_size)
-        elif sampling_method == SamplingMethod.MODULO:
-            query = self._build_modulo_query(full_table_name, column_sql, sample_size)
-        else:
-            raise ValueError(f"Unknown sampling method: {sampling_method}")
+        full_table_name = self._build_sample_table_ref(table_name, schema_name, catalog)
+        query = self._build_sample_query(
+            sampling_method, full_table_name, column_sql, sample_size
+        )
 
         # Execute query and fetch results
         rows = []
@@ -200,6 +164,61 @@ class QueryService:
             truncated_columns=truncated_columns,
             sampled_at=datetime.now(),
         )
+
+    def _build_sample_table_ref(
+        self, table_name: str, schema_name: str | None, catalog: str | None
+    ) -> str:
+        """Build the (optionally qualified) table reference for a sample query.
+
+        Every segment is quoted via ``quote_identifier`` — the injection defense
+        (RESEARCH §Security), no raw concatenation. ``schema_name`` may be None
+        now that 'dbo' is no longer a hardcoded default (SC4); when absent the
+        schema segment is omitted rather than emitting a synthetic ``None``
+        namespace (SC3 blocker, T-qcp-02).
+        """
+        if self._dialect is None:
+            # SQLite/test mode doesn't use schema prefixes
+            return table_name
+
+        if catalog and self._dialect.name == "databricks":
+            # 3-part catalog.schema.table reference for Databricks cross-catalog
+            # access (SC3), without USE CATALOG.
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            if schema_name:
+                return (
+                    f"{quoted_catalog}."
+                    f"{self._dialect.quote_identifier(schema_name)}."
+                    f"{quoted_table}"
+                )
+            return f"{quoted_catalog}.{quoted_table}"
+
+        if schema_name:
+            # 2-part schema.table reference (e.g. MSSQL [schema].[table]).
+            return (
+                f"{self._dialect.quote_identifier(schema_name)}."
+                f"{self._dialect.quote_identifier(table_name)}"
+            )
+
+        # schema_name absent (real dialect with default_schema=None): emit an
+        # unqualified, quoted table reference — no leading 'None.' qualifier.
+        return self._dialect.quote_identifier(table_name)
+
+    def _build_sample_query(
+        self,
+        sampling_method: SamplingMethod,
+        full_table_name: str,
+        column_sql: str,
+        sample_size: int,
+    ) -> str:
+        """Dispatch to the per-method sample-query builder."""
+        if sampling_method == SamplingMethod.TOP:
+            return self._build_top_query(full_table_name, column_sql, sample_size)
+        if sampling_method == SamplingMethod.TABLESAMPLE:
+            return self._build_tablesample_query(full_table_name, column_sql, sample_size)
+        if sampling_method == SamplingMethod.MODULO:
+            return self._build_modulo_query(full_table_name, column_sql, sample_size)
+        raise ValueError(f"Unknown sampling method: {sampling_method}")
 
     def _sampling_dialect(self) -> DialectStrategy:
         """Return the dialect used for sample-query generation.

@@ -18,10 +18,101 @@ from src.analysis.column_stats import ColumnStatsCollector
 from src.analysis.fk_candidates import FKCandidateSearch
 from src.analysis.pk_discovery import PKDiscovery
 from src.db.connection import _classify_db_error
-from src.db.identifiers import resolve_identifier
+from src.db.identifiers import ResolvedIdentifier, resolve_identifier
 from src.mcp_server._errors import format_unexpected_error
 from src.mcp_server.server import get_connection_manager, mcp
 from src.serialization import encode_response
+
+
+def _is_cross_catalog(resolved: ResolvedIdentifier, dialect) -> bool:
+    """True when an explicit non-default catalog targets Databricks (IDENT-08).
+
+    Cross-catalog access bypasses the catalog-blind SQLAlchemy Inspector in
+    favour of catalog-scoped raw SQL; every other dialect/path stays on the
+    Inspector bound to the connection's default catalog.
+    """
+    return (
+        bool(resolved.catalog)
+        and dialect is not None
+        and dialect.name == "databricks"
+    )
+
+
+def _check_table_exists(engine, inspector, dialect, resolved, cross_catalog):
+    """Return an error dict if the resolved table is missing, else None.
+
+    Cross-catalog Databricks uses the catalog-aware MetadataService path
+    (SHOW TABLES IN catalog.schema); every other path uses the dialect-agnostic
+    Inspector bound to the default catalog and also accepts views.
+    """
+    if cross_catalog:
+        from src.db.metadata import MetadataService
+
+        metadata_svc = MetadataService(engine, dialect=dialect)
+        if metadata_svc.table_exists(
+            resolved.table, resolved.schema, catalog=resolved.catalog
+        ):
+            return None
+        return {
+            "status": "error",
+            "error_message": f"Table '{resolved.schema}.{resolved.table}' not found",
+        }
+
+    if resolved.table in inspector.get_table_names(schema=resolved.schema):
+        return None
+    if resolved.table in inspector.get_view_names(schema=resolved.schema):
+        return None
+    return {
+        "status": "error",
+        "error_message": f"Table '{resolved.table}' not found in schema '{resolved.schema}'",
+    }
+
+
+def _reflect_source_column(connection, inspector, dialect, resolved, column_name, cross_catalog):
+    """Resolve a source column's data type for FK search.
+
+    Returns ``(source_data_type, None)`` on success or ``(None, error_dict)``
+    when the column is absent. Cross-catalog Databricks reads the type via a
+    catalog-scoped DESCRIBE TABLE (data_type already a string); every other path
+    uses the Inspector bound to the default catalog.
+    """
+    if cross_catalog:
+        reflector = CatalogAwareReflector(connection, dialect)
+        columns = reflector.reflect_columns(
+            resolved.catalog, resolved.schema, resolved.table
+        )
+        col_info = next((c for c in columns if c["name"] == column_name), None)
+        source_data_type = col_info["data_type"] if col_info else None
+    else:
+        columns = inspector.get_columns(resolved.table, schema=resolved.schema)
+        col_info = next((c for c in columns if c["name"] == column_name), None)
+        source_data_type = str(col_info["type"]) if col_info else None
+
+    if col_info is None:
+        return None, {
+            "status": "error",
+            "error_message": (
+                f"Column '{column_name}' not found in table "
+                f"'{resolved.schema}.{resolved.table}'"
+            ),
+        }
+    return source_data_type, None
+
+
+def _analysis_error_response(e: Exception) -> str:
+    """Encode a ValueError/SQLAlchemyError/unexpected exception as an error response.
+
+    Shared by all three analysis tools so their exception handling stays
+    identical and the per-tool functions remain below the complexity gate.
+    """
+    if isinstance(e, ValueError):
+        return encode_response({"status": "error", "error_message": str(e)})
+    if isinstance(e, SQLAlchemyError):
+        _cat, guidance = _classify_db_error(e)
+        error_msg = f"{guidance} ({e})"
+    else:
+        error_msg = format_unexpected_error(e, include_type=False)
+    return encode_response({"status": "error", "error_message": error_msg})
 
 
 @mcp.tool()
@@ -107,49 +198,21 @@ async def get_column_info(
         # is threaded end-to-end (IDENT-08): cross-catalog existence check +
         # catalog-scoped column statistics, no default-catalog binding required.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
-        resolved_table = resolved.table
-        resolved_schema = resolved.schema
-        cross_catalog = (
-            bool(resolved.catalog)
-            and dialect is not None
-            and dialect.name == "databricks"
-        )
+        cross_catalog = _is_cross_catalog(resolved, dialect)
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check. For Databricks cross-catalog access use the
-            # catalog-aware MetadataService path (mirrors metadata.py:table_exists,
-            # SHOW TABLES IN catalog.schema); otherwise the dialect-agnostic
-            # Inspector path bound to the default catalog.
-            if cross_catalog:
-                from src.db.metadata import MetadataService
-
-                metadata_svc = MetadataService(engine, dialect=dialect)
-                if not metadata_svc.table_exists(
-                    resolved_table, resolved_schema, catalog=resolved.catalog
-                ):
-                    return {
-                        "status": "error",
-                        "error_message": (
-                            f"Table '{resolved_schema}.{resolved_table}' not found"
-                        ),
-                    }
-            else:
-                table_names = inspector.get_table_names(schema=resolved_schema)
-                if resolved_table not in table_names:
-                    # Also check views
-                    view_names = inspector.get_view_names(schema=resolved_schema)
-                    if resolved_table not in view_names:
-                        return {
-                            "status": "error",
-                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
-                        }
+            missing = _check_table_exists(
+                engine, inspector, dialect, resolved, cross_catalog
+            )
+            if missing is not None:
+                return missing
 
             collector = ColumnStatsCollector(
                 connection=connection,
-                schema_name=resolved_schema,
-                table_name=resolved_table,
+                schema_name=resolved.schema,
+                table_name=resolved.table,
                 dialect=dialect,
                 inspector=inspector,
                 catalog=resolved.catalog if cross_catalog else None,
@@ -163,30 +226,16 @@ async def get_column_info(
 
             return {
                 "status": "success",
-                "table_name": resolved_table,
-                "schema_name": resolved_schema,
+                "table_name": resolved.table,
+                "schema_name": resolved.schema,
                 "total_columns_analyzed": len(column_stats),
                 "columns": [stat.to_dict() for stat in column_stats],
             }
 
     try:
-        result = await asyncio.to_thread(_sync_work)
-        return encode_response(result)
-    except ValueError as e:
-        return encode_response({
-            "status": "error",
-            "error_message": str(e),
-        })
+        return encode_response(await asyncio.to_thread(_sync_work))
     except Exception as e:
-        if isinstance(e, SQLAlchemyError):
-            _cat, guidance = _classify_db_error(e)
-            error_msg = f"{guidance} ({e})"
-        else:
-            error_msg = format_unexpected_error(e, include_type=False)
-        return encode_response({
-            "status": "error",
-            "error_message": error_msg,
-        })
+        return _analysis_error_response(e)
 
 
 @mcp.tool()
@@ -257,47 +306,21 @@ async def find_pk_candidates(
         # catalog is threaded end-to-end (IDENT-08): cross-catalog existence
         # check + catalog-scoped PK discovery, no default-catalog binding.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
-        resolved_table = resolved.table
-        resolved_schema = resolved.schema
-        cross_catalog = (
-            bool(resolved.catalog)
-            and dialect is not None
-            and dialect.name == "databricks"
-        )
+        cross_catalog = _is_cross_catalog(resolved, dialect)
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check. Cross-catalog Databricks uses the
-            # catalog-aware MetadataService path (SHOW TABLES IN catalog.schema,
-            # mirrors get_column_info); otherwise the dialect-agnostic Inspector.
-            if cross_catalog:
-                from src.db.metadata import MetadataService
-
-                metadata_svc = MetadataService(engine, dialect=dialect)
-                if not metadata_svc.table_exists(
-                    resolved_table, resolved_schema, catalog=resolved.catalog
-                ):
-                    return {
-                        "status": "error",
-                        "error_message": (
-                            f"Table '{resolved_schema}.{resolved_table}' not found"
-                        ),
-                    }
-            else:
-                table_names = inspector.get_table_names(schema=resolved_schema)
-                if resolved_table not in table_names:
-                    view_names = inspector.get_view_names(schema=resolved_schema)
-                    if resolved_table not in view_names:
-                        return {
-                            "status": "error",
-                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
-                        }
+            missing = _check_table_exists(
+                engine, inspector, dialect, resolved, cross_catalog
+            )
+            if missing is not None:
+                return missing
 
             discovery = PKDiscovery(
                 connection=connection,
-                schema_name=resolved_schema,
-                table_name=resolved_table,
+                schema_name=resolved.schema,
+                table_name=resolved.table,
                 dialect=dialect,
                 inspector=inspector,
                 catalog=resolved.catalog if cross_catalog else None,
@@ -307,29 +330,15 @@ async def find_pk_candidates(
 
             return {
                 "status": "success",
-                "table_name": resolved_table,
-                "schema_name": resolved_schema,
+                "table_name": resolved.table,
+                "schema_name": resolved.schema,
                 "candidates": [c.to_dict() for c in candidates],
             }
 
     try:
-        result = await asyncio.to_thread(_sync_work)
-        return encode_response(result)
-    except ValueError as e:
-        return encode_response({
-            "status": "error",
-            "error_message": str(e),
-        })
+        return encode_response(await asyncio.to_thread(_sync_work))
     except Exception as e:
-        if isinstance(e, SQLAlchemyError):
-            _cat, guidance = _classify_db_error(e)
-            error_msg = f"{guidance} ({e})"
-        else:
-            error_msg = format_unexpected_error(e, include_type=False)
-        return encode_response({
-            "status": "error",
-            "error_message": error_msg,
-        })
+        return _analysis_error_response(e)
 
 
 @mcp.tool()
@@ -424,77 +433,27 @@ async def find_fk_candidates(
         # check, catalog-scoped source-column reflection, and catalog-scoped FK
         # search — no default-catalog binding required.
         resolved = resolve_identifier(table_name, schema_name, catalog, dialect)
-        resolved_table = resolved.table
-        resolved_schema = resolved.schema
-        cross_catalog = (
-            bool(resolved.catalog)
-            and dialect is not None
-            and dialect.name == "databricks"
-        )
+        cross_catalog = _is_cross_catalog(resolved, dialect)
 
         with engine.connect() as connection:
             inspector = inspect(engine)
 
-            # Table existence check. Cross-catalog Databricks uses the
-            # catalog-aware MetadataService path (mirrors get_column_info);
-            # otherwise the dialect-agnostic Inspector.
-            if cross_catalog:
-                from src.db.metadata import MetadataService
+            missing = _check_table_exists(
+                engine, inspector, dialect, resolved, cross_catalog
+            )
+            if missing is not None:
+                return missing
 
-                metadata_svc = MetadataService(engine, dialect=dialect)
-                if not metadata_svc.table_exists(
-                    resolved_table, resolved_schema, catalog=resolved.catalog
-                ):
-                    return {
-                        "status": "error",
-                        "error_message": (
-                            f"Table '{resolved_schema}.{resolved_table}' not found"
-                        ),
-                    }
-            else:
-                table_names = inspector.get_table_names(schema=resolved_schema)
-                if resolved_table not in table_names:
-                    view_names = inspector.get_view_names(schema=resolved_schema)
-                    if resolved_table not in view_names:
-                        return {
-                            "status": "error",
-                            "error_message": f"Table '{resolved_table}' not found in schema '{resolved_schema}'",
-                        }
-
-            # Source-column existence and type. Cross-catalog Databricks reads
-            # the type via catalog-scoped DESCRIBE TABLE (CatalogAwareReflector,
-            # data_type already a string); otherwise the dialect-agnostic
-            # Inspector path bound to the default catalog.
-            if cross_catalog:
-                reflector = CatalogAwareReflector(connection, dialect)
-                columns = reflector.reflect_columns(
-                    resolved.catalog, resolved_schema, resolved_table
-                )
-                col_info = next(
-                    (c for c in columns if c["name"] == column_name), None
-                )
-                if col_info is None:
-                    return {
-                        "status": "error",
-                        "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
-                    }
-                source_data_type = col_info["data_type"]
-            else:
-                columns = inspector.get_columns(resolved_table, schema=resolved_schema)
-                col_info = next(
-                    (c for c in columns if c["name"] == column_name), None
-                )
-                if col_info is None:
-                    return {
-                        "status": "error",
-                        "error_message": f"Column '{column_name}' not found in table '{resolved_schema}.{resolved_table}'",
-                    }
-                source_data_type = str(col_info["type"])
+            source_data_type, col_error = _reflect_source_column(
+                connection, inspector, dialect, resolved, column_name, cross_catalog
+            )
+            if col_error is not None:
+                return col_error
 
             search = FKCandidateSearch(
                 connection=connection,
-                source_schema=resolved_schema,
-                source_table=resolved_table,
+                source_schema=resolved.schema,
+                source_table=resolved.table,
                 source_column=column_name,
                 source_data_type=source_data_type,
                 dialect=dialect,
@@ -515,8 +474,8 @@ async def find_fk_candidates(
                 "status": "success",
                 "source": {
                     "column_name": column_name,
-                    "table_name": resolved_table,
-                    "schema_name": resolved_schema,
+                    "table_name": resolved.table,
+                    "schema_name": resolved.schema,
                     "data_type": source_data_type,
                 },
                 "candidates": [c.to_dict() for c in fk_result.candidates],
@@ -526,20 +485,6 @@ async def find_fk_candidates(
             }
 
     try:
-        result = await asyncio.to_thread(_sync_work)
-        return encode_response(result)
-    except ValueError as e:
-        return encode_response({
-            "status": "error",
-            "error_message": str(e),
-        })
+        return encode_response(await asyncio.to_thread(_sync_work))
     except Exception as e:
-        if isinstance(e, SQLAlchemyError):
-            _cat, guidance = _classify_db_error(e)
-            error_msg = f"{guidance} ({e})"
-        else:
-            error_msg = format_unexpected_error(e, include_type=False)
-        return encode_response({
-            "status": "error",
-            "error_message": error_msg,
-        })
+        return _analysis_error_response(e)
