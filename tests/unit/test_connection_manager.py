@@ -123,6 +123,32 @@ class TestConnectWithUrl:
         # create_engine only called once (reuse)
         assert dialect.create_engine.call_count == 1
 
+    def test_connect_with_url_resolves_env_vars_in_url(self, monkeypatch):
+        """connect_with_url resolves ${VAR} placeholders before parsing/engine creation."""
+        monkeypatch.setenv("TEST_TOKEN", "resolved_secret")
+        dialect, _ = self._make_mock_dialect()
+        manager = ConnectionManager()
+
+        manager.connect_with_url(
+            sqlalchemy_url="postgresql://user:${TEST_TOKEN}@myhost/mydb",
+            dialect=dialect,
+        )
+
+        call_kwargs = dialect.create_engine.call_args.kwargs
+        assert "${TEST_TOKEN}" not in call_kwargs["sqlalchemy_url"]
+        assert "resolved_secret" in call_kwargs["sqlalchemy_url"]
+
+    def test_connect_with_url_unset_env_var_raises(self):
+        """connect_with_url raises ValueError when ${VAR} is unset (resolve_env_vars contract)."""
+        dialect, _ = self._make_mock_dialect()
+        manager = ConnectionManager()
+
+        with pytest.raises(ValueError, match="DBMCP_DEFINITELY_UNSET"):
+            manager.connect_with_url(
+                sqlalchemy_url="postgresql://u:${DBMCP_DEFINITELY_UNSET}@h/d",
+                dialect=dialect,
+            )
+
     def test_connect_with_url_hides_password_on_error(self):
         """connect_with_url uses render_as_string(hide_password=True) in error messages."""
         dialect = MagicMock()

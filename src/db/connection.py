@@ -343,6 +343,9 @@ class ConnectionManager:
         Raises:
             ConnectionError: If connection fails.
         """
+        from src.config import resolve_env_vars
+
+        sqlalchemy_url = resolve_env_vars(sqlalchemy_url) if sqlalchemy_url else ""
         parsed_url = make_url(sqlalchemy_url)
         connection_id = self._generate_url_connection_id(sqlalchemy_url)
 
@@ -358,6 +361,22 @@ class ConnectionManager:
             )
         except ConnectionError:
             raise
+        except ValueError as ve:
+            # IDENT-01: route Databricks catalog-required ValueError through
+            # the enrichment helper. Non-Databricks ValueErrors propagate as-is.
+            from src.db.dialects.databricks import DatabricksDialect
+
+            if isinstance(dialect, DatabricksDialect):
+                db_kwargs = dialect._kwargs_from_url(sqlalchemy_url, {})
+                self._require_databricks_catalog(
+                    dialect,
+                    host=db_kwargs.get("host", ""),
+                    http_path=db_kwargs.get("http_path", ""),
+                    token=db_kwargs.get("token", ""),
+                    schema=db_kwargs.get("schema", "default"),
+                    orig_value_error=ve,
+                )
+            raise  # non-Databricks ValueError or unreachable after helper
         except SQLAlchemyError as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
             safe_url = parsed_url.render_as_string(hide_password=True)
@@ -484,6 +503,68 @@ class ConnectionManager:
         url = resolve_env_vars(config.sqlalchemy_url) if config.sqlalchemy_url else ""
         return self.connect_with_url(url, dialect, query_timeout)
 
+    def _require_databricks_catalog(
+        self,
+        dialect,
+        *,
+        host: str,
+        http_path: str,
+        token: str,
+        schema: str,
+        orig_value_error: ValueError,
+        ca_bundle: str = "",
+    ) -> None:
+        """Raise ConnectionError enriched with accessible-catalog list.
+
+        Called when ``DatabricksDialect.create_engine`` raised ``ValueError``
+        because the catalog was missing/empty. Builds a probe engine with a
+        placeholder catalog (``"system"`` — typically present on Databricks
+        UC workspaces), runs ``SHOW CATALOGS`` via ``dialect.list_catalogs``,
+        composes the IDENT-01/D-05 message, and raises ``ConnectionError`` with
+        the original ``ValueError`` chained via ``__cause__``.
+
+        Always raises; never returns. ``-> None`` (rather than ``NoReturn``)
+        keeps the signature simple for callers that follow with a defensive
+        ``raise``.
+        """
+        hint = "Pass one via ?catalog= in the URL or catalog= in the config."
+        probe_engine = None
+        try:
+            probe_engine = dialect.create_engine(
+                host=host,
+                http_path=http_path,
+                token=token,
+                catalog="system",
+                schema=schema or "default",
+                ca_bundle=ca_bundle,
+            )
+            catalogs = dialect.list_catalogs(probe_engine)
+        except SQLAlchemyError as probe_exc:
+            raise ConnectionError(
+                f"Databricks connection requires a catalog, and SHOW CATALOGS "
+                f"failed ({type(probe_exc).__name__}: {probe_exc}). {hint}"
+            ) from orig_value_error
+        except Exception as probe_exc:
+            raise ConnectionError(
+                f"Databricks connection requires a catalog, and probing "
+                f"SHOW CATALOGS failed ({type(probe_exc).__name__}: {probe_exc}). "
+                f"{hint}"
+            ) from orig_value_error
+        finally:
+            if probe_engine is not None:
+                try:
+                    probe_engine.dispose()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    pass
+
+        truncated = catalogs[:20]
+        suffix = f" (and {len(catalogs) - 20} more)" if len(catalogs) > 20 else ""
+        listing = ", ".join(truncated) if truncated else "(none)"
+        raise ConnectionError(
+            f"Databricks connection requires a catalog. "
+            f"Accessible catalogs: {listing}{suffix}. {hint}"
+        ) from orig_value_error
+
     def _connect_databricks_from_config(
         self,
         config,
@@ -496,8 +577,14 @@ class ConnectionManager:
         host = resolve_env_vars(config.host) if config.host else ""
         http_path = resolve_env_vars(config.http_path) if config.http_path else ""
         token = resolve_env_vars(config.token) if config.token else ""
-        catalog = resolve_env_vars(config.catalog) if config.catalog else "main"
+        catalog = resolve_env_vars(config.catalog) if config.catalog else ""
         schema = resolve_env_vars(config.schema_name) if config.schema_name else "default"
+        # 260528-gsk: ca_bundle for corp-MITM TLS gateways. Resolve ${VAR} here;
+        # tilde expansion happens in the dialect to keep symmetry with URL mode.
+        # DBMCP_CA_BUNDLE env fallback is applied inside dialect.create_engine
+        # (so URL-mode also benefits without duplicating logic here).
+        ca_bundle_raw = getattr(config, "ca_bundle", "") or ""
+        ca_bundle = resolve_env_vars(ca_bundle_raw) if ca_bundle_raw else ""
 
         # Build a canonical URL only for connection_id derivation + reuse
         # check. The dialect does NOT receive this URL — it takes the
@@ -523,7 +610,21 @@ class ConnectionManager:
                 token=token,
                 catalog=catalog,
                 schema=schema,
+                ca_bundle=ca_bundle,
             )
+        except ValueError as ve:
+            # IDENT-01: dialect-level catalog-required validation. Enrich with
+            # the accessible-catalog listing so users learn what's available.
+            self._require_databricks_catalog(
+                dialect,
+                host=host,
+                http_path=http_path,
+                token=token,
+                schema=schema,
+                orig_value_error=ve,
+                ca_bundle=ca_bundle,
+            )
+            raise  # unreachable — helper always raises
         except SQLAlchemyError as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
             logger.error(
@@ -548,10 +649,21 @@ class ConnectionManager:
     def _generate_url_connection_id(self, sqlalchemy_url: str) -> str:
         """Generate a deterministic connection ID from a SQLAlchemy URL.
 
-        Credentials are excluded by hashing only host+database+driver.
+        Credentials are excluded — SQLAlchemy ``URL.query`` contains only
+        non-credential params (username/password live on ``URL.username``/
+        ``URL.password``). Sorted query params participate in the key so
+        dialects that put dialect-significant params in the query string
+        (Databricks ``?catalog=``, ``?http_path=``) get distinct pool entries
+        per value (Phase 14 D).
         """
         parsed = make_url(sqlalchemy_url)
-        safe_key = f"{parsed.get_backend_name()}://{parsed.host or ''}:{parsed.port or 0}/{parsed.database or ''}"
+        sorted_query = "&".join(f"{k}={v}" for k, v in sorted(parsed.query.items()))
+        safe_key = (
+            f"{parsed.get_backend_name()}://"
+            f"{parsed.host or ''}:{parsed.port or 0}"
+            f"/{parsed.database or ''}"
+            f"?{sorted_query}"
+        )
         return hashlib.sha256(safe_key.encode()).hexdigest()[:CONNECTION_ID_LENGTH]
 
     def _test_connection(

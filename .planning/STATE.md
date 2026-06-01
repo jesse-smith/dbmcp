@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: Defining requirements
-stopped_at: Phase 14 context gathered
-last_updated: "2026-05-11T20:50:13.412Z"
-last_activity: 2026-05-08 — Milestone v2.1 started
+status: Awaiting next milestone
+stopped_at: Phase 15 context gathered
+last_updated: "2026-06-01T00:49:28.645Z"
+last_activity: 2026-06-01 — Milestone v2.1 completed and archived
 progress:
-  total_phases: 2
-  completed_phases: 0
-  total_plans: 4
-  completed_plans: 0
-  percent: 0
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 16
+  completed_plans: 16
+  percent: 100
 ---
 
 # Project State
@@ -21,20 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 **Core value:** LLM agents can explore and query databases safely, with validated read-only access, dialect-aware metadata, and clear error reporting.
-**Current focus:** v2.0 shipped — next milestone not yet scoped. Use `/gsd-new-milestone` to begin.
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Milestone v2.1 complete
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-08 — Milestone v2.1 started
+Status: Awaiting next milestone
+Last activity: 2026-06-01 — Milestone v2.1 completed and archived
+
+## Deferred Items
+
+Items acknowledged and deferred at v2.1 milestone close on 2026-05-31:
+
+| Category | Item | Status |
+|----------|------|--------|
+| todo (testing) | add-databricks-integration-tests | open — residual connect_with_config regression tests (follow-up from quick task 260505-mr3) |
+| todo (database) | unify-3-part-identifier-handling | likely stale — superseded by Phases 15/15.1; review before next milestone |
+| todo (database, low) | cross-dialect-ca-bundle-support | open — future trigger (promote ca_bundle to dialect-protocol level when a 2nd dialect hits a corp-MITM gateway) |
+| todo (database) | url-mode-probe-engine-inherit-ca-bundle | open — matches audit WARNING (IDENT-01 degraded error on structurally invalid Databricks URL) |
+| todo (analysis, low) | phase-15.1-code-review-followups | open — 7 non-blocking robustness/clarity/dedup findings (WR-01/02/05, IN-01-04); already in audit tech_debt |
+
+The two substantive items (url-mode-probe ca_bundle, phase-15.1 follow-ups) are documented as accepted tech debt in `.planning/milestones/v2.1-MILESTONE-AUDIT.md` (status: passed).
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 36 (v1.0: 5, v1.1: 11)
+- Total plans completed: 52 (v1.0: 5, v1.1: 11)
 - Average duration: ~4 min (v1.1 measured)
 - Total execution time: ~1.5 hours (v1.1 measured)
 
@@ -54,6 +68,9 @@ Last activity: 2026-05-08 — Milestone v2.1 started
 | 12 | 2 | - | - |
 | 13 | 4 | - | - |
 | 13.1 | 4 | - | - |
+| 14 | 4 | - | - |
+| 15 | 6 | - | - |
+| 15.1 | 6 | - | - |
 
 *Updated after each plan completion*
 | Phase 12 P01 | 13min | 3 tasks | 9 files |
@@ -68,6 +85,7 @@ Last activity: 2026-05-08 — Milestone v2.1 started
 ### Roadmap Evolution
 
 - Phase 13.1 inserted after Phase 13 (URGENT) — Close v2.0 gap: thread dialect through schema_tools/query_tools entry points (WIRING-01, WIRING-02); fix WIRING-03; fix VALID-01 and VALID-02 issues
+- Phase 15.1 inserted after Phase 15: Cross-catalog metadata threading (CR-02 / DISC-01) — thread resolved.catalog through Inspector + ColumnStatsCollector (URGENT)
 
 ### Decisions
 
@@ -87,6 +105,8 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 
 - [testing] Add Databricks integration tests for env-var substitution and error wrapping (`.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`)
 - [database] Unify 3-part identifier handling and require Databricks catalog (`.planning/todos/pending/2026-05-08-unify-3-part-identifier-handling-and-require-databricks-cata.md`)
+- [database] Cross-dialect ca_bundle support (Option 3) (`.planning/todos/pending/2026-05-28-cross-dialect-ca-bundle-support.md`)
+- [database] URL-mode probe engine should inherit ca_bundle for IDENT-01 enrichment (`.planning/todos/pending/2026-05-28-url-mode-probe-engine-inherit-ca-bundle-for-ident-01-enrichm.md`)
 
 ### Blockers/Concerns
 
@@ -108,16 +128,28 @@ All v1.1 decisions archived to milestones/v1.1-ROADMAP.md.
 | 260505-mr3 | Audit Databricks test coverage — verdict: not a blocker; follow-up todo filed for integration tests | 2026-05-05 | (audit-only, no code) | [260505-mr3-audit-test-coverage-for-databricks-conne](./quick/260505-mr3-audit-test-coverage-for-databricks-conne/) |
 | 260505-mxi | Drop "Unexpected error:" prefix on ImportError/ModuleNotFoundError in MCP tools | 2026-05-05 | 0859b53,02df7e0,4afd68f | [260505-mxi-drop-unexpected-error-prefix-on-importer](./quick/260505-mxi-drop-unexpected-error-prefix-on-importer/) |
 | 260505-o1k | Fix MSSQL driver override — URL-supplied driver query param wins over dialect default | 2026-05-05 | 40358bc,bcc3360 | [260505-o1k-fix-mssql-driver-override-url-supplied-d](./quick/260505-o1k-fix-mssql-driver-override-url-supplied-d/) |
+| 260528-qcp | Fix Phase 15 SC3 blocker: get_sample_data builds corrupt SQL when resolved schema is None | 2026-05-28 | 8263dc0,b303326 | [260528-qcp-fix-phase-15-sc3-blocker-get-sample-data](./quick/260528-qcp-fix-phase-15-sc3-blocker-get-sample-data/) |
 | 260505-o6n | Fix DatabricksDialect URL parsing (parse sqlalchemy_url via make_url — mirrors MSSQL fix) | 2026-05-05 | b50268f,10e56a6 | [260505-o6n-fix-databricksdialect-url-parsing-parse-](./quick/260505-o6n-fix-databricksdialect-url-parsing-parse-/) |
+| 260528-tmy | Fix open threats T-15-08/T-15-12: wire D-07 catalog gate into list_schemas + add boundary tests | 2026-05-29 | c9252df,ed1c0e6 | [260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0](./quick/260528-tmy-fix-open-threats-t-15-08-t-15-12-add-d-0/) |
 | 260505-own | Apply connect_timeout default (30s) + retry cap (2) to DatabricksDialect — fail-fast on bad hosts | 2026-05-05 | 7b69fb9,ca7e115 | [260505-own-apply-connect-timeout-default-retry-cap-](./quick/260505-own-apply-connect-timeout-default-retry-cap-/) |
 | 260506-n8s | Fix dialect-blind SQL generation in QueryService sample-query methods | 2026-05-06 | 888ff20,3d75e42,e4b0d52 | [260506-n8s-fix-dialect-blind-sql-generation-in-quer](./quick/260506-n8s-fix-dialect-blind-sql-generation-in-quer/) |
+| 260528-v61 | v2.1 tech-debt cleanup: E402/ruff lint fixes + dialect-aware FK target_schema fallback (WR-05) | 2026-05-29 | 46500e2,6181e64,3e23bd0 | [260528-v61-v2-1-tech-debt-cleanup-lint-fixes-and-di](./quick/260528-v61-v2-1-tech-debt-cleanup-lint-fixes-and-di/) |
 | 260507-e8m | Fix all 8 complexity violations flagged by CI complexipy gate | 2026-05-07 | f026ca0,2e7b1b9,a3117be,7fc0531,2e1559e,de8e433,be992eb,6bbc680,76bc6c1 | [260507-e8m-fix-all-8-complexity-violations](./quick/260507-e8m-fix-all-8-complexity-violations/) |
 | 260507-h6j | Move all optional extras to hard dependencies | 2026-05-07 | 4548866 | [260507-h6j-move-all-optional-extras-to-hard-depende](./quick/260507-h6j-move-all-optional-extras-to-hard-depende/) |
+| 260515-m30 | Draft C/D fixes — Databricks connection_id collision across catalogs | 2026-05-15 | bc2244f | [260515-m30-draft-c-d-fixes](./quick/260515-m30-draft-c-d-fixes/) |
+| 260528-fks | Fix Defect A — Databricks catalog defaults bypass IDENT-01 | 2026-05-28 | 72f26f8 | [260528-fks-fix-defect-a-databricks-catalog-defaults](./quick/260528-fks-fix-defect-a-databricks-catalog-defaults/) |
+| 260528-gsk | Add Databricks ca_bundle config + DBMCP_CA_BUNDLE env-var fallback for corp MITM gateways | 2026-05-28 | 269a6da | [260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca](./quick/260528-gsk-add-databricks-ca-bundle-config-dbmcp-ca/) |
+| fast (2026-05-28) | Resolve `${VAR}` in `sqlalchemy_url` for URL-mode connect (closes URL-mode env-var gap from 260515-m30 Probe 3) | 2026-05-28 | 43fed65 | (inline /gsd:fast — no directory) |
+| 260529-jwa | Fix WR-03 — reflect real cross-catalog nullability from information_schema.columns so find_fk_candidates & find_pk_candidates agree; probe stays sole structural PK gate | 2026-05-29 | 67245ba,0bcb466 | [260529-jwa-fix-wr-03](./quick/260529-jwa-fix-wr-03/) |
 
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 14 context gathered
+Stopped at: Phase 15 context gathered
 Resume file: --resume-file
 
-**Planned Phase:** 14 (connect-time-hardening-databricks) — 4 plans — 2026-05-11T20:50:13.408Z
+**Planned Phase:** 15 (Unified identifier resolver (cross-dialect)) — 6 plans — 2026-05-28T21:38:16.587Z
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

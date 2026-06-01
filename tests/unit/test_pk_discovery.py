@@ -7,6 +7,7 @@ structural candidate analysis, and type filtering.
 from unittest.mock import MagicMock
 
 import pytest
+import sqlglot
 
 from src.analysis.pk_discovery import DEFAULT_PK_TYPE_FILTER, PKDiscovery
 
@@ -672,3 +673,297 @@ class TestDialectBackwardCompat:
         candidates = discovery.get_constraint_candidates(type_filter=DEFAULT_PK_TYPE_FILTER)
 
         assert candidates[0].constraint_enforced is None
+
+
+# ---------------------------------------------------------------------------
+# Cross-catalog PK discovery (IDENT-08, CR-02)
+# ---------------------------------------------------------------------------
+
+class _CatalogDiscriminatingConnection:
+    """Fake connection whose constraint/column reads only return rows when the
+    executed SQL carries the requested catalog in its 3-part name.
+
+    Models the CR-02 silent mis-targeting: a query that omits the catalog (or
+    targets the connection's default catalog) is a false negative -- it returns
+    no rows -- whereas a query qualified to the requested catalog returns the
+    real metadata. Also asserts no ``USE CATALOG`` is ever emitted (the
+    cross-catalog path must be stateless, T-15.1-04).
+    """
+
+    def __init__(self, expected_catalog: str, schema: str, table: str):
+        self.expected_catalog = expected_catalog
+        self.schema = schema
+        self.table = table
+        self.executed_sql: list[str] = []
+
+    def _carries_catalog(self, sql: str) -> bool:
+        # Match the catalog segment regardless of backtick/bracket/bare quoting.
+        return self.expected_catalog in sql
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.executed_sql.append(sql)
+
+        # Stateless invariant: never mutate the session's active catalog.
+        assert "USE CATALOG" not in sql.upper(), (
+            f"cross-catalog path must not emit USE CATALOG; got: {sql}"
+        )
+
+        targets_catalog = self._carries_catalog(sql)
+        upper = sql.upper()
+
+        # PK / constraint reads (information_schema.table_constraints or
+        # key_column_usage). Return a PK row only when catalog-qualified.
+        if "TABLE_CONSTRAINTS" in upper or "KEY_COLUMN_USAGE" in upper:
+            rows = (
+                [("order_id", "int", "PRIMARY KEY")] if targets_catalog else []
+            )
+            return _mock_result(rows)
+
+        # Nullability reflection (information_schema.columns, NOT constraints).
+        # Reflects the table's columns with their declared is_nullable.
+        if "INFORMATION_SCHEMA" in upper and ".COLUMNS" in upper:
+            rows = (
+                [("order_id", "NO"), ("patient_id", "YES")]
+                if targets_catalog
+                else []
+            )
+            return _mock_result(rows)
+
+        # Anything else (uniqueness probes, DESCRIBE, etc.): no rows.
+        return _mock_result([])
+
+
+def _make_databricks_dialect():
+    """Minimal Databricks dialect stub (name + backtick quoting + transpile)."""
+    dialect = MagicMock()
+    type(dialect).name = type("P", (), {"__get__": lambda *_: "databricks"})()
+    return dialect
+
+
+class TestCrossCatalogPK:
+    """PKDiscovery threads an explicit catalog into its metadata reads."""
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_pk_targets_requested_catalog(self, dialect):
+        """With catalog set, constraint reads target that catalog (rows returned).
+
+        Without the catalog the same fake returns [] -- the CR-02 false negative.
+        """
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+            catalog="cerner_src",
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        # Catalog reached the SQL -> the discriminating fake returned the PK row.
+        assert len(candidates) >= 1
+        assert any(c.column_name == "order_id" for c in candidates)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_without_catalog_is_false_negative(self, dialect):
+        """Same fake, no catalog -> no rows (proves the fake discriminates)."""
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        # No catalog: Inspector path is used, which does not query the fake's
+        # information_schema, so the PK row is never surfaced.
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        assert candidates == []
+
+    @pytest.mark.dialects('databricks')
+    def test_qualified_table_three_part(self, dialect):
+        """_qualified_table is 3-part TSQL brackets, transpiling to backticks."""
+        discovery = PKDiscovery(
+            MagicMock(), "sch", "tbl",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cat",
+        )
+
+        assert discovery._qualified_table == "[cat].[sch].[tbl]"
+
+        transpiled = sqlglot.transpile(
+            f"SELECT * FROM {discovery._qualified_table}",
+            read="tsql", write="databricks",
+        )[0]
+        assert "`cat`.`sch`.`tbl`" in transpiled
+
+    @pytest.mark.dialects('databricks')
+    def test_no_use_catalog(self, dialect):
+        """No USE CATALOG is emitted on the cross-catalog branch."""
+        inspector = _mock_inspector_for_pk(columns=[])
+        conn = _CatalogDiscriminatingConnection("cerner_src", "dbo", "orders")
+
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=inspector,
+            catalog="cerner_src",
+        )
+        # The fake asserts internally, but assert explicitly too for clarity.
+        discovery.get_constraint_candidates(type_filter=[])
+
+        for sql in conn.executed_sql:
+            assert "USE CATALOG" not in sql.upper()
+
+    @pytest.mark.dialects('databricks')
+    def test_default_path_unchanged(self, dialect):
+        """catalog=None still routes through the Inspector (no reflector use)."""
+        inspector = _mock_inspector_for_pk(
+            pk_columns=["id"],
+            columns=[
+                {"name": "id", "type": MagicMock(__str__=lambda s: "BIGINT"), "nullable": False},
+            ],
+        )
+        conn = MagicMock()
+
+        discovery = PKDiscovery(
+            conn, "main", "products",
+            dialect=dialect.dialect, inspector=inspector,
+        )
+        candidates = discovery.get_constraint_candidates(type_filter=[])
+
+        # Inspector still consulted for columns + PK constraint.
+        inspector.get_columns.assert_called()
+        inspector.get_pk_constraint.assert_called()
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "id"
+
+
+# ---------------------------------------------------------------------------
+# WR-03: reflect-and-report nullability + probe-only structural gate
+# ---------------------------------------------------------------------------
+
+
+class _WR03ReflectingConnection:
+    """Cross-catalog fake: DESCRIBE returns columns, information_schema.columns
+    returns declared nullability, and the uniqueness probe reports the column
+    unique. Lets us assert the probe-only structural gate on a declared-nullable
+    column (the all-nullable-table regression guard)."""
+
+    def __init__(self, columns, nullability, unique=True):
+        # columns: list[(name, data_type)]; nullability: {name: "YES"/"NO"}
+        self.columns = columns
+        self.nullability = nullability
+        self.unique = unique
+        self.executed_sql: list[str] = []
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.executed_sql.append(sql)
+        assert "USE CATALOG" not in sql.upper()
+        upper = sql.upper()
+
+        if "DESCRIBE TABLE" in upper:
+            return _mock_result(self.columns)
+        if "INFORMATION_SCHEMA" in upper and ".COLUMNS" in upper:
+            return _mock_result(
+                [(name, self.nullability[name]) for name, _ in self.columns]
+            )
+        if "COUNT(DISTINCT" in upper or "COUNT (DISTINCT" in upper:
+            # (distinct_count, total_non_null): unique iff equal and > 0.
+            return _mock_result([(5, 5)] if self.unique else [(3, 5)])
+        return _mock_result([])
+
+
+class TestWR03NullabilityReflection:
+    """PK reflection layer reports reflected nullability; the structural gate
+    remains probe-only on the cross-catalog branch (WR-03)."""
+
+    @pytest.mark.dialects("databricks")
+    def test_list_all_columns_reports_reflected_nullability(self, dialect):
+        """_list_all_columns returns the REFLECTED is_nullable, not a fabricated
+        constant: declared YES -> True, declared NO -> False."""
+        conn = _WR03ReflectingConnection(
+            columns=[("order_id", "int"), ("patient_id", "int")],
+            nullability={"order_id": "NO", "patient_id": "YES"},
+        )
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+
+        rows = discovery._list_all_columns()
+
+        by_name = {name: nullable for name, _dt, nullable in rows}
+        assert by_name == {"order_id": False, "patient_id": True}
+
+    @pytest.mark.dialects("databricks")
+    def test_declared_nullable_probe_unique_still_structural_candidate(self, dialect):
+        """REGRESSION GUARD: a column declared is_nullable=YES whose uniqueness
+        probe returns True STILL surfaces as a structural PK candidate with
+        is_non_null=True (declared nullability must NOT reach the gate)."""
+        conn = _WR03ReflectingConnection(
+            columns=[("patient_id", "int")],
+            nullability={"patient_id": "YES"},  # declared nullable
+            unique=True,                          # but empirically unique
+        )
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+
+        candidates = discovery.get_structural_candidates(
+            type_filter=[], exclude_columns=set()
+        )
+
+        assert len(candidates) == 1
+        assert candidates[0].column_name == "patient_id"
+        assert candidates[0].is_non_null is True
+        assert candidates[0].is_constraint_backed is False
+
+    @pytest.mark.dialects("databricks")
+    def test_declared_nullable_probe_nonunique_excluded(self, dialect):
+        """A declared-nullable column that is NOT unique is excluded by the
+        probe (the probe is the sole structural gate)."""
+        conn = _WR03ReflectingConnection(
+            columns=[("patient_id", "int")],
+            nullability={"patient_id": "YES"},
+            unique=False,  # probe fails -> not a structural candidate
+        )
+        discovery = PKDiscovery(
+            conn, "dbo", "orders",
+            dialect=dialect.dialect, inspector=MagicMock(),
+            catalog="cerner_src",
+        )
+
+        candidates = discovery.get_structural_candidates(
+            type_filter=[], exclude_columns=set()
+        )
+
+        assert candidates == []
+
+
+class TestWR03StructuralGateDefaultPathUnchanged:
+    """The Inspector / default-catalog structural gate still excludes columns
+    declared nullable (no behavioral change off the cross-catalog branch)."""
+
+    def test_inspector_nullable_column_excluded(self):
+        """catalog=None Inspector path: a nullable column is excluded from
+        structural candidacy exactly as before."""
+        inspector = MagicMock()
+        inspector.get_columns.return_value = [
+            {"name": "maybe", "type": MagicMock(__str__=lambda s: "int"),
+             "nullable": True},
+        ]
+        conn = MagicMock()
+        # Uniqueness probe would say unique, but the nullable gate excludes first.
+        conn.execute.return_value = _mock_result([(5, 5)])
+
+        discovery = PKDiscovery(conn, "dbo", "orders", inspector=inspector)
+
+        candidates = discovery.get_structural_candidates(
+            type_filter=[], exclude_columns=set()
+        )
+
+        assert candidates == []

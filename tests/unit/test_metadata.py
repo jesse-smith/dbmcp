@@ -692,8 +692,14 @@ class TestCatalogListSchemas:
         assert schemas[0].table_count == 0
         assert schemas[0].view_count == 0
 
-    def test_list_schemas_no_catalog_falls_back_to_show_catalogs(self, test_engine):
-        """If the engine-default catalog is unavailable, list available catalogs."""
+    def test_list_schemas_propagates_sqlalchemy_error_no_catalog_fallback(self, test_engine):
+        """Post-IDENT-02: no SHOW CATALOGS fallback; SQLAlchemyError propagates loudly.
+
+        Before this plan, list_schemas silently fell back to SHOW CATALOGS when the
+        engine-bound catalog was inaccessible — that returned catalog names labeled
+        as "schemas", a silent data-corruption class. Now the error propagates, mirroring
+        MSSQL/generic branches.
+        """
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
@@ -701,7 +707,10 @@ class TestCatalogListSchemas:
         catalogs_result.fetchall.return_value = [("bmtct",), ("other_catalog",)]
 
         mock_conn = MagicMock()
-        # First: SHOW SCHEMAS IN `main` raises; then SHOW CATALOGS returns list.
+        # First call (SHOW SCHEMAS IN `main`) raises. The pre-IDENT-02 code would
+        # catch this and call SHOW CATALOGS next; we wire that up so the *old*
+        # code path would silently succeed. The new (post-IDENT-02) contract is
+        # that the SQLAlchemyError propagates instead — no second call is made.
         mock_conn.execute.side_effect = [
             SQLAlchemyError("NO_SUCH_CATALOG_EXCEPTION"),
             catalogs_result,
@@ -716,10 +725,8 @@ class TestCatalogListSchemas:
             patch.object(service.engine, "connect", return_value=mock_conn),
             patch.object(service.engine, "url", fake_url),
         ):
-            schemas = service.list_schemas(connection_id="test")
-
-        names = {s.schema_name for s in schemas}
-        assert names == {"bmtct", "other_catalog"}
+            with pytest.raises(SQLAlchemyError):
+                service.list_schemas(connection_id="test")
 
     def test_list_schemas_without_catalog_uses_engine_default(self, test_engine):
         """Databricks + no catalog extracts engine URL's catalog and uses SHOW SCHEMAS IN."""
@@ -760,6 +767,56 @@ class TestCatalogListSchemas:
         schemas = service.list_schemas(connection_id="test", catalog="anything")
         assert len(schemas) >= 1
         assert schemas[0].schema_name == "main"
+
+    def test_list_schemas_databricks_does_not_fall_back_to_show_catalogs(self, test_engine):
+        """IDENT-02 (D-15) regression: list_schemas on Databricks must never issue SHOW CATALOGS.
+
+        Pre-Plan-02 the list_schemas Databricks branch caught failures from SHOW SCHEMAS IN
+        and silently fell back to SHOW CATALOGS, returning catalog names labeled as "schemas"
+        — a silent data-corruption class. This test locks the post-Plan-02 contract:
+        every executed statement is recorded, and the assertion is the negative one:
+        no statement string contains "SHOW CATALOGS".
+        """
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        executed_statements: list[str] = []
+
+        def record_execute(stmt, *args, **kwargs):
+            executed_statements.append(str(stmt))
+            result = MagicMock()
+            # Provide a row shape compatible with both _list_schemas_databricks
+            # branches (SHOW SCHEMAS IN -> [(schema_name,)], counts -> []).
+            # Default to schema-name rows; counts query gets the same harmless rows
+            # but they're keyed by row[0] so non-matching names just yield zero counts.
+            if "information_schema" in str(stmt).lower():
+                result.fetchall.return_value = []
+            else:
+                result.fetchall.return_value = [("schema_a",), ("schema_b",)]
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = record_execute
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        fake_url = MagicMock()
+        fake_url.query = {"catalog": "my_cat"}
+
+        with (
+            patch.object(service.engine, "connect", return_value=mock_conn),
+            patch.object(service.engine, "url", fake_url),
+        ):
+            schemas = service.list_schemas(connection_id="test_conn_id")
+
+        # Sanity: returned a list (the negative assertion below is the primary check).
+        assert isinstance(schemas, list)
+
+        # CRITICAL assertion: zero SHOW CATALOGS executions during list_schemas.
+        assert not any("SHOW CATALOGS" in s.upper() for s in executed_statements), (
+            f"IDENT-02 regression: list_schemas issued SHOW CATALOGS. "
+            f"Executed statements: {executed_statements}"
+        )
 
 
 class TestCatalogListTables:
@@ -1102,7 +1159,10 @@ class TestDatabricksTableProperties:
             "location": "dbfs:/user/hive/warehouse/my_table",
             "partition_columns": ["dt"],
         }
-        with patch.object(service, "_parse_databricks_table_properties", return_value=dte_props):
+        with (
+            patch.object(service, "_parse_databricks_table_properties", return_value=dte_props),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
             result = service.get_table_schema("customers", "main")
 
         assert result["owner"] == "user@domain.com"
@@ -1139,7 +1199,10 @@ class TestDatabricksTableProperties:
         dialect = _make_databricks_dialect()
         service = MetadataService(test_engine, dialect=dialect)
 
-        with patch.object(service, "_parse_databricks_table_properties", return_value={}):
+        with (
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
             result = service.get_table_schema("customers", "main")
 
         assert result["table_name"] == "customers"
@@ -1302,8 +1365,11 @@ class TestSharedMetadataBehavior:
             # Databricks get_table_schema additionally calls DESCRIBE EXTENDED —
             # short-circuit it so the shared test stays dialect-agnostic.
             if dialect_inspector.name == "databricks":
-                with patch.object(service, "_parse_databricks_table_properties",
-                                  return_value={}):
+                with (
+                    patch.object(service, "_parse_databricks_table_properties",
+                                 return_value={}),
+                    patch.object(service, "_engine_catalog", return_value="main"),
+                ):
                     result = service.get_table_schema("customers", "main")
             else:
                 result = service.get_table_schema("customers", "main")
@@ -1507,6 +1573,7 @@ class TestGetTableSchemaCrossCatalogColumns:
             patch.object(service, "_parse_databricks_table_properties", return_value={}),
             patch.object(service, "get_indexes", return_value=[]),
             patch.object(service, "get_foreign_keys", return_value=[]),
+            patch.object(service, "_engine_catalog", return_value="main"),
         ):
             service.get_table_schema("customers", "main")  # no catalog kwarg
 
@@ -1541,3 +1608,72 @@ class TestGetTableSchemaCrossCatalogColumns:
         # Only "id" should appear — rows after the "#" section marker are skipped
         assert len(result["columns"]) == 1
         assert result["columns"][0]["column_name"] == "id"
+
+
+# ============================================================================
+# WR-05: dialect-aware FK target_schema fallback (quick-v61)
+# ============================================================================
+
+
+class TestForeignKeyTargetSchemaFallback:
+    """When SQLAlchemy returns referred_schema=None for an FK, get_table_schema
+    must fall back to the *dialect's* default schema, not a hardcoded "dbo".
+
+    MSSQL must still yield "dbo"; Databricks/generic must yield None.
+    Uses REAL dialect instances (not MagicMock helpers) so default_schema is a
+    concrete value rather than a truthy mock.
+    """
+
+    _FK_NULL_SCHEMA = [
+        {
+            "name": "fk1",
+            "constrained_columns": ["other_id"],
+            "referred_schema": None,
+            "referred_table": "other",
+            "referred_columns": ["id"],
+        }
+    ]
+
+    def test_databricks_fk_target_schema_is_none_when_referred_schema_none(self, test_engine):
+        """Databricks (default_schema=None): target_schema stays None, not 'dbo'."""
+        from src.db.dialects.databricks import DatabricksDialect
+
+        service = MetadataService(test_engine, dialect=DatabricksDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+            patch.object(service, "_parse_databricks_table_properties", return_value={}),
+            patch.object(service, "_engine_catalog", return_value="main"),
+        ):
+            result = service.get_table_schema("t", "main", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] is None
+
+    def test_generic_fk_target_schema_is_none_when_referred_schema_none(self, test_engine):
+        """Generic (default_schema=None): target_schema stays None, not 'dbo'."""
+        from src.db.dialects.generic import GenericDialect
+
+        service = MetadataService(test_engine, dialect=GenericDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "main", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] is None
+
+    def test_mssql_fk_target_schema_is_dbo_when_referred_schema_none(self, test_engine):
+        """MSSQL (default_schema='dbo'): target_schema falls back to 'dbo' (regression)."""
+        from src.db.dialects.mssql import MssqlDialect
+
+        service = MetadataService(test_engine, dialect=MssqlDialect())
+
+        with (
+            patch.object(service, "get_foreign_keys", return_value=self._FK_NULL_SCHEMA),
+            patch.object(service, "get_columns", return_value=[]),
+        ):
+            result = service.get_table_schema("t", "dbo", include_relationships=True)
+
+        assert result["foreign_keys"][0]["target_schema"] == "dbo"

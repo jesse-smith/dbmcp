@@ -41,6 +41,33 @@ def _make_engine_spy():
     return engine
 
 
+def _make_engine_spy_with_catalogs(catalog_names: list[str]):
+    """Engine spy where conn.execute(SHOW CATALOGS) returns the given catalog list.
+
+    Also handles the SELECT 1 _test_connection probe so the same spy can serve
+    both the probe engine (built for `dialect.list_catalogs`) and any incidental
+    health-check call paths.
+    """
+    engine = MagicMock(name="ProbeEngine")
+    conn = MagicMock(name="ProbeConn")
+    result_catalogs = MagicMock()
+    result_catalogs.fetchall.return_value = [(n,) for n in catalog_names]
+
+    def execute_side_effect(stmt, *args, **kwargs):
+        s = str(stmt).upper()
+        if "SHOW CATALOGS" in s:
+            return result_catalogs
+        return MagicMock(fetchone=lambda: (1,))
+
+    conn.execute.side_effect = execute_side_effect
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=conn)
+    ctx.__exit__ = MagicMock(return_value=False)
+    engine.connect.return_value = ctx
+    engine.dispose = MagicMock()
+    return engine
+
+
 def test_connect_with_config_resolves_env_vars_and_calls_dialect_with_kwargs(monkeypatch):
     """Databricks config with ${VAR} refs resolves env and calls dialect with real kwargs."""
     monkeypatch.setenv("DATABRICKS_HOST", "dbc-test.cloud.databricks.com")
@@ -73,13 +100,13 @@ def test_connect_with_config_resolves_env_vars_and_calls_dialect_with_kwargs(mon
     manager = ConnectionManager()
     result = manager.connect_with_config(cfg, DatabricksDialect())
 
-    assert captured_kwargs == {
-        "host": "dbc-test.cloud.databricks.com",
-        "http_path": "/sql/1.0/warehouses/abc123",
-        "token": "dapi-secret-xyz",
-        "catalog": "my_catalog",
-        "schema": "my_schema",  # mapped from schema_name
-    }
+    # Bug A/B coverage: identity kwargs flow through; ca_bundle is allowed but
+    # empty here (260528-gsk added it as an additional kwarg, default "").
+    assert captured_kwargs["host"] == "dbc-test.cloud.databricks.com"
+    assert captured_kwargs["http_path"] == "/sql/1.0/warehouses/abc123"
+    assert captured_kwargs["token"] == "dapi-secret-xyz"
+    assert captured_kwargs["catalog"] == "my_catalog"
+    assert captured_kwargs["schema"] == "my_schema"  # mapped from schema_name
     # Lock Bug B: no URL-based call path.
     assert "sqlalchemy_url" not in captured_kwargs
 
@@ -122,3 +149,565 @@ def test_connect_with_config_databricks_signature_matches_dialect(monkeypatch):
     # silently accepting anything, which would make Bug B invisible.
     with pytest.raises(ValueError, match="Missing required parameter"):
         dialect.create_engine(http_path="/x", token="t")
+
+
+# ---------------------------------------------------------------------------
+# IDENT-01 / D-18: catalog-required enrichment in the config path
+# ---------------------------------------------------------------------------
+
+
+class _NeverCalled:
+    """Helper to assert that an attribute access never happens."""
+
+    def __getattr__(self, name):  # pragma: no cover - shouldn't trigger
+        raise AssertionError(f"Should not have been called: {name}")
+
+
+def _patch_no_test_connection(monkeypatch):
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+
+def test_connect_with_config_empty_catalog_raises_enriched_connection_error(monkeypatch):
+    """Empty catalog flows into enriched ConnectionError listing accessible catalogs (IDENT-01)."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="",  # explicit empty — must NOT fall back to "main"
+        schema_name="default",
+    )
+
+    captured_engine_kwargs: list[dict] = []
+
+    def fake_create_engine(self, **kwargs):
+        captured_engine_kwargs.append(dict(kwargs))
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        # probe path: catalog="system"
+        return _make_engine_spy()
+
+    def fake_list_catalogs(self, engine):
+        return ["main", "hive_metastore", "samples", "my_catalog"]
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Databricks connection requires a catalog" in msg
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg and "hive_metastore" in msg
+    # __cause__ chained to the original ValueError from create_engine
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "catalog is required" in str(exc_info.value.__cause__)
+
+    # Probe engine used catalog="system" placeholder
+    probe_calls = [k for k in captured_engine_kwargs if k.get("catalog") == "system"]
+    assert len(probe_calls) == 1, captured_engine_kwargs
+
+
+def test_connect_with_config_none_catalog_raises_enriched_connection_error(monkeypatch):
+    """D-18: None catalog must NOT silently default to 'main' — must enrich-and-raise."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog=None,
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        DatabricksDialect, "list_catalogs",
+        lambda self, engine: ["main", "samples"],
+    )
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Accessible catalogs:" in msg
+
+
+def test_connect_with_config_probe_failure_message_names_both(monkeypatch):
+    """When SHOW CATALOGS itself fails, error names BOTH the missing-catalog requirement
+    AND the SHOW CATALOGS failure (D-06)."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="",
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    def boom_list_catalogs(self, engine):
+        raise SQLAlchemyError("permission denied")
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", boom_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "catalog" in msg
+    assert "SHOW CATALOGS" in msg and "failed" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_connect_with_config_valid_catalog_does_not_invoke_helper(monkeypatch):
+    """Happy-path: valid catalog returns engine; helper is never invoked, list_catalogs not called."""
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+    )
+
+    def fake_create_engine(self, **kwargs):
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    list_catalogs_calls: list[int] = []
+
+    def fake_list_catalogs(self, engine):
+        list_catalogs_calls.append(1)
+        return []
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    result = manager.connect_with_config(cfg, DatabricksDialect())
+
+    assert result.dialect_name == "databricks"
+    assert list_catalogs_calls == []  # helper never touched
+
+
+# ---------------------------------------------------------------------------
+# IDENT-01 / Task 2: catalog-required enrichment in the URL path
+# ---------------------------------------------------------------------------
+
+
+def test_connect_with_url_databricks_missing_catalog_raises_enriched(monkeypatch):
+    """connect_with_url on a catalog-less Databricks URL raises enriched ConnectionError."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    captured: list[dict] = []
+
+    def fake_create_engine(self, **kwargs):
+        captured.append(dict(kwargs))
+        # Reproduce real dialect: parse URL → extract kwargs → catalog=="" → raise
+        if "sqlalchemy_url" in kwargs:
+            url_kwargs = self._kwargs_from_url(kwargs["sqlalchemy_url"], kwargs)
+            kwargs = url_kwargs
+            captured[-1] = dict(kwargs)  # record post-parse kwargs
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        DatabricksDialect, "list_catalogs",
+        lambda self, engine: ["main", "hive_metastore"],
+    )
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    url = "databricks://token:tok@dbc-test.cloud.databricks.com/?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc"
+    with pytest.raises(DBConnectionError) as exc_info:
+        manager.connect_with_url(url, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Databricks connection requires a catalog" in msg
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_connect_with_url_databricks_with_catalog_succeeds(monkeypatch):
+    """Happy path: URL with ?catalog=main returns engine; helper not invoked."""
+
+    list_catalogs_calls: list[int] = []
+
+    def fake_create_engine(self, **kwargs):
+        if "sqlalchemy_url" in kwargs:
+            kwargs = self._kwargs_from_url(kwargs["sqlalchemy_url"], kwargs)
+        if not kwargs.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy()
+
+    def fake_list_catalogs(self, engine):
+        list_catalogs_calls.append(1)
+        return []
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", fake_list_catalogs)
+    _patch_no_test_connection(monkeypatch)
+
+    manager = ConnectionManager()
+    url = (
+        "databricks://token:tok@dbc-test.cloud.databricks.com/"
+        "?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc&catalog=main"
+    )
+    result = manager.connect_with_url(url, DatabricksDialect())
+
+    assert result.dialect_name == "databricks"
+    assert list_catalogs_calls == []
+
+
+def test_connect_with_url_non_databricks_value_error_not_routed_to_helper(monkeypatch):
+    """A ValueError from a non-Databricks dialect must propagate as-is, not enriched."""
+    from src.db.dialects.mssql import MssqlDialect
+
+    def fake_create_engine(self, **kwargs):
+        raise ValueError("some non-catalog problem")
+
+    monkeypatch.setattr(MssqlDialect, "create_engine", fake_create_engine)
+
+    manager = ConnectionManager()
+    with pytest.raises(ValueError, match="some non-catalog problem"):
+        manager.connect_with_url("mssql+pyodbc://u:p@h/db", MssqlDialect())
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 closure tests — IDENT-01 (D-14 a/b/c/d), TEST-01 (D-16), TEST-02 (D-17)
+# These exercise the engine-spy pattern (real list_catalogs path against a
+# probe-engine MagicMock that responds to SHOW CATALOGS). Coverage overlaps
+# Plan 03 tests intentionally — these lock the full end-to-end shape.
+# ---------------------------------------------------------------------------
+
+
+def test_connect_databricks_catalog_required_lists_accessible_catalogs(monkeypatch):
+    """IDENT-01 (D-14 a/b/c): catalog-less config → ConnectionError listing catalogs
+    plus a chained ValueError as __cause__."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+    def spy_create_engine(self, **kw):
+        if not kw.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        # Probe engine: dialect.list_catalogs runs SHOW CATALOGS against this engine.
+        return _make_engine_spy_with_catalogs(["main", "hive_metastore", "samples"])
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+
+    cfg = DatabricksConnectionConfig(
+        host="example.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/x",
+        token="t",
+        catalog="",
+        schema_name="default",
+    )
+    with pytest.raises(DBConnectionError) as exc_info:
+        ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg
+    assert "hive_metastore" in msg
+    assert "samples" in msg
+    # D-14 c: chained cause is a ValueError mentioning catalog.
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "catalog" in str(exc_info.value.__cause__).lower()
+
+
+def test_connect_databricks_catalog_required_surfaces_show_catalogs_failure(monkeypatch):
+    """IDENT-01 (D-14 d): when SHOW CATALOGS itself fails, the outer error names BOTH
+    the missing-catalog requirement AND the probe failure."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+    def spy_create_engine(self, **kw):
+        if not kw.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        # Probe engine returned, but list_catalogs will raise.
+        return _make_engine_spy()
+
+    def spy_list_catalogs(self, engine):
+        raise SQLAlchemyError("boom-probe-failed")
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+    monkeypatch.setattr(DatabricksDialect, "list_catalogs", spy_list_catalogs)
+
+    cfg = DatabricksConnectionConfig(
+        host="example.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/x",
+        token="t",
+        catalog="",
+        schema_name="default",
+    )
+    with pytest.raises(DBConnectionError) as exc_info:
+        ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "catalog" in msg.lower()
+    assert "SHOW CATALOGS failed" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_connect_with_url_databricks_requires_catalog(monkeypatch):
+    """IDENT-01 URL mode: catalog-less databricks:// URL produces same enriched error."""
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+    def spy_create_engine(self, **kw):
+        # Real dialect.create_engine receives sqlalchemy_url= via connect_with_url.
+        # Reproduce the URL-parse step so the catalog absence is detected.
+        if "sqlalchemy_url" in kw:
+            kw = self._kwargs_from_url(kw["sqlalchemy_url"], kw)
+        if not kw.get("catalog"):
+            raise ValueError("Databricks catalog is required")
+        return _make_engine_spy_with_catalogs(["main", "hive_metastore"])
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+
+    url = (
+        "databricks://token:t@example.cloud.databricks.com/"
+        "?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fx"
+    )
+    with pytest.raises(DBConnectionError) as exc_info:
+        ConnectionManager().connect_with_url(url, DatabricksDialect())
+
+    msg = str(exc_info.value)
+    assert "Accessible catalogs:" in msg
+    assert "main" in msg
+    assert "hive_metastore" in msg
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# TEST-01 (D-16): env-var substitution for catalog/schema
+# ---------------------------------------------------------------------------
+
+
+def test_env_var_substitution_for_catalog_and_schema(monkeypatch):
+    """TEST-01 (D-16): ${VAR} placeholders in catalog/schema_name resolve before
+    kwargs reach DatabricksDialect.create_engine. Captured kwargs must hold the
+    resolved values, not the literal ${...} placeholders."""
+    monkeypatch.setenv("DBX_CATALOG", "my_resolved_catalog")
+    monkeypatch.setenv("DBX_SCHEMA", "my_resolved_schema")
+    monkeypatch.setattr(
+        ConnectionManager, "_test_connection",
+        lambda self, engine, start_time, dialect_name: None,
+    )
+
+    captured_kwargs: dict = {}
+
+    def spy_create_engine(self, **kw):
+        captured_kwargs.update(kw)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+
+    cfg = DatabricksConnectionConfig(
+        host="example.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/x",
+        token="t",
+        catalog="${DBX_CATALOG}",
+        schema_name="${DBX_SCHEMA}",
+    )
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    assert captured_kwargs["catalog"] == "my_resolved_catalog"
+    assert captured_kwargs["schema"] == "my_resolved_schema"
+    # Negative: literal ${...} placeholders must NOT survive resolution.
+    assert "${" not in captured_kwargs["catalog"]
+    assert "${" not in captured_kwargs["schema"]
+
+
+# ---------------------------------------------------------------------------
+# TEST-02 (D-17): SQLAlchemyError from create_engine wraps to ConnectionError
+# ---------------------------------------------------------------------------
+
+
+def test_sqlalchemy_error_wrapped_as_connection_error(monkeypatch):
+    """TEST-02 (D-17): SQLAlchemyError from create_engine surfaces as ConnectionError
+    whose message contains the host string."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    def boom(self, **kw):
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", boom)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="t",
+        catalog="main",
+        schema_name="default",
+    )
+    with pytest.raises(DBConnectionError) as exc_info:
+        ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+
+    assert "dbc-test.cloud.databricks.com" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# 260528-gsk: ca_bundle plumbing through named-config route
+# ---------------------------------------------------------------------------
+
+
+def test_named_config_ca_bundle_passed_to_dialect(monkeypatch):
+    """Config-supplied ca_bundle reaches DatabricksDialect.create_engine kwargs."""
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="/cfg/ca.pem",
+    )
+
+    captured: dict = {}
+
+    def spy_create_engine(self, **kwargs):
+        captured.update(kwargs)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured.get("ca_bundle") == "/cfg/ca.pem"
+
+
+def test_named_config_ca_bundle_env_var_resolved(monkeypatch):
+    """${VAR} in ca_bundle resolves via resolve_env_vars before reaching dialect."""
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+    monkeypatch.setenv("TEST_CA_PATH", "/resolved/ca.pem")
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="${TEST_CA_PATH}",
+    )
+
+    captured: dict = {}
+
+    def spy_create_engine(self, **kwargs):
+        captured.update(kwargs)
+        return _make_engine_spy()
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", spy_create_engine)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured.get("ca_bundle") == "/resolved/ca.pem"
+
+
+def test_named_config_no_ca_bundle_passes_empty(monkeypatch):
+    """No config ca_bundle + no env → dialect receives empty/missing, _tls_trusted_ca_file ABSENT.
+
+    Asserts at the connect_args level (one layer past the dialect kwargs) so we
+    cover the full named-config → dialect → connect_args path.
+    """
+    monkeypatch.delenv("DBMCP_CA_BUNDLE", raising=False)
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        # no ca_bundle
+    )
+
+    captured_connect_args: dict = {}
+
+    import src.db.dialects.databricks as dbx_mod
+
+    def fake_sa_create_engine(url, **kw):
+        captured_connect_args.update(kw.get("connect_args") or {})
+        return _make_engine_spy()
+
+    monkeypatch.setattr(dbx_mod, "sa_create_engine", fake_sa_create_engine)
+    monkeypatch.setattr(dbx_mod, "_databricks_import_error", None)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert "_tls_trusted_ca_file" not in captured_connect_args
+
+
+def test_named_config_explicit_beats_env(monkeypatch):
+    """Per-connection ca_bundle wins over DBMCP_CA_BUNDLE env (cfg short-circuits env fallback)."""
+    monkeypatch.setenv("DBMCP_CA_BUNDLE", "/env/ca.pem")
+
+    cfg = DatabricksConnectionConfig(
+        host="dbc-test.cloud.databricks.com",
+        http_path="/sql/1.0/warehouses/abc",
+        token="tok",
+        catalog="my_catalog",
+        schema_name="default",
+        ca_bundle="/cfg/ca.pem",
+    )
+
+    captured_connect_args: dict = {}
+
+    import src.db.dialects.databricks as dbx_mod
+
+    def fake_sa_create_engine(url, **kw):
+        captured_connect_args.update(kw.get("connect_args") or {})
+        return _make_engine_spy()
+
+    monkeypatch.setattr(dbx_mod, "sa_create_engine", fake_sa_create_engine)
+    monkeypatch.setattr(dbx_mod, "_databricks_import_error", None)
+    monkeypatch.setattr(dbx_mod, "_merge_ca_bundle_with_certifi", lambda p: p)
+    _patch_no_test_connection(monkeypatch)
+
+    ConnectionManager().connect_with_config(cfg, DatabricksDialect())
+    assert captured_connect_args.get("_tls_trusted_ca_file") == "/cfg/ca.pem"

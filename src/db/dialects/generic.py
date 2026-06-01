@@ -62,6 +62,16 @@ class GenericDialect:
         return False
 
     @property
+    def default_schema(self) -> str | None:
+        """No default schema; the engine/connection decides."""
+        return None
+
+    @property
+    def max_identifier_depth(self) -> int:
+        """Max dotted identifier parts: table only."""
+        return 1
+
+    @property
     def safe_procedures(self) -> frozenset[str]:
         """No known-safe stored procedures for generic dialects."""
         return frozenset()

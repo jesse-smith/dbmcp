@@ -330,6 +330,81 @@ class TestQueryService:
         assert len(sample.truncated_columns) == 0
 
 
+class TestGetSampleDataCatalogThreading:
+    """Catalog threading into the get_sample_data SQL build (IDENT-05 / SC3).
+
+    The executed query's table reference must become a 3-part backtick-quoted
+    `cat`.`sch`.`tbl` on Databricks when a catalog is supplied, while the
+    2-part (schema.table) and unqualified (no-dialect) paths stay unchanged.
+    """
+
+    def _captured_sql(self, mock_engine) -> str:
+        """Run get_sample_data with one mocked row and return the executed SQL."""
+        mock_result = MagicMock()
+        mock_row = MagicMock()
+        mock_row._mapping = {"id": 1}
+        mock_result.__iter__ = lambda x: iter([mock_row])
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_result
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        return mock_conn
+
+    def test_databricks_catalog_builds_three_part_reference(self, mock_engine):
+        """catalog + schema + table on Databricks -> `cat`.`sch`.`tbl`."""
+        mock_engine.dialect.name = "databricks"
+        mock_conn = self._captured_sql(mock_engine)
+
+        service = QueryService(mock_engine)
+        service.get_sample_data(
+            table_name="tbl",
+            schema_name="sch",
+            catalog="cat",
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "`cat`.`sch`.`tbl`" in executed_sql
+
+    def test_databricks_no_catalog_builds_two_part_reference(self, mock_engine):
+        """catalog=None on Databricks keeps the existing 2-part reference."""
+        mock_engine.dialect.name = "databricks"
+        mock_conn = self._captured_sql(mock_engine)
+
+        service = QueryService(mock_engine)
+        service.get_sample_data(
+            table_name="tbl",
+            schema_name="sch",
+            catalog=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "`sch`.`tbl`" in executed_sql
+        assert "`cat`" not in executed_sql
+
+    def test_no_dialect_catalog_none_builds_unqualified_reference(self, mock_engine):
+        """dialect=None (SQLite/test) with catalog=None stays unqualified."""
+        # mock_engine.dialect.name defaults to a MagicMock; force the no-dialect
+        # path by using a name the registry does not recognize.
+        mock_engine.dialect.name = "sqlite"
+        mock_conn = self._captured_sql(mock_engine)
+
+        service = QueryService(mock_engine)
+        assert service._dialect is None  # sqlite not in registry -> no dialect
+        service.get_sample_data(
+            table_name="tbl",
+            catalog=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "FROM tbl" in executed_sql
+
+
 class TestCTEQueryParsing:
     """Test CTE (Common Table Expression) query parsing and handling."""
 
@@ -971,3 +1046,119 @@ class TestQueryServiceDialectDelegation:
         stub.build_sample_query.assert_called_once_with(
             SamplingMethod.MODULO, "[dbo].[T]", "*", 5
         )
+
+
+class TestSampleDataSchemaDefault:
+    """Tests for the None schema_name default (D-11: no hardcoded 'dbo')."""
+
+    def test_get_sample_data_schema_name_default_is_none(self):
+        """get_sample_data must default schema_name to None, not 'dbo'."""
+        import inspect
+
+        param = inspect.signature(QueryService.get_sample_data).parameters["schema_name"]
+        assert param.default is None
+
+    def test_get_sample_data_none_schema_builds_unqualified_reference(self, mock_engine):
+        """With no dialect and schema_name=None, the table reference is unqualified.
+
+        The ``self._dialect is None`` branch (query.py) emits the bare table name
+        with no schema prefix — the generic/SQLite no-prefix path. The built query
+        must therefore contain the table name without a ``schema.`` qualifier.
+        """
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine)  # no dialect -> _dialect is None
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        # Unqualified reference: no synthetic 'dbo.' (or any schema) prefix.
+        assert "Customers" in captured["sql"]
+        assert "dbo." not in captured["sql"]
+        # table_id reflects the unqualified reference, not 'dbo.Customers'.
+        assert sample.table_id == "Customers"
+
+    def test_get_sample_data_none_schema_real_generic_dialect_unqualified(self, mock_engine):
+        """Real dialect + schema_name=None must build an unqualified reference.
+
+        Regression for the Phase 15 SC3 blocker: when a real dialect has
+        ``default_schema=None`` and ``schema_name`` reaches ``get_sample_data``
+        as ``None``, the ``else`` branch must not pass ``None`` to
+        ``quote_identifier`` — doing so emits a synthetic ``"None"`` schema
+        segment (and raises ``AttributeError`` on dialects that escape via
+        ``str.replace``). The reference must be the bare quoted table only.
+        """
+        from src.db.dialects import GenericDialect
+
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine, dialect=GenericDialect())
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name=None,
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        sql = captured["sql"]
+        # The bare, quoted table reference is present (ANSI double-quote).
+        assert '"Customers"' in sql
+        # No synthetic None schema segment in any form.
+        assert "None." not in sql
+        assert '"None"' not in sql
+        # table_id reflects the unqualified reference.
+        assert sample.table_id == "Customers"
+
+    def test_get_sample_data_mssql_two_part_reference_preserved(self, mock_engine):
+        """MSSQL 2-part schema.table reference is unchanged when schema is given.
+
+        No-regression guard: the schema-present path must still emit the
+        bracketed ``[schema].[table]`` reference after the None-schema fix.
+        """
+        from src.db.dialects import MssqlDialect
+
+        captured = {}
+
+        def fake_execute(stmt):
+            captured["sql"] = str(stmt)
+            result = MagicMock()
+            result.__iter__ = lambda x: iter([])
+            return result
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = fake_execute
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine, dialect=MssqlDialect())
+        sample = service.get_sample_data(
+            table_name="Customers",
+            schema_name="sales",
+            sample_size=5,
+            sampling_method=SamplingMethod.TOP,
+        )
+
+        assert "[sales].[Customers]" in captured["sql"]
+        assert sample.table_id == "sales.Customers"

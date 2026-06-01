@@ -6,6 +6,9 @@ lazy import gating for optional dependencies, and capability flags.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
 from urllib.parse import quote_plus, urlencode
 
 from sqlalchemy import create_engine as sa_create_engine
@@ -16,6 +19,45 @@ from src.logging_config import get_logger
 from src.models.schema import SamplingMethod
 
 logger = get_logger(__name__)
+
+
+def _merge_ca_bundle_with_certifi(ca_bundle_path: str) -> str:
+    """Concatenate a user-supplied CA bundle with certifi's bundle.
+
+    The Databricks SQL connector passes ``_tls_trusted_ca_file`` straight to
+    urllib3's ``ca_certs``, which *replaces* the default trust store rather
+    than augmenting it. Pointing at just a corp gateway CA loses access to
+    standard intermediates (DigiCert, etc.) that the rest of the cert chain
+    needs. We merge the user's bundle with certifi's so both are trusted.
+
+    Cached by content hash in the OS temp dir, so repeated connects reuse
+    the same merged file.
+    """
+    import certifi
+
+    with open(ca_bundle_path, "rb") as f:
+        user_bytes = f.read()
+    with open(certifi.where(), "rb") as f:
+        certifi_bytes = f.read()
+
+    combined = certifi_bytes.rstrip() + b"\n" + user_bytes.rstrip() + b"\n"
+    digest = hashlib.sha256(combined).hexdigest()[:16]
+    merged_path = os.path.join(
+        tempfile.gettempdir(), f"dbmcp-ca-merged-{digest}.pem"
+    )
+    if not os.path.exists(merged_path):
+        # Write atomically: temp file + rename, so concurrent connects don't
+        # see a half-written file.
+        fd, tmp = tempfile.mkstemp(prefix="dbmcp-ca-merged-", suffix=".pem.tmp")
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(combined)
+            os.replace(tmp, merged_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+    return merged_path
 
 try:
     import databricks.sql  # noqa: F401
@@ -60,6 +102,16 @@ class DatabricksDialect:
         return False
 
     @property
+    def default_schema(self) -> str | None:
+        """No default schema; the connection/catalog decides."""
+        return None
+
+    @property
+    def max_identifier_depth(self) -> int:
+        """Max dotted identifier parts: catalog.schema.table."""
+        return 3
+
+    @property
     def safe_procedures(self) -> frozenset[str]:
         """No known-safe stored procedures for Databricks."""
         return frozenset()
@@ -70,8 +122,13 @@ class DatabricksDialect:
         return frozenset({"SHOW", "DESCRIBE", "DESC", "EXPLAIN"})
 
     def quote_identifier(self, identifier: str) -> str:
-        """Quote using Databricks backticks."""
-        return f"`{identifier}`"
+        """Quote using Databricks backticks, escaping embedded backticks.
+
+        A backtick inside the identifier is doubled (`` ` `` -> ``` `` ```), so an
+        untrusted catalog/schema/table/column value cannot break out of the
+        backtick-quoted token (mirrors MSSQL's ``]`` -> ``]]`` escaping).
+        """
+        return f"`{identifier.replace('`', '``')}`"
 
     def build_sample_query(
         self,
@@ -117,7 +174,8 @@ class DatabricksDialect:
             - host       ← url.host (required; ValueError if missing)
             - http_path  ← url.query["http_path"] (required; ValueError if missing)
             - token      ← url.password or "" (username expected literally "token")
-            - catalog    ← url.query.get("catalog", "main")
+            - catalog    ← url.query.get("catalog", "")  (empty when missing — caller must
+                                                            supply or create_engine raises)
             - schema     ← url.database or url.query.get("schema") or "default"
 
         Args:
@@ -146,7 +204,7 @@ class DatabricksDialect:
             )
 
         token = url.password or ""
-        catalog = query.get("catalog", "main")
+        catalog = query.get("catalog", "")
         schema = url.database or query.get("schema") or "default"
 
         preserved_keys = {
@@ -155,6 +213,7 @@ class DatabricksDialect:
             "connection_id",
             "disconnect_callback",
             "connection_timeout",
+            "ca_bundle",
         }
         conflicting = [
             k
@@ -177,6 +236,11 @@ class DatabricksDialect:
             "catalog": catalog,
             "schema": schema,
         })
+        # 260528-gsk: URL ?ca_bundle= wins over original_kwargs ca_bundle
+        # (consistent with the URL-wins policy for other identity fields).
+        url_ca_bundle = query.get("ca_bundle")
+        if url_ca_bundle:
+            new_kwargs["ca_bundle"] = url_ca_bundle
         return new_kwargs
 
     def create_engine(self, **kwargs) -> Engine:
@@ -207,7 +271,8 @@ class DatabricksDialect:
                 host (str): Databricks workspace hostname. (required in kwargs mode)
                 http_path (str): SQL warehouse HTTP path. (required in kwargs mode)
                 token (str): Personal access token or OAuth token. (optional)
-                catalog (str): Unity Catalog name (default "main"). (optional)
+                catalog (str): Unity Catalog name. **Required** — empty/missing/None
+                    raises ValueError("Databricks catalog is required") (IDENT-01).
                 schema (str): Schema name (default "default"). (optional)
 
         Returns:
@@ -236,7 +301,9 @@ class DatabricksDialect:
             raise ValueError(f"Missing required parameter: {e.args[0]}") from e
 
         token: str = kwargs.get("token", "")
-        catalog: str = kwargs.get("catalog", "main")
+        catalog: str = kwargs.get("catalog", "") or ""
+        if not catalog:
+            raise ValueError("Databricks catalog is required")
         schema: str = kwargs.get("schema", "default")
 
         query_params = urlencode({
@@ -253,6 +320,22 @@ class DatabricksDialect:
             "_socket_timeout": connection_timeout,
             "_retry_stop_after_attempts_count": 2,
         }
+        # 260528-gsk: optional custom CA bundle for corp-MITM TLS gateways.
+        # Precedence: kwargs.ca_bundle (set by named-config or URL ?ca_bundle=)
+        # > DBMCP_CA_BUNDLE env > unset (omit key entirely so connector falls
+        # back to its bundled certifi store). Tilde-expanded; ${VAR} resolution
+        # happens upstream in connect_with_config so we don't double-resolve here.
+        ca_bundle = kwargs.get("ca_bundle") or os.environ.get("DBMCP_CA_BUNDLE", "")
+        if ca_bundle:
+            expanded_ca_bundle = os.path.expanduser(ca_bundle)
+            merged_ca_bundle = _merge_ca_bundle_with_certifi(expanded_ca_bundle)
+            dialect_defaults["_tls_trusted_ca_file"] = merged_ca_bundle
+            # T-gsk-05 mitigation: log original CA path so post-incident review
+            # can correlate which trust anchor was added. Path-only, no token.
+            logger.info(
+                "Databricks TLS using custom ca_bundle: %s (merged with certifi)",
+                expanded_ca_bundle,
+            )
         # User-supplied connect_args win on matching keys; defaults fill gaps.
         user_connect_args = kwargs.get("connect_args") or {}
         merged_connect_args = {**dialect_defaults, **user_connect_args}
@@ -263,6 +346,28 @@ class DatabricksDialect:
             echo=False,
             connect_args=merged_connect_args,
         )
+
+    def list_catalogs(self, engine: Engine) -> list[str]:
+        """Return catalog names visible to the connected principal via SHOW CATALOGS.
+
+        Used by the connect-time helper that enriches the catalog-required
+        ValueError raised by ``create_engine`` (IDENT-01) and by future DISC-01
+        tooling. Lets ``SQLAlchemyError`` propagate — callers decide how to wrap.
+
+        Args:
+            engine: A SQLAlchemy Engine already bound to a Databricks workspace.
+                The engine does NOT need to point at a specific catalog;
+                SHOW CATALOGS is workspace-scoped.
+
+        Returns:
+            List of catalog names (the row[0] of each SHOW CATALOGS row), in
+            the order returned by Databricks.
+        """
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("SHOW CATALOGS")).fetchall()
+        return [row[0] for row in rows]
 
     def fast_row_counts(
         self, engine: Engine, schema_name: str | None = None

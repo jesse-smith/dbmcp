@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.analysis.pk_discovery import PKDiscovery
 from src.models.analysis import FKCandidateData, FKCandidateResult
 
@@ -47,6 +51,7 @@ class FKCandidateSearch:
         source_data_type: str,
         dialect: "DialectStrategy | None" = None,
         inspector: "Inspector | None" = None,
+        catalog: "str | None" = None,
     ):
         self.connection = connection
         self.source_schema = source_schema
@@ -55,6 +60,12 @@ class FKCandidateSearch:
         self.source_data_type = source_data_type
         self._dialect = dialect
         self._inspector = inspector
+        self._catalog = catalog
+        # Cross-catalog reads only apply to Databricks with an explicit catalog.
+        # Other dialects reject catalog upstream (resolver), so this stays False.
+        self._cross_catalog = (
+            bool(catalog) and dialect is not None and dialect.name == "databricks"
+        )
 
     def _use_inspector(self) -> bool:
         """Whether to use Inspector-based paths instead of MSSQL SQL."""
@@ -84,6 +95,10 @@ class FKCandidateSearch:
         """
         schema = target_schema or self.source_schema
 
+        if self._cross_catalog:
+            return self._get_target_tables_cross_catalog(
+                schema, target_tables, target_table_pattern
+            )
         if self._use_inspector():
             return self._get_target_tables_inspector(
                 schema, target_tables, target_table_pattern
@@ -177,6 +192,46 @@ class FKCandidateSearch:
 
         return tables
 
+    def _get_target_tables_cross_catalog(
+        self,
+        schema: str,
+        target_tables: list[str] | None,
+        target_table_pattern: str | None,
+    ) -> list[tuple[str, str]]:
+        """Enumerate target tables scoped to the resolved catalog (Pitfall 3).
+
+        Open Q1 (KISS): cross-catalog FK targets are searched within the
+        requested catalog ONLY -- never the connection default catalog. Table
+        names come from a catalog-scoped ``SHOW TABLES IN catalog.schema`` via
+        :class:`CatalogAwareReflector` (stateless; no catalog-switching statement
+        is emitted). Client filtering (explicit list / LIKE pattern) mirrors the
+        Inspector path.
+        """
+        reflector = CatalogAwareReflector(self.connection, self._dialect)
+        all_table_names = reflector.list_tables(self._catalog, schema)
+
+        if target_tables is not None:
+            target_set = set(target_tables)
+            table_names = [t for t in all_table_names if t in target_set]
+        elif target_table_pattern is not None:
+            # Convert SQL LIKE pattern to fnmatch glob pattern.
+            glob_pattern = target_table_pattern.replace("%", "*").replace("_", "?")
+            table_names = [
+                t for t in all_table_names if fnmatch.fnmatch(t, glob_pattern)
+            ]
+        else:
+            table_names = all_table_names
+
+        tables = [(schema, t) for t in sorted(table_names)]
+
+        # Exclude source table.
+        tables = [
+            (s, t) for s, t in tables
+            if not (s == self.source_schema and t == self.source_table)
+        ]
+
+        return tables
+
     def get_candidate_columns(
         self,
         target_schema: str,
@@ -200,6 +255,7 @@ class FKCandidateSearch:
                 table_name=target_table,
                 dialect=self._dialect,
                 inspector=self._inspector,
+                catalog=self._catalog,
             )
             pk_candidates = discovery.find_candidates()
             return [
@@ -209,6 +265,30 @@ class FKCandidateSearch:
                     "is_nullable": not c.is_non_null,
                 }
                 for c in pk_candidates
+            ]
+
+        # All columns: catalog-aware reflector on the cross-catalog branch.
+        if self._cross_catalog:
+            reflector = CatalogAwareReflector(self.connection, self._dialect)
+            columns = reflector.reflect_columns(
+                self._catalog, target_schema, target_table
+            )
+            # DESCRIBE TABLE cannot expose nullability, so reflect the REAL
+            # declared nullability from information_schema.columns and report it
+            # truthfully (WR-03). This is the same source PK _list_all_columns
+            # uses, so both tools agree for any given column. A column absent from
+            # the reflected map falls back to True (defensive, not the primary
+            # path) so a missing entry never silently asserts non-null.
+            nullability = reflector.reflect_column_nullability(
+                self._catalog, target_schema, target_table
+            )
+            return [
+                {
+                    "column_name": c["name"],
+                    "data_type": c["data_type"],
+                    "is_nullable": nullability.get(c["name"], True),
+                }
+                for c in columns
             ]
 
         # All columns: use Inspector for non-MSSQL, INFORMATION_SCHEMA for MSSQL
@@ -266,8 +346,13 @@ class FKCandidateSearch:
             Dict with target_is_primary_key, target_is_unique,
             target_is_nullable, target_has_index.
         """
-        # Constraints: use Inspector for non-MSSQL, INFORMATION_SCHEMA for MSSQL
-        if self._use_inspector():
+        # Constraints: catalog-scoped information_schema on the cross-catalog
+        # branch; Inspector for non-MSSQL; INFORMATION_SCHEMA for MSSQL.
+        if self._cross_catalog:
+            is_primary_key, is_unique = self._get_constraints_cross_catalog(
+                target_schema, target_table, target_column
+            )
+        elif self._use_inspector():
             is_primary_key, is_unique = self._get_constraints_inspector(
                 target_schema, target_table, target_column
             )
@@ -349,6 +434,47 @@ class FKCandidateSearch:
         )
         return is_primary_key, is_unique
 
+    def _get_constraints_cross_catalog(
+        self, schema: str, table: str, column: str
+    ) -> tuple[bool, bool]:
+        """Catalog-scoped PK/UNIQUE check via the requested catalog's
+        ``information_schema`` (cross-catalog Databricks).
+
+        The catalog segment is backtick-quoted via ``dialect.quote_identifier``
+        (identifiers cannot be parameter-bound); schema/table/column are bound
+        parameters. No catalog-switching statement is emitted -- the query is
+        fully qualified and stateless over the pooled connection (T-15.1-07). Mirrors
+        ``PKDiscovery._get_constraint_candidates_cross_catalog``.
+        """
+        qi = self._dialect.quote_identifier
+        info_schema = f"{qi(self._catalog)}.information_schema"
+
+        constraint_query = text(f"""
+            SELECT tc.constraint_type
+            FROM {info_schema}.table_constraints tc
+            JOIN {info_schema}.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+                AND tc.table_name = kcu.table_name
+            WHERE tc.table_schema = :schema_name
+                AND tc.table_name = :table_name
+                AND kcu.column_name = :column_name
+                AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+        """)
+        result = self.connection.execute(
+            constraint_query,
+            {
+                "schema_name": schema,
+                "table_name": table,
+                "column_name": column,
+            },
+        )
+        rows = result.fetchall()
+
+        is_primary_key = any(r[0] == "PRIMARY KEY" for r in rows)
+        is_unique = any(r[0] in ("PRIMARY KEY", "UNIQUE") for r in rows)
+        return is_primary_key, is_unique
+
     def _check_index_mssql(
         self, schema: str, table: str, column: str
     ) -> bool:
@@ -395,14 +521,30 @@ class FKCandidateSearch:
             Dict with overlap_count and overlap_percentage (None if
             source has zero distinct values).
         """
-        source_table = f"[{self.source_schema}].[{self.source_table}]"
-        target_table_q = f"[{target_schema}].[{target_table}]"
+        # On the cross-catalog branch, both source and target references carry
+        # the resolved catalog (3-part TSQL brackets -> `cat`.`sch`.`tbl` after
+        # transpile_query). Never pre-quote with backticks (Pitfall 4); no
+        # catalog-switching statement is emitted -- the names are stateless.
+        q = quote_tsql_identifier
+        if self._catalog:
+            source_table = (
+                f"{q(self._catalog)}.{q(self.source_schema)}.{q(self.source_table)}"
+            )
+            target_table_q = (
+                f"{q(self._catalog)}.{q(target_schema)}.{q(target_table)}"
+            )
+        else:
+            source_table = f"{q(self.source_schema)}.{q(self.source_table)}"
+            target_table_q = f"{q(target_schema)}.{q(target_table)}"
+
+        src_col_q = q(self.source_column)
+        target_col_q = q(target_column)
 
         # Get source distinct count
         src_count_sql = f"""
-            SELECT COUNT(DISTINCT [{self.source_column}])
+            SELECT COUNT(DISTINCT {src_col_q})
             FROM {source_table}
-            WHERE [{self.source_column}] IS NOT NULL
+            WHERE {src_col_q} IS NOT NULL
         """
         src_count_query = text(transpile_query(src_count_sql, self._dialect))
         src_result = self.connection.execute(src_count_query)
@@ -415,11 +557,11 @@ class FKCandidateSearch:
         # Count intersection via INTERSECT
         overlap_sql = f"""
             SELECT COUNT(*) FROM (
-                SELECT [{self.source_column}] FROM {source_table}
-                    WHERE [{self.source_column}] IS NOT NULL
+                SELECT {src_col_q} FROM {source_table}
+                    WHERE {src_col_q} IS NOT NULL
                 INTERSECT
-                SELECT [{target_column}] FROM {target_table_q}
-                    WHERE [{target_column}] IS NOT NULL
+                SELECT {target_col_q} FROM {target_table_q}
+                    WHERE {target_col_q} IS NOT NULL
             ) AS overlap
         """
         overlap_query = text(transpile_query(overlap_sql, self._dialect))

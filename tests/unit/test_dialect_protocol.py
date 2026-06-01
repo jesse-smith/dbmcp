@@ -26,6 +26,14 @@ class _StubDialect:
     def has_fast_row_counts(self) -> bool:
         return False
 
+    @property
+    def default_schema(self) -> str | None:
+        return None
+
+    @property
+    def max_identifier_depth(self) -> int:
+        return 1
+
     def create_engine(self, **kwargs) -> Engine:
         return MagicMock(spec=Engine)
 

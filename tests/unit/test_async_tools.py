@@ -6,7 +6,14 @@ preventing the async event loop from blocking.
 Imports go through src.mcp_server.server to resolve circular imports.
 """
 
-from unittest.mock import patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy.exc import SQLAlchemyError
+
+from src.db.dialects.databricks import DatabricksDialect
+from src.db.dialects.mssql import MssqlDialect
 
 # Import through server to resolve circular imports
 from src.mcp_server.server import (
@@ -119,6 +126,11 @@ class TestQueryToolsAsyncWrapping:
 
         fake_dialect = MagicMock(name="registered_dialect")
         fake_dialect.name = "databricks"
+        # Resolver-compatible dialect facts so resolve_identifier (now called in
+        # _sync_work) parses cleanly instead of raising on MagicMock attributes.
+        fake_dialect.sqlglot_dialect = "databricks"
+        fake_dialect.max_identifier_depth = 3
+        fake_dialect.default_schema = None
         fake_engine = MagicMock(name="engine")
 
         fake_sample = MagicMock()
@@ -269,9 +281,6 @@ class TestAsyncErrorHandling:
 # Error classification wiring tests
 # ---------------------------------------------------------------------------
 
-import pytest
-from sqlalchemy.exc import SQLAlchemyError
-
 
 # All 9 MCP tools with their module path (for patching _classify_db_error)
 # and minimal kwargs needed to invoke them past parameter validation into
@@ -380,3 +389,528 @@ class TestSafetyNetErrorClassification:
             mock_classify.assert_not_called()
             # Generic fallback should contain the error text
             assert "something broke" in result
+
+
+# ---------------------------------------------------------------------------
+# Catalog gate + resolver routing boundary tests (IDENT-05 / IDENT-06)
+# ---------------------------------------------------------------------------
+
+
+def _patch_cm(module, dialect, engine=None):
+    """Patch a tool module's get_connection_manager to return the given dialect."""
+    mock_cm = MagicMock()
+    mock_cm.get_engine.return_value = engine if engine is not None else MagicMock()
+    mock_cm.get_dialect.return_value = dialect
+    factory = patch.object(module, "get_connection_manager", return_value=mock_cm)
+    return factory, mock_cm
+
+
+class TestCatalogGateBoundary:
+    """D-07 catalog gate: passing catalog on MSSQL/generic returns status=error."""
+
+    async def test_get_sample_data_catalog_on_mssql_errors(self):
+        from src.mcp_server import query_tools
+
+        factory, _ = _patch_cm(query_tools, MssqlDialect())
+        with factory, patch.object(query_tools, "get_config") as cfg:
+            cfg.return_value.defaults.sample_size = 5
+            result = await query_tools.get_sample_data(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_get_column_info_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_find_pk_candidates_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_find_fk_candidates_catalog_on_mssql_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="t", column_name="id", catalog="x"
+            )
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_list_schemas_catalog_on_mssql_errors(self):
+        from src.mcp_server import schema_tools
+
+        factory, _ = _patch_cm(schema_tools, MssqlDialect())
+        with factory:
+            result = await schema_tools.list_schemas(connection_id="c", catalog="x")
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+    async def test_list_tables_catalog_on_mssql_errors(self):
+        from src.mcp_server import schema_tools
+
+        factory, _ = _patch_cm(schema_tools, MssqlDialect())
+        with factory:
+            result = await schema_tools.list_tables(connection_id="c", catalog="x")
+        assert "error" in result
+        assert "catalog" in result.lower()
+
+
+class TestResolverConflictBoundary:
+    """D-04 conflict: table_name segment vs explicit schema_name disagreement."""
+
+    async def test_get_sample_data_conflict_errors(self):
+        from src.mcp_server import query_tools
+
+        factory, _ = _patch_cm(query_tools, MssqlDialect())
+        with factory, patch.object(query_tools, "get_config") as cfg:
+            cfg.return_value.defaults.sample_size = 5
+            result = await query_tools.get_sample_data(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_get_column_info_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_find_pk_candidates_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="sales.orders", schema_name="hr"
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+    async def test_find_fk_candidates_conflict_errors(self):
+        from src.mcp_server import analysis_tools
+
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c",
+                table_name="sales.orders",
+                column_name="id",
+                schema_name="hr",
+            )
+        assert "error" in result
+        assert "conflict" in result.lower()
+
+
+class TestDatabricksThreePartHappyPath:
+    """SC3: a 3-part table_name resolves and reaches the deeper layer with
+    catalog/schema/table split apart."""
+
+    async def test_get_sample_data_three_part_routes_catalog(self):
+        from src.mcp_server import query_tools
+
+        fake_engine = MagicMock(name="engine")
+        factory, _ = _patch_cm(query_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_sample = MagicMock()
+        fake_sample.sample_id = "sid"
+        fake_sample.table_id = "tid"
+        fake_sample.sample_size = 0
+        fake_sample.rows = []
+        fake_sample.sampling_method = query_tools.SamplingMethod.TOP
+        fake_sample.truncated_columns = []
+        fake_sample.sampled_at = datetime.now()
+
+        with (
+            factory,
+            patch.object(query_tools, "MetadataService"),
+            patch.object(query_tools, "QueryService") as MockQS,
+            patch.object(query_tools, "get_config") as cfg,
+        ):
+            cfg.return_value.defaults.sample_size = 5
+            MockQS.return_value.get_sample_data.return_value = fake_sample
+
+            await query_tools.get_sample_data(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            kwargs = MockQS.return_value.get_sample_data.call_args.kwargs
+            assert kwargs["catalog"] == "cat"
+            assert kwargs["schema_name"] == "sch"
+            assert kwargs["table_name"] == "tbl"
+
+    async def test_get_column_info_three_part_routes_to_metadata(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        # Context-manager engine.connect() for the `with engine.connect()` block
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "ColumnStatsCollector") as MockCSC,
+        ):
+            MockMS.return_value.table_exists.return_value = True
+            MockCSC.return_value.get_columns_info.return_value = []
+            mock_inspect.return_value = MagicMock()
+
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            # Cross-catalog existence check routed through MetadataService with
+            # the split catalog/schema/table.
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
+            # Stats collector receives the resolved schema/table.
+            csc_kwargs = MockCSC.call_args.kwargs
+            assert csc_kwargs["schema_name"] == "sch"
+            assert csc_kwargs["table_name"] == "tbl"
+            assert "success" in result
+
+    async def test_find_pk_candidates_three_part_routes_resolved(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "PKDiscovery") as MockPK,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspect.return_value = mock_inspector
+            # Cross-catalog 3-part name -> catalog-aware existence check.
+            MockMS.return_value.table_exists.return_value = True
+            MockPK.return_value.find_candidates.return_value = []
+
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="cat.sch.tbl"
+            )
+
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
+            pk_kwargs = MockPK.call_args.kwargs
+            assert pk_kwargs["schema_name"] == "sch"
+            assert pk_kwargs["table_name"] == "tbl"
+            assert pk_kwargs["catalog"] == "cat"
+            assert "success" in result
+
+    async def test_find_fk_candidates_three_part_routes_resolved(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = MagicMock(name="engine")
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_fk_result = MagicMock()
+        fake_fk_result.candidates = []
+        fake_fk_result.total_found = 0
+        fake_fk_result.was_limited = False
+        fake_fk_result.search_scope = "scope"
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "CatalogAwareReflector") as MockReflector,
+            patch.object(analysis_tools, "FKCandidateSearch") as MockFK,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspect.return_value = mock_inspector
+            # Cross-catalog 3-part name -> catalog-aware existence + reflection.
+            MockMS.return_value.table_exists.return_value = True
+            MockReflector.return_value.reflect_columns.return_value = [
+                {"name": "id", "data_type": "INT"}
+            ]
+            MockFK.return_value.find_candidates.return_value = fake_fk_result
+
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="cat.sch.tbl", column_name="id"
+            )
+
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cat"
+            )
+            MockReflector.return_value.reflect_columns.assert_called_once_with(
+                "cat", "sch", "tbl"
+            )
+            fk_kwargs = MockFK.call_args.kwargs
+            assert fk_kwargs["source_schema"] == "sch"
+            assert fk_kwargs["source_table"] == "tbl"
+            assert fk_kwargs["catalog"] == "cat"
+            assert "success" in result
+
+
+# ---------------------------------------------------------------------------
+# Cross-catalog wiring boundary tests (IDENT-08, Plan 15.1-05)
+#
+# Assert that the resolved catalog threads end-to-end through the three
+# analysis tools on the Databricks cross-catalog branch, and that pk/fk use
+# the catalog-aware MetadataService.table_exists existence check (mirroring
+# get_column_info) rather than the catalog-blind Inspector path.
+# ---------------------------------------------------------------------------
+
+
+class TestCrossCatalogWiring:
+    """IDENT-08: catalog reaches each analysis class; pk/fk use catalog-aware
+    existence check on the cross-catalog Databricks branch."""
+
+    @staticmethod
+    def _databricks_engine():
+        fake_engine = MagicMock(name="engine")
+        fake_engine.connect.return_value.__enter__.return_value = MagicMock()
+        fake_engine.connect.return_value.__exit__.return_value = False
+        return fake_engine
+
+    async def test_get_column_info_threads_catalog(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "ColumnStatsCollector") as MockCSC,
+        ):
+            MockMS.return_value.table_exists.return_value = True
+            MockCSC.return_value.get_columns_info.return_value = []
+            mock_inspect.return_value = MagicMock()
+
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="tbl", schema_name="sch",
+                catalog="cerner_src",
+            )
+
+            # Catalog-aware existence check used (not Inspector path).
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cerner_src"
+            )
+            assert MockCSC.call_args.kwargs["catalog"] == "cerner_src"
+            assert "success" in result
+
+    async def test_find_pk_candidates_threads_catalog(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "PKDiscovery") as MockPK,
+        ):
+            MockMS.return_value.table_exists.return_value = True
+            MockPK.return_value.find_candidates.return_value = []
+            mock_inspector = MagicMock()
+            mock_inspect.return_value = mock_inspector
+
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="tbl", schema_name="sch",
+                catalog="cerner_src",
+            )
+
+            # Cross-catalog existence check routed through MetadataService.
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cerner_src"
+            )
+            # Inspector existence path NOT used on the cross-catalog branch.
+            mock_inspector.get_table_names.assert_not_called()
+            assert MockPK.call_args.kwargs["catalog"] == "cerner_src"
+            assert "success" in result
+
+    async def test_find_fk_candidates_threads_catalog(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_fk_result = MagicMock()
+        fake_fk_result.candidates = []
+        fake_fk_result.total_found = 0
+        fake_fk_result.was_limited = False
+        fake_fk_result.search_scope = "scope"
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "CatalogAwareReflector") as MockReflector,
+            patch.object(analysis_tools, "FKCandidateSearch") as MockFK,
+        ):
+            MockMS.return_value.table_exists.return_value = True
+            MockReflector.return_value.reflect_columns.return_value = [
+                {"name": "id", "data_type": "INT"}
+            ]
+            MockFK.return_value.find_candidates.return_value = fake_fk_result
+            mock_inspector = MagicMock()
+            mock_inspect.return_value = mock_inspector
+
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="tbl", column_name="id",
+                schema_name="sch", catalog="cerner_src",
+            )
+
+            # Cross-catalog existence check routed through MetadataService.
+            MockMS.return_value.table_exists.assert_called_once_with(
+                "tbl", "sch", catalog="cerner_src"
+            )
+            # Source-column type read uses catalog-aware reflection, not Inspector.
+            MockReflector.return_value.reflect_columns.assert_called_once_with(
+                "cerner_src", "sch", "tbl"
+            )
+            mock_inspector.get_columns.assert_not_called()
+            assert MockFK.call_args.kwargs["catalog"] == "cerner_src"
+            assert MockFK.call_args.kwargs["source_data_type"] == "INT"
+            assert "success" in result
+
+    async def test_default_path_no_catalog_get_column_info(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "ColumnStatsCollector") as MockCSC,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspector.get_table_names.return_value = ["tbl"]
+            mock_inspect.return_value = mock_inspector
+            MockCSC.return_value.get_columns_info.return_value = []
+
+            result = await analysis_tools.get_column_info(
+                connection_id="c", table_name="tbl", schema_name="sch",
+            )
+
+            # No catalog -> Inspector existence path; no MetadataService.table_exists.
+            MockMS.return_value.table_exists.assert_not_called()
+            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            assert MockCSC.call_args.kwargs["catalog"] is None
+            assert "success" in result
+
+    async def test_default_path_no_catalog_find_pk_candidates(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "PKDiscovery") as MockPK,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspector.get_table_names.return_value = ["tbl"]
+            mock_inspect.return_value = mock_inspector
+            MockPK.return_value.find_candidates.return_value = []
+
+            result = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="tbl", schema_name="sch",
+            )
+
+            MockMS.return_value.table_exists.assert_not_called()
+            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            assert MockPK.call_args.kwargs["catalog"] is None
+            assert "success" in result
+
+    async def test_default_path_no_catalog_find_fk_candidates(self):
+        from src.mcp_server import analysis_tools
+
+        fake_engine = self._databricks_engine()
+        factory, _ = _patch_cm(analysis_tools, DatabricksDialect(), engine=fake_engine)
+
+        fake_fk_result = MagicMock()
+        fake_fk_result.candidates = []
+        fake_fk_result.total_found = 0
+        fake_fk_result.was_limited = False
+        fake_fk_result.search_scope = "scope"
+
+        with (
+            factory,
+            patch.object(analysis_tools, "inspect") as mock_inspect,
+            patch("src.db.metadata.MetadataService") as MockMS,
+            patch.object(analysis_tools, "FKCandidateSearch") as MockFK,
+        ):
+            mock_inspector = MagicMock()
+            mock_inspector.get_table_names.return_value = ["tbl"]
+            mock_inspector.get_columns.return_value = [{"name": "id", "type": "INT"}]
+            mock_inspect.return_value = mock_inspector
+            MockFK.return_value.find_candidates.return_value = fake_fk_result
+
+            result = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="tbl", column_name="id",
+                schema_name="sch",
+            )
+
+            MockMS.return_value.table_exists.assert_not_called()
+            mock_inspector.get_table_names.assert_called_once_with(schema="sch")
+            mock_inspector.get_columns.assert_called_once_with("tbl", schema="sch")
+            assert MockFK.call_args.kwargs["catalog"] is None
+            assert "success" in result
+
+    async def test_mssql_catalog_rejected_unchanged_all_three(self):
+        from src.mcp_server import analysis_tools
+
+        # get_column_info
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            r1 = await analysis_tools.get_column_info(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in r1 and "catalog" in r1.lower()
+
+        # find_pk_candidates
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            r2 = await analysis_tools.find_pk_candidates(
+                connection_id="c", table_name="t", catalog="x"
+            )
+        assert "error" in r2 and "catalog" in r2.lower()
+
+        # find_fk_candidates
+        factory, _ = _patch_cm(analysis_tools, MssqlDialect())
+        with factory:
+            r3 = await analysis_tools.find_fk_candidates(
+                connection_id="c", table_name="t", column_name="id", catalog="x"
+            )
+        assert "error" in r3 and "catalog" in r3.lower()

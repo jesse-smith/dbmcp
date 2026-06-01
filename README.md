@@ -203,6 +203,36 @@ database = "proddb"
 password = "${PROD_DB_PASSWORD}"
 ```
 
+### Corporate MITM TLS Gateways (Databricks)
+
+If your Databricks workspace is reached via a corporate TLS-rewriting gateway
+(e.g. Cloudflare Zero Trust), Python won't trust the gateway's CA by default
+(it ignores `NODE_EXTRA_CA_CERTS`). Set `ca_bundle` in your Databricks
+connection config to point at the gateway CA file:
+
+```toml
+[connections.databricks-prod]
+dialect = "databricks"
+host = "${DATABRICKS_HOST}"
+http_path = "${DATABRICKS_HTTP_PATH}"
+token = "${DATABRICKS_TOKEN}"
+catalog = "main"
+ca_bundle = "~/.ssl-certs/gateway-ca.pem"  # PEM with the gateway CA
+```
+
+Alternatively, set `DBMCP_CA_BUNDLE=/path/to/ca.pem` in your shell as a
+process-wide fallback (applies to every Databricks connection that doesn't set
+`ca_bundle` explicitly). Tilde and `${VAR}` are both expanded. Precedence:
+explicit per-connection `ca_bundle` > URL `?ca_bundle=` query param >
+`DBMCP_CA_BUNDLE` env > unset (connector falls back to certifi).
+
+Point `ca_bundle` at the gateway CA file alone — dbmcp automatically merges it
+with certifi's bundle at connect time, so standard intermediates (DigiCert,
+etc.) remain trusted alongside the gateway root.
+
+This setting is currently Databricks-only; MSSQL and generic dialects do not
+have an equivalent hook yet.
+
 ## MCP Tools Reference
 
 | Tool | Description |

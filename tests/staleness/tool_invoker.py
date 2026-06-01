@@ -6,7 +6,7 @@ response shapes for staleness guard testing.
 """
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from src.mcp_server.server import (
@@ -25,12 +25,11 @@ from src.models.schema import (
     AuthenticationMethod,
     Column,
     Connection,
-    Schema,
     SamplingMethod,
+    Schema,
     Table,
     TableType,
 )
-
 
 # =============================================================================
 # Mock helpers
@@ -75,6 +74,22 @@ def _mock_column():
     )
 
 
+def _mock_resolver_dialect():
+    """A MagicMock dialect with the concrete attributes resolve_identifier reads.
+
+    get_table_schema now routes table_name/schema_name/catalog through
+    src.db.identifiers.resolve_identifier, which calls
+    sqlglot.to_table(..., dialect=dialect.sqlglot_dialect). A bare MagicMock
+    breaks sqlglot parsing, so the resolver path needs real string attributes.
+    """
+    dialect = MagicMock(name="resolver_dialect")
+    dialect.name = "mssql"
+    dialect.sqlglot_dialect = "tsql"
+    dialect.max_identifier_depth = 2
+    dialect.default_schema = "dbo"
+    return dialect
+
+
 def _mock_connection():
     """Create a sample Connection object."""
     return Connection(
@@ -103,7 +118,7 @@ def _connect_database_success_mocks():
     with (
         patch("src.mcp_server.schema_tools.resolve_dialect_from_url", return_value=mock_dialect),
         patch.object(get_connection_manager(), "connect_with_url", return_value=conn),
-        patch.object(get_connection_manager(), "get_engine") as mock_engine,
+        patch.object(get_connection_manager(), "get_engine"),
     ):
         mock_metadata_svc = MagicMock()
         mock_metadata_svc.list_schemas.return_value = schemas
@@ -229,7 +244,11 @@ def _get_table_schema_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -243,7 +262,11 @@ def _get_table_schema_error_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.schema_tools.MetadataService", return_value=mock_metadata_svc),
     ):
         yield
@@ -261,7 +284,7 @@ def _get_sample_data_success_mocks():
         sampling_method=SamplingMethod.TOP,
         rows=[{"id": 1, "name": "test"}],
         truncated_columns=[],
-        sampled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        sampled_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
     mock_query_svc = MagicMock()
@@ -269,7 +292,11 @@ def _get_sample_data_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine"),
-        patch.object(get_connection_manager(), "get_dialect"),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.query_tools.MetadataService"),
         patch("src.mcp_server.query_tools.QueryService", return_value=mock_query_svc),
     ):
@@ -369,7 +396,11 @@ def _get_column_info_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=MagicMock()),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.ColumnStatsCollector", return_value=mock_collector),
     ):
@@ -416,7 +447,11 @@ def _find_pk_candidates_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.PKDiscovery", return_value=mock_discovery),
     ):
@@ -478,7 +513,11 @@ def _find_fk_candidates_success_mocks():
 
     with (
         patch.object(get_connection_manager(), "get_engine", return_value=mock_engine),
-        patch.object(get_connection_manager(), "get_dialect", return_value=None),
+        patch.object(
+            get_connection_manager(),
+            "get_dialect",
+            return_value=_mock_resolver_dialect(),
+        ),
         patch("src.mcp_server.analysis_tools.inspect", return_value=mock_inspector),
         patch("src.mcp_server.analysis_tools.FKCandidateSearch", return_value=mock_search),
     ):

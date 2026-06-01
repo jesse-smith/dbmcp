@@ -140,6 +140,53 @@
 
 ---
 
+## Milestone: v2.1 — Databricks identifier fixes
+
+**Shipped:** 2026-05-31
+**Phases:** 3 (14, 15, 15.1 inserted) | **Plans:** 16 | **Sessions:** many (live cross-catalog UAT + 14 quick-tasks during the milestone window)
+**Duration:** 25 days (2026-05-07 → 2026-05-31)
+
+### What Was Built
+- IDENT-01/02: `connect_database` rejects catalog-less Databricks connections with a `SHOW CATALOGS`-listing error; the silent catalog-listing fallback in `list_schemas` removed and guarded by a negative-assertion regression test
+- IDENT-03/04: shared identifier resolver (`src/db/identifiers.py`) parsing `table_name` at dialect-aware depth (3/2/1) with disagreement-only conflict detection; depth measured via `len(Table.parts)`
+- IDENT-05/06/07: `catalog` param added to `get_sample_data`/`get_column_info` (Databricks-gated); every hardcoded `schema_name='dbo'` removed in favor of a per-dialect `default_schema` property; all 7 namespace-aware tools routed through the resolver (D-12 boundary matrix)
+- IDENT-08 (Phase 15.1, inserted): cross-catalog metadata targeting via stateless raw 3-part SQL (shared `CatalogAwareReflector` in `src/analysis/_sql.py`), bypassing the catalog-blind Inspector — closes the CR-02 silent mis-targeting bug for PK/FK candidates and column stats
+- TEST-01/02: residual v2.0 Databricks `connect_with_config` regression tests (env-var substitution, `SQLAlchemyError` → `ConnectionError` wrapping)
+- Security: backtick escaping in `DatabricksDialect.quote_identifier` (CR-01) and a shared `quote_tsql_identifier()` helper closing a bracket break-out in FK generation (WR-04)
+
+### What Worked
+- Audit-first milestone close: the 2026-05-31 audit (superseding the 2026-05-28 audit that predated the Phase 15.1 insertion) cleanly separated CLOSED items from accepted tech debt, making the acknowledge-and-proceed decision at close trivial
+- Decimal-phase insertion (15.1) for CR-02: the code review of Phase 15 surfaced that the resolver only GATED `catalog` rather than threading it cross-catalog; inserting 15.1 closed the real bug without opening a new milestone — same pattern that worked for 13.1
+- Live cross-catalog UAT (bmtct → cerner_src) with negative controls proved the stateless 3-part approach end-to-end against a real Unity Catalog warehouse, including no stale-catalog bleed on pooled connections — exactly the class of bug unit mocks can't model
+- Rule-of-Three discipline on the catalog gate and `CatalogAwareReflector`: both were extracted only once a third consumer appeared, avoiding premature abstraction
+- TDD held: depth-via-`len(Table.parts)` and catalog-gate-before-depth-check ordering were both driven by failing tests written against documented sqlglot pitfalls
+
+### What Was Inefficient
+- 14 quick-tasks accumulated during the milestone window (260428–260529) — many were live-Databricks integration gaps (URL parsing, env-var substitution in URL mode, catalog-default bypass, connection_id collision across catalogs) that, like v2.0, only surfaced against a real warehouse. The "live smoke test gate" suggested in the v2.0 retrospective was not yet instituted; it would have caught several of these earlier.
+- Phase 15's original design GATED catalog rather than threading it (KISS call documented in 15-06), which was the correct scope decision at the time but meant CR-02 was only caught in code review, forcing the 15.1 insertion. A sharper up-front question ("does gating actually satisfy the cross-catalog requirement, or just defer it?") might have folded this into Phase 15.
+- The `milestone.complete` SDK auto-extracted garbled "accomplishments" by pattern-matching code-review headers (`[Rule 3 - Blocking]`) out of SUMMARY files — the MILESTONES.md entry had to be hand-rewritten. SUMMARY one-liner frontmatter is still inconsistently populated (same finding as v2.0).
+- REQUIREMENTS.md traceability checkboxes: this milestone they WERE `[x]` at close (improvement over v1.0–v2.0), but the working copy still had to be reconciled manually.
+
+### Patterns Established
+- Stateless cross-namespace access via raw N-part SQL instead of session state (`USE CATALOG`) — safe on pooled connections, no per-connection mutation; guarded by a unit test asserting no `USE CATALOG` is emitted
+- Single shared resolver at the `@mcp.tool` boundary inside `_sync_work` for every namespace-aware tool — one place for depth/conflict/gate logic
+- `CatalogAwareReflector` as the cross-catalog reflection primitive (DESCRIBE TABLE columns + SHOW TABLES IN), mirroring the established `MetadataService` pattern
+- Quoting-boundary helpers (`quote_tsql_identifier`, backtick escaping) as the single defense point against identifier injection
+- Decimal-phase insertion driven by code review (not just milestone audit) as a legitimate trigger
+
+### Key Lessons
+1. **"Gate it" and "support it" are different requirements — name which one you're shipping.** Phase 15 gating `catalog` looked like cross-catalog support but only deferred it; the gap was invisible until code review. When scoping a deferral, state explicitly whether the requirement is satisfied or postponed.
+2. **Stateless N-part qualification beats session state for pooled connections.** `USE CATALOG` would have leaked across pooled connections; raw 3-part names sidestep the entire class of stale-context bugs. Verified by the alternating-call UAT.
+3. **Live integration remains the fastest truth-finder for Databricks.** Same lesson as v2.0, re-confirmed: the bulk of quick-tasks were warehouse-only failures. The recommended live-smoke gate is now overdue.
+4. **SDK-generated milestone accomplishments need human review.** Auto-extraction pulled code-review rule tags as "accomplishments" — always verify the MILESTONES.md entry against the actual phase goals.
+
+### Cost Observations
+- Model mix: predominantly opus for planning/execution/code-review, sonnet for research and integration/verifier subagents
+- Sessions: many (per-phase discuss/plan/execute + 14 quick-tasks + 2 milestone audits + close)
+- Notable: 16 plans over 25 days; the 15.1 insertion + 14 quick-tasks reflect the same live-feedback-loop cost profile as v2.0's Databricks work
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -149,6 +196,7 @@
 | v1.0 | ~3 | 2 | First milestone — established TDD + atomic swap patterns |
 | v1.1 | ~8 | 5 | Audit-driven milestone — systematic concern resolution with gap closure |
 | v2.0 | many | 7 | Architecture milestone — DialectStrategy protocol + live-integration feedback loop; audit-inserted decimal phase (13.1) to close wiring gaps |
+| v2.1 | many | 3 | Identifier-correctness milestone — unified resolver across 7 tools; code-review-inserted decimal phase (15.1) to close cross-catalog CR-02; stateless 3-part SQL pattern |
 
 ### Cumulative Quality
 
@@ -157,9 +205,13 @@
 | v1.0 | 441 | 99% (staleness) | serialization.py, helpers.py, staleness/ |
 | v1.1 | 682 | 70%+ (all modules) | config.py, type_handlers.py, error classification |
 | v2.0 | 872 | 90.64% (85% floor) | `src/db/dialects/` (protocol, mssql, databricks, generic, registry), sqlite_schema fixture, dialect-parameterized conftest |
+| v2.1 | 1072 | 85% floor maintained | `src/db/identifiers.py` (resolver + catalog gate), `src/analysis/_sql.py` (CatalogAwareReflector) |
 
 ### Top Lessons (Verified Across Milestones)
 
-1. TDD with red-green-refactor prevents regressions — zero regressions across both milestones (16 plans)
+1. TDD with red-green-refactor prevents regressions — zero regressions across three architecture/correctness milestones
 2. Structured audit → milestone pipeline produces well-scoped, completable work
-3. ROADMAP.md checkbox tracking consistently drifts from actual completion — needs automation or workflow fix
+3. ROADMAP.md checkbox tracking consistently drifts from actual completion — improved in v2.1 (boxes were `[x]` at close) but still reconciled manually
+4. Live integration against a real warehouse is the fastest truth-finder for Databricks work (v2.0 + v2.1) — a live-smoke gate after any new-dialect/identifier phase is overdue
+5. Decimal-phase insertion (13.1 audit-driven, 15.1 code-review-driven) reliably closes milestone gaps without scope-creeping into a new milestone
+6. Distinguish "gate it" from "support it" when scoping deferrals — Phase 15 gating catalog hid the CR-02 cross-catalog gap until review

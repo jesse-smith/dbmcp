@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.models.analysis import PKCandidate
 
 if TYPE_CHECKING:
@@ -43,13 +47,29 @@ class PKDiscovery:
         table_name: str,
         dialect: "DialectStrategy | None" = None,
         inspector: "Inspector | None" = None,
+        catalog: "str | None" = None,
     ):
         self.connection = connection
         self.schema_name = schema_name
         self.table_name = table_name
         self._dialect = dialect
         self._inspector = inspector
-        self._qualified_table = f"[{schema_name}].[{table_name}]"
+        self._catalog = catalog
+        # Cross-catalog reads only apply to Databricks with an explicit catalog.
+        # Other dialects reject catalog upstream (resolver), so this stays False.
+        self._cross_catalog = (
+            bool(catalog) and dialect is not None and dialect.name == "databricks"
+        )
+        # 3-part TSQL brackets when cross-catalog (sqlglot transpiles to
+        # `cat`.`sch`.`tbl`); 2-part otherwise. Never pre-quote with backticks
+        # -- this string is fed through transpile_query(read="tsql") (Pitfall 4).
+        q = quote_tsql_identifier
+        if catalog:
+            self._qualified_table = (
+                f"{q(catalog)}.{q(schema_name)}.{q(table_name)}"
+            )
+        else:
+            self._qualified_table = f"{q(schema_name)}.{q(table_name)}"
 
     def get_constraint_candidates(
         self,
@@ -68,6 +88,8 @@ class PKDiscovery:
         """
         type_filter_lower = {t.lower() for t in type_filter}
 
+        if self._cross_catalog:
+            return self._get_constraint_candidates_cross_catalog(type_filter_lower)
         if (
             self._dialect is not None
             and self._dialect.name != "mssql"
@@ -210,6 +232,96 @@ class PKDiscovery:
 
         return candidates
 
+    def _get_constraint_candidates_cross_catalog(
+        self, type_filter_lower: set[str]
+    ) -> list[PKCandidate]:
+        """Catalog-scoped PK/UNIQUE discovery for cross-catalog Databricks.
+
+        Columns are reflected via :class:`CatalogAwareReflector` (DESCRIBE TABLE
+        on the explicit 3-part name). PK/UNIQUE constraints are read from the
+        requested catalog's ``information_schema`` -- every identifier segment is
+        backtick-quoted (no parameter binding, since identifiers cannot be bound).
+        No catalog-switching statement is emitted; the queries are fully
+        qualified and stateless over the pooled connection (T-15.1-04).
+        """
+        candidates: list[PKCandidate] = []
+        pk_columns: set[str] = set()
+
+        # Column type map via catalog-aware DESCRIBE TABLE (reflector returns
+        # {"name", "data_type"} dicts over the analysis class's live connection).
+        reflector = CatalogAwareReflector(self.connection, self._dialect)
+        columns = reflector.reflect_columns(
+            self._catalog, self.schema_name, self.table_name
+        )
+        col_type_map = {c["name"]: c["data_type"] for c in columns}
+
+        qi = self._dialect.quote_identifier
+        info_schema = f"{qi(self._catalog)}.information_schema"
+
+        # PRIMARY KEY columns from the catalog's information_schema.
+        pk_query = text(f"""
+            SELECT kcu.column_name, tc.constraint_type
+            FROM {info_schema}.table_constraints tc
+            JOIN {info_schema}.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+                AND tc.table_name = kcu.table_name
+            WHERE tc.table_schema = :schema_name
+                AND tc.table_name = :table_name
+                AND tc.constraint_type = 'PRIMARY KEY'
+        """)
+        pk_result = self.connection.execute(
+            pk_query,
+            {"schema_name": self.schema_name, "table_name": self.table_name},
+        )
+        for row in pk_result.fetchall():
+            col_name = row[0]
+            pk_columns.add(col_name)
+            data_type = col_type_map.get(col_name, "unknown")
+            candidates.append(PKCandidate(
+                column_name=col_name,
+                data_type=data_type,
+                is_constraint_backed=True,
+                constraint_type="PRIMARY KEY",
+                is_unique=True,
+                is_non_null=True,
+                is_pk_type=not type_filter_lower or data_type.lower() in type_filter_lower,
+                constraint_enforced=False,  # Databricks constraints are informational
+            ))
+
+        # UNIQUE constraint columns (excluding those already found as PK).
+        uq_query = text(f"""
+            SELECT kcu.column_name
+            FROM {info_schema}.table_constraints tc
+            JOIN {info_schema}.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+                AND tc.table_name = kcu.table_name
+            WHERE tc.table_schema = :schema_name
+                AND tc.table_name = :table_name
+                AND tc.constraint_type = 'UNIQUE'
+        """)
+        uq_result = self.connection.execute(
+            uq_query,
+            {"schema_name": self.schema_name, "table_name": self.table_name},
+        )
+        for row in uq_result.fetchall():
+            col_name = row[0]
+            if col_name not in pk_columns:
+                data_type = col_type_map.get(col_name, "unknown")
+                candidates.append(PKCandidate(
+                    column_name=col_name,
+                    data_type=data_type,
+                    is_constraint_backed=True,
+                    constraint_type="UNIQUE",
+                    is_unique=True,
+                    is_non_null=False,
+                    is_pk_type=not type_filter_lower or data_type.lower() in type_filter_lower,
+                    constraint_enforced=False,
+                ))
+
+        return candidates
+
     def get_structural_candidates(
         self,
         type_filter: list[str],
@@ -231,8 +343,16 @@ class PKDiscovery:
 
         candidates = []
         for col_name, data_type, is_nullable in all_columns:
-            # Skip already-found constraint columns / nullable / wrong-type
-            if col_name in exclude_columns or is_nullable:
+            # Skip already-found constraint columns.
+            if col_name in exclude_columns:
+                continue
+            # Declared-nullable exclusion: on the default / Inspector / MSSQL
+            # branches, a column declared nullable cannot be a structural PK
+            # candidate. On the cross-catalog Databricks branch the declared
+            # nullability is REPORTED but does NOT gate (WR-03): the uniqueness
+            # probe below is the sole structural gate, since all-nullable
+            # cross-catalog tables would otherwise lose every candidate.
+            if not self._cross_catalog and is_nullable:
                 continue
             if type_filter_lower and data_type.lower() not in type_filter_lower:
                 continue
@@ -259,9 +379,31 @@ class PKDiscovery:
     def _list_all_columns(self) -> list[tuple[str, str, bool]]:
         """List all (name, data_type, is_nullable) columns for the target table.
 
-        Uses SQLAlchemy Inspector when available, falls back to
-        INFORMATION_SCHEMA.
+        Uses the catalog-aware reflector on the cross-catalog Databricks branch,
+        SQLAlchemy Inspector when available, else INFORMATION_SCHEMA.
         """
+        if self._cross_catalog:
+            # DESCRIBE TABLE cannot expose nullability, so reflect the REAL
+            # declared nullability from information_schema.columns and REPORT it
+            # truthfully (WR-03) -- the same source FK get_candidate_columns uses,
+            # so both tools agree for any given column. NOTE: this reported value
+            # must NOT gate structural candidacy on this branch (see
+            # get_structural_candidates); the uniqueness probe over the 3-part
+            # qualified table remains the sole structural gate, because
+            # all-nullable cross-catalog tables (every column declared YES) would
+            # otherwise lose every structural PK candidate.
+            reflector = CatalogAwareReflector(self.connection, self._dialect)
+            columns = reflector.reflect_columns(
+                self._catalog, self.schema_name, self.table_name
+            )
+            nullability = reflector.reflect_column_nullability(
+                self._catalog, self.schema_name, self.table_name
+            )
+            return [
+                (c["name"], c["data_type"], nullability.get(c["name"], True))
+                for c in columns
+            ]
+
         if self._inspector is not None:
             columns = self._inspector.get_columns(
                 self.table_name, schema=self.schema_name
@@ -293,12 +435,13 @@ class PKDiscovery:
         Unique iff COUNT(DISTINCT col) == COUNT(*) over non-null rows AND
         at least one non-null row exists.
         """
+        col_q = quote_tsql_identifier(col_name)
         uniq_sql = f"""
             SELECT
-                COUNT(DISTINCT [{col_name}]) AS distinct_count,
+                COUNT(DISTINCT {col_q}) AS distinct_count,
                 COUNT(*) AS total_non_null
             FROM {self._qualified_table}
-            WHERE [{col_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         uniq_query = text(transpile_query(uniq_sql, self._dialect))
         uniq_result = self.connection.execute(uniq_query)

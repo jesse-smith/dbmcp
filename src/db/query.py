@@ -78,19 +78,24 @@ class QueryService:
     def get_sample_data(
         self,
         table_name: str,
-        schema_name: str = "dbo",
+        schema_name: str | None = None,
         sample_size: int = 5,
         sampling_method: SamplingMethod = SamplingMethod.TOP,
         columns: list[str] | None = None,
+        catalog: str | None = None,
     ) -> SampleData:
         """Retrieve sample data from a table.
 
         Args:
             table_name: Table name to sample from
-            schema_name: Schema name (default: 'dbo')
+            schema_name: Schema name (None = connection default schema)
             sample_size: Number of rows to return (1-1000)
             sampling_method: Sampling strategy to use
             columns: Optional list of columns to include (None = all columns)
+            catalog: Optional Databricks catalog. When provided and the dialect
+                is Databricks, builds a 3-part ``catalog.schema.table``
+                reference so cross-catalog sampling works without
+                ``USE CATALOG``. Ignored for other dialects.
 
         Returns:
             SampleData object with rows and metadata
@@ -115,8 +120,33 @@ class QueryService:
         if self._dialect is None:
             # SQLite/test mode doesn't use schema prefixes
             full_table_name = table_name
+        elif catalog and self._dialect.name == "databricks":
+            # 3-part catalog.schema.table reference for Databricks cross-catalog
+            # access (SC3). Every segment is quoted via quote_identifier, which
+            # remains the injection defense (RESEARCH §Security) — no raw concat.
+            # schema_name may be None (no hardcoded default, SC4); omit the schema
+            # segment rather than emit quote_identifier(None) -> a synthetic
+            # `None` namespace (SC3 blocker, T-qcp-02).
+            quoted_catalog = self._dialect.quote_identifier(catalog)
+            quoted_table = self._dialect.quote_identifier(table_name)
+            if schema_name:
+                full_table_name = (
+                    f"{quoted_catalog}."
+                    f"{self._dialect.quote_identifier(schema_name)}."
+                    f"{quoted_table}"
+                )
+            else:
+                full_table_name = f"{quoted_catalog}.{quoted_table}"
+        elif schema_name:
+            # 2-part schema.table reference (e.g. MSSQL [schema].[table]).
+            full_table_name = (
+                f"{self._dialect.quote_identifier(schema_name)}."
+                f"{self._dialect.quote_identifier(table_name)}"
+            )
         else:
-            full_table_name = f"{self._dialect.quote_identifier(schema_name)}.{self._dialect.quote_identifier(table_name)}"
+            # schema_name absent (real dialect with default_schema=None): emit an
+            # unqualified, quoted table reference — no leading 'None.' qualifier.
+            full_table_name = self._dialect.quote_identifier(table_name)
 
         if sampling_method == SamplingMethod.TOP:
             query = self._build_top_query(full_table_name, column_sql, sample_size)
@@ -155,7 +185,9 @@ class QueryService:
             raise
 
         # Create sample ID
-        table_id = f"{schema_name}.{table_name}"
+        # schema_name may be None now that 'dbo' is no longer a hardcoded default;
+        # avoid emitting a literal "None." prefix in the identifier.
+        table_id = f"{schema_name}.{table_name}" if schema_name else table_name
         timestamp = datetime.now().isoformat()
         sample_id = hashlib.sha256(f"{table_id}_{timestamp}".encode()).hexdigest()[:12]
 

@@ -291,13 +291,14 @@ class TestConnectWithConfigDatabricks:
 
         dialect.create_engine.assert_called_once()
         kwargs = dialect.create_engine.call_args.kwargs
-        assert kwargs == {
-            "host": "workspace.cloud.databricks.com",
-            "http_path": "/sql/1.0/warehouses/abc123",
-            "token": "dapi_test_token",
-            "catalog": "analytics",
-            "schema": "production",
-        }
+        # 260528-gsk added ca_bundle as an additional kwarg (default ""); use
+        # subset assertion so identity kwargs are still locked but new optional
+        # kwargs don't break the test.
+        assert kwargs["host"] == "workspace.cloud.databricks.com"
+        assert kwargs["http_path"] == "/sql/1.0/warehouses/abc123"
+        assert kwargs["token"] == "dapi_test_token"
+        assert kwargs["catalog"] == "analytics"
+        assert kwargs["schema"] == "production"
         assert "sqlalchemy_url" not in kwargs
 
     def test_databricks_config_resolves_env_var_token(self):
@@ -344,7 +345,8 @@ class TestConnectWithConfigDatabricks:
         assert kwargs["http_path"] == "/sql/1.0/warehouses/xyz"
 
     def test_databricks_config_defaults_catalog_and_schema(self):
-        """Default catalog 'main' and schema 'default' are passed when unset."""
+        """Defect A: catalog default is "" (so IDENT-01 enrichment fires for
+        catalog-omitted toml); schema default remains "default"."""
         from src.config import DatabricksConnectionConfig
 
         config = DatabricksConnectionConfig(
@@ -357,7 +359,7 @@ class TestConnectWithConfigDatabricks:
         cm.connect_with_config(config, dialect)
 
         kwargs = dialect.create_engine.call_args.kwargs
-        assert kwargs["catalog"] == "main"
+        assert kwargs["catalog"] == ""
         assert kwargs["schema"] == "default"
 
     def test_databricks_config_none_token_uses_empty_string(self):

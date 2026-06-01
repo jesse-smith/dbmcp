@@ -36,6 +36,12 @@ class TestGenericDialectProtocol:
     def test_has_fast_row_counts(self):
         assert GenericDialect().has_fast_row_counts is False
 
+    def test_default_schema_is_none(self):
+        assert GenericDialect().default_schema is None
+
+    def test_max_identifier_depth_is_1(self):
+        assert GenericDialect().max_identifier_depth == 1
+
     def test_safe_procedures_empty(self):
         result = GenericDialect().safe_procedures
         assert result == frozenset()

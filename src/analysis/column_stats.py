@@ -16,7 +16,11 @@ from sqlalchemy import text
 from sqlalchemy import types as sa_types
 from sqlalchemy.engine import Connection
 
-from src.analysis._sql import transpile_query
+from src.analysis._sql import (
+    CatalogAwareReflector,
+    quote_tsql_identifier,
+    transpile_query,
+)
 from src.models.analysis import (
     ColumnStatistics,
     DateTimeStats,
@@ -62,6 +66,7 @@ class ColumnStatsCollector:
         table_name: str,
         dialect: "DialectStrategy | None" = None,
         inspector: "Inspector | None" = None,
+        catalog: str | None = None,
     ):
         """Initialize collector for a specific table.
 
@@ -71,17 +76,52 @@ class ColumnStatsCollector:
             table_name: Table name
             dialect: Target dialect strategy, or None for MSSQL default
             inspector: SQLAlchemy Inspector, or None for INFORMATION_SCHEMA fallback
+            catalog: Resolved catalog for cross-catalog Databricks access
+                (IDENT-08), or None for the default-catalog path.
         """
         self.connection = connection
         self.schema_name = schema_name
         self.table_name = table_name
         self._dialect = dialect
         self._inspector = inspector
-        # Build qualified table using bracket quoting (TSQL base syntax for transpilation)
-        self._qualified_table = f"[{schema_name}].[{table_name}]"
+        self._catalog = catalog
+        # Build qualified table using bracket quoting (TSQL base syntax for
+        # transpilation). When a catalog is set, emit a 3-part name so the
+        # transpiled aggregate SQL targets the requested catalog (IDENT-08).
+        q = quote_tsql_identifier
+        if catalog:
+            self._qualified_table = (
+                f"{q(catalog)}.{q(schema_name)}.{q(table_name)}"
+            )
+        else:
+            self._qualified_table = f"{q(schema_name)}.{q(table_name)}"
+
+    @property
+    def _is_cross_catalog_databricks(self) -> bool:
+        """True when reads must be catalog-scoped via raw Databricks reflection."""
+        return bool(
+            self._catalog
+            and self._dialect is not None
+            and self._dialect.name == "databricks"
+        )
+
+    def _reflect_catalog_columns(self) -> list[dict]:
+        """Reflect columns from the requested catalog (Databricks cross-catalog).
+
+        Returns ``list[dict]`` with keys ``name``/``data_type`` (per
+        CatalogAwareReflector — NOT Column objects), reusing the live
+        ``self.connection`` rather than opening a fresh engine connection.
+        """
+        reflector = CatalogAwareReflector(self.connection, self._dialect)
+        return reflector.reflect_columns(
+            self._catalog, self.schema_name, self.table_name
+        )
 
     def column_exists(self, column_name: str) -> bool:
         """Check if a column exists in the table."""
+        if self._is_cross_catalog_databricks:
+            cols = self._reflect_catalog_columns()
+            return any(c["name"] == column_name for c in cols)
         if self._inspector is not None:
             columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
             return any(c["name"] == column_name for c in columns)
@@ -115,6 +155,14 @@ class ColumnStatsCollector:
             List of (column_name, type_info) tuples.
             type_info is TypeEngine when Inspector available, else data_type string.
         """
+        if self._is_cross_catalog_databricks:
+            cols = self._reflect_catalog_columns()
+            glob_pattern = pattern.replace("%", "*").replace("_", "?")
+            return [
+                (c["name"], c["data_type"])
+                for c in cols
+                if fnmatch.fnmatch(c["name"], glob_pattern)
+            ]
         if self._inspector is not None:
             columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
             # Convert SQL LIKE pattern to fnmatch: % -> *, _ -> ?
@@ -150,6 +198,11 @@ class ColumnStatsCollector:
 
         Returns TypeEngine when Inspector available, else data_type string.
         """
+        if self._is_cross_catalog_databricks:
+            for c in self._reflect_catalog_columns():
+                if c["name"] == column_name:
+                    return c["data_type"]
+            return "unknown"
         if self._inspector is not None:
             columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
             for c in columns:
@@ -206,11 +259,12 @@ class ColumnStatsCollector:
 
     def get_basic_stats(self, column_name: str) -> dict:
         """Collect basic statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         sql = f"""
             SELECT
                 COUNT(*) as total_rows,
-                COUNT(DISTINCT [{column_name}]) as distinct_count,
-                SUM(CASE WHEN [{column_name}] IS NULL THEN 1 ELSE 0 END) as null_count
+                COUNT(DISTINCT {col_q}) as distinct_count,
+                SUM(CASE WHEN {col_q} IS NULL THEN 1 ELSE 0 END) as null_count
             FROM {self._qualified_table}
         """
         query = text(transpile_query(sql, self._dialect))
@@ -233,14 +287,15 @@ class ColumnStatsCollector:
 
     def get_numeric_stats(self, column_name: str) -> NumericStats:
         """Collect numeric statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         sql = f"""
             SELECT
-                MIN(CAST([{column_name}] AS FLOAT)) as min_value,
-                MAX(CAST([{column_name}] AS FLOAT)) as max_value,
-                AVG(CAST([{column_name}] AS FLOAT)) as mean_value,
-                STDEV(CAST([{column_name}] AS FLOAT)) as std_dev
+                MIN(CAST({col_q} AS FLOAT)) as min_value,
+                MAX(CAST({col_q} AS FLOAT)) as max_value,
+                AVG(CAST({col_q} AS FLOAT)) as mean_value,
+                STDEV(CAST({col_q} AS FLOAT)) as std_dev
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         query = text(transpile_query(sql, self._dialect))
 
@@ -264,21 +319,22 @@ class ColumnStatsCollector:
 
     def get_datetime_stats(self, column_name: str) -> DateTimeStats:
         """Collect datetime statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         # Time component detection varies by dialect
         if self._dialect and self._dialect.name in ("databricks", "generic"):
             time_check = (
-                f"HOUR([{column_name}]) <> 0 "
-                f"OR MINUTE([{column_name}]) <> 0 "
-                f"OR SECOND([{column_name}]) <> 0"
+                f"HOUR({col_q}) <> 0 "
+                f"OR MINUTE({col_q}) <> 0 "
+                f"OR SECOND({col_q}) <> 0"
             )
         else:
-            time_check = f"CAST([{column_name}] AS TIME) <> '00:00:00'"
+            time_check = f"CAST({col_q} AS TIME) <> '00:00:00'"
 
         sql = f"""
             SELECT
-                MIN([{column_name}]) as min_date,
-                MAX([{column_name}]) as max_date,
-                DATEDIFF(day, MIN([{column_name}]), MAX([{column_name}])) as date_range_days,
+                MIN({col_q}) as min_date,
+                MAX({col_q}) as max_date,
+                DATEDIFF(day, MIN({col_q}), MAX({col_q})) as date_range_days,
                 CASE
                     WHEN EXISTS (
                         SELECT 1
@@ -289,7 +345,7 @@ class ColumnStatsCollector:
                     ELSE 0
                 END as has_time_component
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         query = text(transpile_query(sql, self._dialect))
 
@@ -315,14 +371,15 @@ class ColumnStatsCollector:
         self, column_name: str, sample_size: int = 10
     ) -> StringStats:
         """Collect string statistics for a column."""
+        col_q = quote_tsql_identifier(column_name)
         # Get length statistics
         length_sql = f"""
             SELECT
-                MIN(LEN([{column_name}])) as min_length,
-                MAX(LEN([{column_name}])) as max_length,
-                AVG(CAST(LEN([{column_name}]) AS FLOAT)) as avg_length
+                MIN(LEN({col_q})) as min_length,
+                MAX(LEN({col_q})) as max_length,
+                AVG(CAST(LEN({col_q}) AS FLOAT)) as avg_length
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
+            WHERE {col_q} IS NOT NULL
         """
         length_query = text(transpile_query(length_sql, self._dialect))
 
@@ -336,12 +393,12 @@ class ColumnStatsCollector:
         # Get top frequent values
         sample_sql = f"""
             SELECT TOP {sample_size}
-                [{column_name}] as value,
+                {col_q} as value,
                 COUNT(*) as frequency
             FROM {self._qualified_table}
-            WHERE [{column_name}] IS NOT NULL
-            GROUP BY [{column_name}]
-            ORDER BY COUNT(*) DESC, [{column_name}]
+            WHERE {col_q} IS NOT NULL
+            GROUP BY {col_q}
+            ORDER BY COUNT(*) DESC, {col_q}
         """
         sample_query = text(transpile_query(sample_sql, self._dialect))
 
@@ -364,7 +421,16 @@ class ColumnStatsCollector:
             return None
 
         qi = self._dialect.quote_identifier
-        qualified_table = f"{qi(self.schema_name)}.{qi(self.table_name)}"
+        # Pitfall 5: this fast path is native Databricks SQL (NOT transpiled), so
+        # the 3-part name must be built here when a catalog is set — mirroring
+        # get_sample_data (src/db/query.py). Every segment is quoted via
+        # quote_identifier (T-15.1-09 injection control).
+        if self._catalog:
+            qualified_table = (
+                f"{qi(self._catalog)}.{qi(self.schema_name)}.{qi(self.table_name)}"
+            )
+        else:
+            qualified_table = f"{qi(self.schema_name)}.{qi(self.table_name)}"
         sql = f"DESCRIBE EXTENDED {qualified_table} {qi(column_name)}"
 
         try:
@@ -507,6 +573,9 @@ class ColumnStatsCollector:
         if column_pattern is not None:
             pattern_results = self.get_columns_by_pattern(column_pattern)
             return [col_name for col_name, _type_info in pattern_results]
+
+        if self._is_cross_catalog_databricks:
+            return [c["name"] for c in self._reflect_catalog_columns()]
 
         if self._inspector is not None:
             inspector_cols = self._inspector.get_columns(

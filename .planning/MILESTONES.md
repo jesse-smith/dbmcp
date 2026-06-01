@@ -1,5 +1,27 @@
 # Milestones
 
+## v2.1 Databricks identifier fixes (Shipped: 2026-05-31)
+
+**Phases completed:** 3 phases (14, 15, 15.1 inserted), 16 plans
+**Timeline:** 25 days (2026-05-07 → 2026-05-31)
+**Commits:** 200 since v2.0 | **Code changes:** 40 files, +5,321/-639 (src + tests + docs)
+**Archive:** [milestones/v2.1-ROADMAP.md](milestones/v2.1-ROADMAP.md) · [milestones/v2.1-REQUIREMENTS.md](milestones/v2.1-REQUIREMENTS.md) · [milestones/v2.1-MILESTONE-AUDIT.md](milestones/v2.1-MILESTONE-AUDIT.md)
+
+**Delivered:** Fixed Databricks catalog handling and unified 3-part identifier resolution across all seven namespace-aware MCP tools, then threaded the resolved catalog through to real cross-catalog metadata targeting — eliminating the CR-02 silent mis-targeting bug. Breaking change by design: catalog-less Databricks connections now fail fast with a clear, catalog-listing error.
+
+**Key accomplishments:**
+
+- IDENT-01/02 — `connect_database` rejects catalog-less Databricks connections (URL or named config) with an error listing accessible catalogs from `SHOW CATALOGS`; the silent catalog-listing fallback in `list_schemas` is removed and guarded by a negative-assertion regression test.
+- IDENT-03/04 — One shared identifier resolver (`src/db/identifiers.py`) parses `table_name` at dialect-aware depth (Databricks=3, MSSQL=2, generic=1) with strict disagreement-only conflict detection between dotted segments and explicit `catalog`/`schema_name` params; extra parts produce a depth-named error.
+- IDENT-05/06/07 — Every hardcoded `schema_name='dbo'` signature default removed; each dialect advertises its own `default_schema` on `DialectStrategy`. `catalog` parameter added to `get_sample_data` and `get_column_info`, gated off MSSQL/generic. All 7 namespace-aware tools route through the resolver (D-12 boundary matrix).
+- IDENT-08 (Phase 15.1, inserted) — `find_pk_candidates`, `find_fk_candidates`, and the column-stats path now TARGET the resolved Databricks catalog via stateless raw 3-part SQL (shared `CatalogAwareReflector`, no `USE CATALOG`), bypassing the catalog-blind SQLAlchemy Inspector. Closes the CR-02 silent mis-targeting bug; verified live (bmtct → cerner_src, 7/7 cross-catalog UAT with negative controls, no stale-catalog bleed on pooled connections).
+- TEST-01/02 — Closed the residual v2.0 Databricks `connect_with_config` regression-test gaps (env-var substitution for `catalog`/`schema_name`; `SQLAlchemyError` → `ConnectionError` wrapping with host string).
+- Security hardening — `DatabricksDialect.quote_identifier` escapes embedded backticks (CR-01); shared `quote_tsql_identifier()` helper closes a bracket break-out in FK candidate generation (WR-04); 85% coverage floor maintained throughout.
+
+**Known deferred items at close:** 5 (see STATE.md Deferred Items) — residual Databricks integration tests; a likely-stale unify-3-part todo (superseded by Phases 15/15.1); cross-dialect ca_bundle support (future trigger); URL-mode probe ca_bundle inheritance (audit WARNING); 7 non-blocking Phase 15.1 code-review follow-ups (audit tech_debt). The two substantive items are documented as accepted tech debt in the passed v2.1 audit.
+
+---
+
 ## v2.0 Multi-Dialect Support (Shipped: 2026-05-06)
 
 **Phases completed:** 7 phases (6 + 13.1 inserted), 20 plans
@@ -10,6 +32,7 @@
 **Delivered:** Extended dbmcp from SQL Server-only to a three-dialect MCP server (MSSQL, Databricks, Generic SQLAlchemy) via a DialectStrategy protocol, with optimized Databricks paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats), dialect-aware query validation, and parameterized fixtures that exercise every dialect path.
 
 **Key accomplishments:**
+
 - DialectStrategy protocol with MssqlDialect, DatabricksDialect, GenericDialect; registry-backed dispatch; all existing MSSQL behavior preserved through Phase 8 extraction
 - Three-level namespace (catalog.schema.table) for Databricks with DESCRIBE EXTENDED property parsing and partition metadata
 - Sqlglot-based query validation accepts a dialect parameter; safe-procedure list dialect-aware (MSSQL sp_ / empty for others); denylist unchanged across all dialects
@@ -31,6 +54,7 @@
 **Delivered:** Cleared all 10 concern items from the v1.0 audit — code quality, test coverage, connection lifecycle, security hardening, serialization, and configuration.
 
 **Key accomplishments:**
+
 - Deleted dead metrics module, narrowed 15 broad exception blocks to specific SQLAlchemy types, eliminated all type: ignore suppressions
 - Enforced 70%+ test coverage floor across all modules with CI-enforceable baseline (pyproject.toml fail_under + codecov)
 - Azure AD token-aware pool_recycle with auto-disconnect on failure, atexit/SIGTERM lifecycle cleanup for session end
@@ -50,6 +74,7 @@
 **Delivered:** Every MCP tool response uses TOON format, reducing token consumption for LLM consumers without losing any information.
 
 **Key accomplishments:**
+
 - TOON serialization wrapper with recursive pre-serialization for datetime/StrEnum/Decimal
 - Atomic swap of all 9 MCP tools from JSON to TOON (40 json.dumps → encode_response)
 - All 9 tool docstrings updated to TOON structural outline format
@@ -58,4 +83,3 @@
 - Staleness guard caught 6 real docstring-schema drift issues during development
 
 ---
-
