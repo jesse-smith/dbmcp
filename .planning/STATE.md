@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Databricks identifier fixes
-status: milestone_complete
-stopped_at: Milestone complete (Phase 15.1 was final phase)
-last_updated: 2026-05-29T16:47:04.296Z
-last_activity: 2026-05-29 -- Phase 15.1 execution started
+status: Awaiting next milestone
+stopped_at: Phase 15 context gathered
+last_updated: "2026-06-01T00:49:28.645Z"
+last_activity: 2026-06-01 — Milestone v2.1 completed and archived
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
   completed_plans: 16
-  percent: 67
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,24 @@ See: .planning/PROJECT.md (updated 2026-05-06 after v2.0 close)
 
 ## Current Position
 
-Phase: 15.1
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-05-29 - Completed quick task 260529-jwa: Fix WR-03 (cross-catalog nullability contradiction)
+Phase: Milestone v2.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-01 — Milestone v2.1 completed and archived
+
+## Deferred Items
+
+Items acknowledged and deferred at v2.1 milestone close on 2026-05-31:
+
+| Category | Item | Status |
+|----------|------|--------|
+| todo (testing) | add-databricks-integration-tests | open — residual connect_with_config regression tests (follow-up from quick task 260505-mr3) |
+| todo (database) | unify-3-part-identifier-handling | likely stale — superseded by Phases 15/15.1; review before next milestone |
+| todo (database, low) | cross-dialect-ca-bundle-support | open — future trigger (promote ca_bundle to dialect-protocol level when a 2nd dialect hits a corp-MITM gateway) |
+| todo (database) | url-mode-probe-engine-inherit-ca-bundle | open — matches audit WARNING (IDENT-01 degraded error on structurally invalid Databricks URL) |
+| todo (analysis, low) | phase-15.1-code-review-followups | open — 7 non-blocking robustness/clarity/dedup findings (WR-01/02/05, IN-01-04); already in audit tech_debt |
+
+The two substantive items (url-mode-probe ca_bundle, phase-15.1 follow-ups) are documented as accepted tech debt in `.planning/milestones/v2.1-MILESTONE-AUDIT.md` (status: passed).
 
 ## Performance Metrics
 
@@ -135,3 +149,7 @@ Stopped at: Phase 15 context gathered
 Resume file: --resume-file
 
 **Planned Phase:** 15 (Unified identifier resolver (cross-dialect)) — 6 plans — 2026-05-28T21:38:16.587Z
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

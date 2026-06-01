@@ -10,28 +10,11 @@ LLM agents can explore and query databases safely, with validated read-only acce
 
 ## Current State
 
-**Shipped:** v2.0 Multi-Dialect Support (2026-05-06)
+**Shipped:** v2.1 Databricks identifier fixes (2026-05-31)
 
-dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQLAlchemy URL (Generic) — via a `DialectStrategy` protocol. MSSQL behavior is preserved verbatim; Databricks runs optimized paths (catalog awareness, DESCRIBE EXTENDED, Tier-3 precomputed stats); Generic falls back to Inspector-only metadata. All 9 MCP tools dispatch dialect-specific behavior through the strategy.
+dbmcp supports three dialects — SQL Server (MSSQL), Databricks, and any SQLAlchemy URL (Generic) — via a `DialectStrategy` protocol, with all seven namespace-aware MCP tools routing identifier resolution through one shared resolver (`src/db/identifiers.py`). Databricks connections require an explicit catalog at connect time (fail-fast with an accessible-catalog list); dotted `table_name` is parsed at dialect-aware depth (3/2/1) with strict conflict detection against explicit params; per-dialect default schema replaces every hardcoded `"dbo"`. On Databricks, an explicit non-default `catalog` now actually targets that catalog's metadata via stateless raw 3-part SQL (shared `CatalogAwareReflector`, no `USE CATALOG`), closing the CR-02 silent mis-targeting bug — verified live (bmtct → cerner_src, 7/7 UAT).
 
-**Phase 15.1 complete (2026-05-29):** Cross-catalog metadata threading (IDENT-08). `find_pk_candidates`, `find_fk_candidates`, and `get_column_info` now target an explicit non-default Databricks catalog via stateless raw 3-part SQL (shared `CatalogAwareReflector`, no `USE CATALOG`), eliminating the CR-02 silent mis-targeting bug. Verified live (bmtct → cerner_src, 7/7 UAT). Also hardened `DatabricksDialect.quote_identifier` to escape embedded backticks (CR-01).
-
-## Current Milestone: v2.1 Databricks identifier fixes
-
-**Goal:** Fix Databricks catalog handling and unify 3-part identifier resolution across MCP tools. API is changing — existing Databricks connections without a catalog in the URL will break, by design.
-
-**Target features:**
-- Require catalog at connect time for Databricks connections (fail-fast with accessible-catalog list from `SHOW CATALOGS`)
-- Unified identifier resolver across the five affected tools: dialect-aware depth (3/2/1), strict conflict detection between `table_name` / `schema_name` / `catalog`, dialect-aware default schema (no more hardcoded `"dbo"`)
-- Add `catalog` parameter to `get_sample_data` and `get_column_info`
-- Drop the silent catalog-listing fallback in `list_schemas`
-- Residual Databricks `connect_with_config` regression tests (env-var substitution for `catalog`/`schema_name`, `SQLAlchemyError` → `ConnectionError` wrapping)
-
-**Sources:**
-- `.planning/todos/pending/2026-05-08-unify-3-part-identifier-handling-and-require-databricks-cata.md`
-- `.planning/todos/pending/2026-05-05-add-databricks-integration-tests.md`
-
-**Explicitly out of scope:** Cross-dialect `list_databases`/`list_catalogs` enumeration tool — captured as note for a future milestone.
+**Next milestone:** Not yet defined. Run `/gsd:new-milestone`. Candidate sources: the 5 deferred items in STATE.md, the DISC-01 catalog-enumeration backlog item, and the cross-catalog-FK-targets deferral.
 
 ## Requirements
 
@@ -64,20 +47,25 @@ dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQ
 - ✓ Dialect-aware query validation (sqlglot parse + safe-procedure list per dialect) — v2.0
 - ✓ Databricks three-level namespace (catalog.schema.table) + DESCRIBE EXTENDED table properties — v2.0
 - ✓ Dialect-parameterized test fixtures; coverage floor raised to 85% — v2.0
+- ✓ `connect_database` rejects catalog-less Databricks connections, listing accessible catalogs in the error (IDENT-01) — v2.1
+- ✓ `list_schemas` no longer silently returns catalog names when schema lookup fails; fallback removed (IDENT-02) — v2.1
+- ✓ All seven namespace-aware tools parse dotted `table_name` per dialect depth and error on extra parts (IDENT-03) — v2.1
+- ✓ Conflicting explicit `schema_name`/`catalog` vs `table_name` segments produce a named-conflict error, no silent overrides (IDENT-04) — v2.1
+- ✓ `get_sample_data` accepts a `catalog` param on Databricks; errors on MSSQL/generic (IDENT-05) — v2.1
+- ✓ `get_column_info` accepts a `catalog` param on Databricks; errors on MSSQL/generic (IDENT-06) — v2.1
+- ✓ Per-dialect default schema on `DialectStrategy`; no tool signature hardcodes `"dbo"` (IDENT-07) — v2.1
+- ✓ `find_pk_candidates`/`find_fk_candidates`/column-stats target the resolved non-default Databricks catalog via stateless 3-part SQL; CR-02 mis-targeting eliminated (IDENT-08) — v2.1 (Phase 15.1)
+- ✓ Regression test for env-var substitution on `catalog`/`schema_name` in Databricks `connect_with_config` (TEST-01) — v2.1
+- ✓ Regression test for `SQLAlchemyError` → `ConnectionError` wrapping on Databricks connect path (TEST-02) — v2.1
 
 ### Active
 
-<!-- v2.1 Databricks identifier fixes — see REQUIREMENTS.md for full list -->
+(None — v2.1 shipped. Next milestone requirements defined via `/gsd:new-milestone`.)
 
-- [ ] **IDENT-01**: `connect_database` rejects Databricks connections without a catalog, listing accessible catalogs in the error
-- [ ] **IDENT-02**: `list_schemas` no longer silently returns catalog names when schema lookup fails
-- [ ] **IDENT-03**: All five namespace-aware tools parse dotted `table_name` per dialect depth and error on extra parts
-- [ ] **IDENT-04**: Explicit `schema_name`/`catalog` params that conflict with segments in `table_name` produce a named-conflict error (no silent overrides)
-- [ ] **IDENT-05**: `get_sample_data` accepts a `catalog` parameter on Databricks; errors on MSSQL/generic
-- [ ] **IDENT-06**: `get_column_info` accepts a `catalog` parameter on Databricks; errors on MSSQL/generic
-- [ ] **IDENT-07**: Per-dialect default schema advertised on `DialectStrategy`; no tool signature hardcodes `"dbo"`
-- [ ] **TEST-01**: Regression test for env-var substitution on `catalog` and `schema_name` in Databricks `connect_with_config`
-- [ ] **TEST-02**: Regression test for `SQLAlchemyError` → `ConnectionError` wrapping on Databricks connect path
+Candidate inputs for the next milestone:
+- DISC-01 — cross-dialect `list_catalogs`/`list_databases` enumeration tool (backlog)
+- Cross-catalog FK targets in a *different* catalog than the source (deferred from Phase 15.1)
+- 5 deferred items at v2.1 close (see STATE.md Deferred Items): residual Databricks integration tests, cross-dialect `ca_bundle` support, URL-mode probe `ca_bundle` inheritance, Phase 15.1 code-review follow-ups
 
 ### Out of Scope
 
@@ -94,12 +82,12 @@ dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQ
 
 ## Context
 
-- **Current state:** 9 MCP tools, 872 tests, 90.64% coverage (85% floor), TOON serialization, 3 dialects (MSSQL, Databricks, Generic) via DialectStrategy protocol, dialect-aware analysis tools with Databricks Tier-3 fast path
+- **Current state:** 9 MCP tools (7 namespace-aware, all routing through the shared identifier resolver), 1072 tests, 85% coverage floor, TOON serialization, 3 dialects (MSSQL, Databricks, Generic) via DialectStrategy protocol, dialect-aware analysis tools with Databricks Tier-3 fast path and cross-catalog metadata targeting
 - **Tech stack:** Python 3.11+, FastMCP, SQLAlchemy, pyodbc (mssql extra), databricks-sqlalchemy (databricks extra), toon-format, sqlglot, azure-identity (mssql extra)
-- **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`) with required `dialect` discriminator and per-dialect typed config models
-- **Key modules:** `src/db/dialects/` (protocol, mssql, databricks, generic, registry), `src/db/` (connection, query, validation, metadata, config), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates), `src/serialization/` (type handlers, TOON)
-- **Milestones shipped:** v1.0 (TOON migration), v1.1 (concern handling), v2.0 (multi-dialect support)
-- **Known follow-ups:** Phase 999.1 backlog (API consistency pass across MCP tools); Databricks integration test todo
+- **Configuration:** Optional TOML config file (`~/.dbmcp/config.toml` or `dbmcp.toml`) with required `dialect` discriminator and per-dialect typed config models; Databricks config requires an explicit catalog
+- **Key modules:** `src/db/dialects/` (protocol, mssql, databricks, generic, registry), `src/db/` (connection, query, validation, metadata, config, **identifiers**), `src/mcp_server/` (tools), `src/analysis/` (column stats, FK candidates, **_sql CatalogAwareReflector**), `src/serialization/` (type handlers, TOON)
+- **Milestones shipped:** v1.0 (TOON migration), v1.1 (concern handling), v2.0 (multi-dialect support), v2.1 (Databricks identifier fixes)
+- **Known follow-ups (5 deferred at v2.1 close — see STATE.md):** residual Databricks integration tests; cross-dialect `ca_bundle` support; URL-mode probe `ca_bundle` inheritance (audit WARNING); Phase 15.1 code-review follow-ups (7 non-blocking); plus DISC-01 (catalog enumeration tool) and cross-catalog FK targets in the backlog
 
 ## Constraints
 
@@ -135,6 +123,15 @@ dbmcp now supports three dialects — SQL Server (MSSQL), Databricks, and any SQ
 | `supports_indexes` capability flag gating (v2.0) | Databricks has no traditional indexes; clean schema response | ✓ Good |
 | Coverage floor ratchet 70 → 85 (v2.0, Phase 13) | Single global knob, ~5pt headroom over 90.64% baseline | ✓ Good |
 | `build_sample_query` method on DialectStrategy (v2.0 quick 260506-n8s) | Moved dialect-specific SQL out of QueryService — no more TSQL-as-default | ✓ Good |
+| Breaking change: require catalog at Databricks connect time, no silent default (v2.1, IDENT-01) | Clear fail-fast error over mysterious downstream wrong-catalog failures | ✓ Good |
+| Single shared identifier resolver across all 7 namespace-aware tools (v2.1, IDENT-03) | DRY; depth measured via `len(Table.parts)`, never `Table.name/db/catalog` (sqlglot pitfall) | ✓ Good |
+| Disagreement-only conflict detection, not most-specific-wins (v2.1, IDENT-04) | Explicit-over-implicit; redundant-but-consistent params allowed, contradictions error | ✓ Good |
+| Per-dialect `default_schema` property replaces hardcoded `"dbo"` (v2.1, IDENT-07) | Correctness across dialects; MSSQL→dbo, Databricks→session default, generic→none | ✓ Good |
+| Catalog gate runs BEFORE depth check in resolver (v2.1) | A catalog on a shallow dialect reports the gate message, not a confusing depth error | ✓ Good |
+| Cross-catalog targeting via stateless raw 3-part SQL, no `USE CATALOG` (v2.1, IDENT-08) | Bypasses catalog-blind Inspector; no per-connection session state, safe on pooled conns | ✓ Good |
+| Shared `CatalogAwareReflector` helper for cross-catalog reads (v2.1, Phase 15.1) | Rule of Three: reused by PK/FK/column-stats; one place for 3-part reflection | ✓ Good |
+| FK target enumeration scoped to resolved catalog only (v2.1, Phase 15.1) | KISS; cross-catalog FK targets (different catalog than source) deferred | — Pending |
+| `quote_tsql_identifier()` shared helper + backtick escaping (v2.1, CR-01/WR-04) | Closes injection break-out in FK candidate generation; defense at the quoting boundary | ✓ Good |
 
 ## Evolution
 
@@ -154,4 +151,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-29 after Phase 15.1 complete — cross-catalog metadata threading (IDENT-08, CR-02 fix) verified live; Databricks backtick-escaping hardening (CR-01).*
+*Last updated: 2026-05-31 after v2.1 milestone — Databricks identifier fixes (IDENT-01..08, TEST-01/02) shipped; unified cross-dialect resolver, catalog-required connect, cross-catalog metadata targeting.*
