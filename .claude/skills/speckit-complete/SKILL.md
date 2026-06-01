@@ -1,6 +1,13 @@
 ---
-description: Mark a feature as complete after merging to main. Updates status headers
-  and central registry.
+name: "speckit-complete"
+description: "Mark a feature as complete after merging to main. Updates status headers and central registry."
+argument-hint: "Optional feature name (e.g., 001-db-schema-explorer)"
+compatibility: "Requires spec-kit project structure with .specify/ directory and featcomp extension"
+metadata:
+  author: "github-spec-kit"
+  source: "templates/commands/featcomp.complete.md"
+user-invocable: true
+disable-model-invocation: false
 ---
 
 
@@ -30,14 +37,14 @@ Run: `git branch --show-current`
 
 Error message to show:
 ```
-ERROR: Cannot run /speckit.featcomp.complete from a feature branch.
+ERROR: Cannot run speckit-complete from a feature branch.
 
 This command should be run from 'main' after merging a feature branch.
 
 Correct workflow:
 1. git checkout main
 2. git merge ###-feature-name
-3. /speckit.featcomp.complete
+3. speckit-complete
 ```
 
 ### Check 2: Task Completion Validation
