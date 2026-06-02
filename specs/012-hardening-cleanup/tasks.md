@@ -182,11 +182,16 @@ validation run on 2026-06-02 (after Phase 6 closed). Logged first as TD-11/TD-12
   resolver-path message now names the catalog. Other `SQLAlchemyError`s propagate unchanged.
   `src/db/metadata.py`, `src/mcp_server/analysis_tools.py` + `test_metadata.py`,
   `test_analysis_tools_helpers.py`. **Done: commit `663b03d`; struck from TECH-DEBT.md.**
-- [ ] T030 Four gates re-run green (1155p/168s, cov 91.94%, ruff `src/` clean, complexity
-  max=15 — **done**); live re-probe of `dbmcp-test` against the warehouse after `/mcp` reload
-  to confirm real `total_rows`/consistent `null_percentage`/null mean+stddev (TD-11) and clean
-  `Catalog 'X' not found` envelopes (TD-12); MSSQL Tier-2 path unaffected. **Gates done;
-  live probe pending `/mcp` reload.**
+- [X] T030 Four gates re-run green (1155p/168s, cov 91.94%, ruff `src/` clean, complexity
+  max=15); live re-probe of `dbmcp-test` against the warehouse after `/mcp` reload confirmed
+  TD-11 + TD-12 end-to-end. **Done: TD-11 — `cerner_dm.demographics.deceased_dt` now reports
+  `null_count=182387` next to `null_percentage=95.60` (= 182387/190782, the exact
+  contradiction TD-11 described, now consistent); `total_rows` real on default-catalog
+  (190782) and cross-catalog `samples.tpch.customer` (750000); mean/stddev cleanly `null`.
+  TD-12 — bad catalog on `list_schemas`/`list_tables`/`get_column_info` all return clean
+  `Catalog 'nonexistent_catalog_xyz' not found` (no raw `ServerOperationError`/`sqlalche.me`
+  leak; resolver-path names the catalog). MSSQL regression check — `dbo.PerformedActs.
+  PerformedActCodeID` Tier-2 path unaffected: `mean_value`/`std_dev` populated as before.**
 
 ---
 
