@@ -65,6 +65,41 @@ pinning). Source:
 
 ---
 
+## BL-04 — Composite-key detection in `find_pk_candidates` (UE-02)
+
+**Captured:** 2026-06-02 (utility eval, finding UE-02) · **Priority:** future
+
+`find_pk_candidates` detects single-column and constraint-backed keys only; on a table whose key is
+*composite* it returns an empty candidate list, which reads as "no key exists." In the eval, A2
+(`samples.tpch.partsupp`, key `(ps_partkey, ps_suppkey)`) hit exactly this — the dedicated PK tool
+returned the worst-case silence on the one table where the answer was composite. This is a
+**documented non-goal** of the current tool (its description says so), so it's additive feature
+scope, not a bug.
+
+**Scope when triggered:** add a bounded multi-column uniqueness probe (e.g. test 2-column
+combinations among the structural single-column candidates), or — cheaper — emit a result note
+distinguishing "no key found" from "no *single-column* key found; composite not assessed." See
+[`specs/utility-eval/findings.md`](./utility-eval/findings.md) → UE-02.
+
+---
+
+## BL-05 — Surface text truncation at the point of length judgment (UE-05)
+
+**Captured:** 2026-06-02 (utility eval, finding UE-05) · **Priority:** low
+
+`get_sample_data` truncates text values >1000 chars (documented contract) and tracks
+`truncated_columns`, but the truncation isn't prominent or per-value. In the eval, A10
+(`HL7RawMessage.RawMessage`, max 4000, 32.4% of rows >1000 chars) showed a naive user could
+conclude "max ≈ 1000" from sampled rows and size a downstream parser to clip ~⅓ of every long
+payload. True lengths are recoverable from `get_column_info` string_stats and the
+`... (N chars total)` suffix, so this is UX hardening, not a correctness bug.
+
+**Scope when triggered:** make `truncated_columns` more prominent, annotate per-value, and/or add a
+one-line `get_sample_data` docstring hint pointing length questions to `get_column_info`
+string_stats. See [`specs/utility-eval/findings.md`](./utility-eval/findings.md) → UE-05.
+
+---
+
 ## Provenance notes (deferred sub-scope, no standalone item)
 
 From the GSD `ROADMAP.md` Backlog: the former "Phase 999.1 API consistency pass" was mostly

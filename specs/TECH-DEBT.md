@@ -22,6 +22,7 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 | TD-10 | `tests/` consolidation & deepening backlog: parametrize near-duplicate suites, shared mock-engine helper, deepen a few shallow asserts, delete dead skip-stubs (TST-A03/A04/A05/A08, B01/B03/B05/B09/B10, C05/C06/C07, D05/D06/D07/D08/D09/D10, D13-dup) | tests | low | many small refactors | feature 012 (US3 sweep) |
 | ~~TD-11~~ | ~~`get_column_info` Databricks fast path reports misleading stats~~ ✅ **RESOLVED** (feature 012, 2026-06-02, commit `824b6eb`) | analysis | **high** | done | feature 012 (live adversarial validation) |
 | ~~TD-12~~ | ~~Inconsistent error envelopes on a nonexistent Databricks catalog~~ ✅ **RESOLVED** (feature 012, 2026-06-02, commit `663b03d`) | mcp_server, analysis, db | low | done | feature 012 (live adversarial validation) |
+| TD-13 | Lock `find_pk_candidates` to exact distinct counts — regression test guarding against a future DESCRIBE-EXTENDED (HLL) shortcut in the uniqueness check (already exact today; verified) | analysis, tests | low | ~1 test | utility-eval (UE-03 follow-up) |
 
 > ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
 > 2026-06-01)**; struck below in *Closed / superseded*.
@@ -42,6 +43,13 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 > Cross-dialect `ca_bundle` promotion is **future feature scope**, not active debt — it
 > lives in [`BACKLOG.md`](./BACKLOG.md). The "unify-3-part identifier" todo was verified
 > **resolved** and is recorded as closed at the bottom of this file.
+>
+> **TD-13** is the lone open follow-up from the **utility eval** (2026-06-02). That eval's three
+> misleading-high findings — UE-04 (modulo float-division silent-empty), UE-01
+> (`find_fk_candidates` hard-errors on type-incompatible targets), UE-03 (unlabeled approximate
+> distinct counts) — were **fixed before Phase B** (commits `990bdd7`, `2a44144`, `9c5ec1e`); see
+> [`specs/utility-eval/findings.md`](./utility-eval/findings.md) → *Fix Outcomes*. UE-02
+> (composite-key detection) and UE-05 (truncation prominence) are deferred to `BACKLOG.md`.
 
 ---
 
@@ -191,6 +199,27 @@ doc-drift, or minor-dedup items safe to pick off opportunistically. Highlights:
 - **SRC-29** `validate_query` docstring omits the `safe_operational_commands` parameter.
 
 **Action:** opportunistic — fold individual items into any future edit that touches the file.
+
+---
+
+## TD-13 — Lock `find_pk_candidates` to exact distinct counts (regression guard)
+
+**Priority:** low · **Effort:** ~1 test · Surfaced by the utility eval (UE-03 follow-up, 2026-06-02).
+
+UE-03 flagged that the Databricks DESCRIBE EXTENDED path returns *approximate* (HLL) distinct
+counts. `find_pk_candidates` independently assesses uniqueness, so the question was whether it could
+be misled the same way (the A5 failure mode: a perfectly-unique 750k-row key reading as ~725,800
+distinct → judged *not* unique).
+
+**Verified during the UE pass:** it is **not** misled today. `PKDiscovery._column_is_unique`
+(`src/analysis/pk_discovery.py:432-453`) computes uniqueness from an **exact** transpiled
+`COUNT(DISTINCT col) == COUNT(*)` over the non-null domain — no DESCRIBE EXTENDED / HLL shortcut on
+any dialect. So this is a *lock*, not a fix.
+
+**Action:** add a Databricks-marked regression test asserting `_column_is_unique` issues an exact
+`COUNT(DISTINCT)` (and never sources the HLL distinct count) for a known-unique key, so a future
+"fast path" optimization can't silently reintroduce the A5 failure mode. No production change unless
+the test reveals one.
 
 ---
 
