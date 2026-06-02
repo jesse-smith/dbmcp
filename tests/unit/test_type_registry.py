@@ -54,7 +54,6 @@ class TestBoolHandler:
     def test_bool_not_converted_to_int(self):
         """bool must NOT become 1/0 -- subclass ordering check."""
         result, _ = convert(True)
-        assert result is not 1
         assert type(result) is bool
 
 

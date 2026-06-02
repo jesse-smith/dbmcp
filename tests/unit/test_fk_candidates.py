@@ -24,13 +24,6 @@ def _mock_result(rows):
     return mock
 
 
-def _mock_scalar(value):
-    """Create a mock execute result that returns a scalar value."""
-    mock = MagicMock()
-    mock.scalar.return_value = value
-    return mock
-
-
 def _make_pk_candidate(column_name, data_type="int", constraint_type="PRIMARY KEY"):
     """Create a PKCandidate for testing."""
     return PKCandidate(
@@ -820,30 +813,11 @@ class TestInspectorTableDiscovery:
 class TestDialectAwareMetadata:
     """Tests for dialect-aware constraint and index metadata."""
 
-    def test_mssql_uses_sys_indexes(self):
-        """MSSQL uses sys.indexes for has_index check."""
-        conn = MagicMock()
-        conn.execute.side_effect = [
-            _mock_result([("PRIMARY KEY",)]),  # constraint check
-            _mock_result([("idx_pk",)]),        # index check (sys.indexes)
-        ]
-
-        search = FKCandidateSearch(
-            connection=conn,
-            source_schema="dbo",
-            source_table="Orders",
-            source_column="customer_id",
-            source_data_type="int",
-        )
-        metadata = search.get_column_metadata(
-            target_schema="dbo",
-            target_table="Customers",
-            target_column="id",
-            target_data_type="int",
-            target_is_nullable=False,
-        )
-
-        assert metadata["target_has_index"] is True
+    # Removed test_mssql_uses_sys_indexes (TST-A02): it drove the same MagicMock
+    # side_effect as TestColumnMetadata.test_collects_pk_constraint and asserted a
+    # strict subset (target_has_index only). Because the connection is a bare mock,
+    # it never exercised the real sys.indexes SQL, so it added no coverage over the
+    # superset test. The generic-dialect index path below remains distinct.
 
     @pytest.mark.dialects('generic')
     def test_generic_uses_inspector_get_indexes(self, dialect):

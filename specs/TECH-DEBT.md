@@ -19,6 +19,7 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 | TD-07 | `connection.py` robustness: undisposed engine on probe failure + `connect()` `dialect_name` mislabel (SRC-01/02) | db | medium | ~10 LOC + tests, 3 sites | feature 012 (US2 sweep) |
 | TD-08 | Contract-sensitive correctness edges: `list_tables` multi-schema pagination, cross-catalog detailed columns, count-query ORDER BY (SRC-03/05/30) | mcp_server, db | medium | needs contract decision | feature 012 (US2 sweep) |
 | TD-09 | Clarity/cleanup grab-bag: dead scalar guards, error-tail dedup, identity handlers, stale legacy-log migration, doc drift, etc. (SRC-13/14/16-29) | all | low | many small | feature 012 (US2 sweep) |
+| TD-10 | `tests/` consolidation & deepening backlog: parametrize near-duplicate suites, shared mock-engine helper, deepen a few shallow asserts, delete dead skip-stubs (TST-A03/A04/A05/A08, B01/B03/B05/B09/B10, C05/C06/C07, D05/D06/D07/D08/D09/D10, D13-dup) | tests | low | many small refactors | feature 012 (US3 sweep) |
 
 > ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
 > 2026-06-01)**; struck below in *Closed / superseded*.
@@ -28,6 +29,13 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 > US1-touched code, so per the triage bar (simplifications fixed only when local to TD-touched
 > code) all 30 findings (`SRC-01`…`SRC-30`) were *logged here*, not fixed in 012. Full per-finding
 > detail with locations lives in [`specs/012-hardening-cleanup/findings.md`](./012-hardening-cleanup/findings.md).
+>
+> **TD-10** was surfaced by feature 012's full-`tests/` review sweep (US3, all 70 files). The sweep
+> found 22 findings; the 8 safe, coverage-neutral wins (a real `SyntaxWarning`, a subset/duplicate
+> test, an `assert True`, three misleading docstrings, three dead helpers, **plus** a new MSSQL
+> bracket-escape security test) were **fixed in 012**, and the larger parametrize/consolidation
+> refactors — where proving branch-equivalence risks a silent coverage drop — were logged here.
+> Per-`TST-NN` detail lives in the same findings.md.
 >
 > Cross-dialect `ca_bundle` promotion is **future feature scope**, not active debt — it
 > lives in [`BACKLOG.md`](./BACKLOG.md). The "unify-3-part identifier" todo was verified

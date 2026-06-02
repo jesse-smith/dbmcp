@@ -3,8 +3,9 @@ phase: 012-hardening-cleanup
 reviewed: 2026-06-01
 src_modules_total: 34
 src_modules_reviewed: 34
-findings: { critical: 0, warning: 10, info: 20, total: 30 }
-dispositions: { fixed: 0, verified: 0, logged: 30 }
+findings: { critical: 0, warning: 16, info: 36, total: 52 }
+dispositions: { fixed: 8, verified: 0, logged: 44 }
+us3_test_counts: { before: "1150p/166s/91.92%", after: "1149p/166s/91.92%" }
 ---
 
 # Findings Ledger — 012 Hardening & Cleanup Pass
@@ -193,4 +194,68 @@ all 30 are **logged** — US2 lands no `src/` change. Grouped into TD-05…TD-09
 
 ## tests/ findings (TST-NN)
 
-_(none yet — populated during the US3 sweep, T022-T024)_
+US3 sweep — all 70 `tests/` files reviewed (4 parallel reviewers across analysis / db-core /
+dialects+mcp / integration+support, T022-T023). **Result: 0 critical, 6 warning, 16 info = 22.**
+Unlike US2, US3's scope *is* to apply test fixes (consolidate / deepen / refactor-to-intent),
+so the safe, coverage-neutral wins are **fixed** here; larger parametrize/consolidation refactors
+(where proving branch-equivalence risks a silent coverage drop) are **logged** to `TD-10`.
+
+> **Reviewer claims verified before acting** (debugging directive): TST-D01's `assert result is
+> not 1` does raise a real `SyntaxWarning` (confirmed via `-W error::SyntaxWarning`); TST-A02's
+> `test_mssql_uses_sys_indexes` drives a bare `MagicMock` `side_effect` so it never exercises the
+> real `sys.indexes` SQL — it is a strict subset of `test_collects_pk_constraint`, confirmed;
+> TST-C01's MSSQL `]`→`]]` escape (`mssql.py:110`) was genuinely untested while the Databricks
+> backtick equivalent (CR-01) was covered.
+
+| ID | Sev | Location | Finding | Disposition |
+|----|-----|----------|---------|-------------|
+| TST-D01 | warning | `test_type_registry.py:57` | `assert result is not 1` — real `SyntaxWarning` ("is" with literal) + semantically wrong identity check (only "works" via small-int caching). The next line `type(result) is bool` is the actual coverage. | **fixed** — removed the line (commit below). Suite re-run under `-W error::SyntaxWarning` clean. |
+| TST-A02 | warning | `test_fk_candidates.py:823-846` | `test_mssql_uses_sys_indexes` = strict subset of `test_collects_pk_constraint` (:238); identical `MagicMock` `side_effect` means the real sys.indexes path is never hit → 0 added coverage. | **fixed** — deleted with a provenance comment; superset test retained. |
+| TST-D03 | warning | `test_nfr_compliance.py:379-394` | `test_nfr_compliance_summary` is `print(...); assert True` — a pure doc-only tautology. | **fixed** — replaced with a module comment carrying the NFR→test map. |
+| TST-B02 | warning | `test_connect_tool.py:160` | `test_databricks_connection_name_routes_through_connect_with_config` docstring said "routes to connect_with_url" but body asserts `connect_with_config`. Also ~95% dup of `test_connection_name_valid_calls_connect_with_config` (:65) — but the two pin different config types, so kept distinct. | **fixed** (docstring) — corrected the contradiction; consolidation logged → TD-10. |
+| TST-C01 | warning | `test_mssql_dialect.py:54` (`TestQuoteIdentifier`) | Security-coverage asymmetry: MSSQL `quote_identifier` escapes `]`→`]]` (break-out defense) but only simple/spaces/dotted cases were tested; the Databricks backtick equivalent (CR-01) *was* covered. | **fixed** — added `test_embedded_closing_bracket_is_escaped` (`ev]il` → `[ev]]il]`). Coverage gain. |
+| TST-D02 | warning | `test_discovery.py:88-151` | The three `list_tables` filter tests pre-filter `SAMPLE_TABLE_ROWS` in the test then feed only matching rows to the mock, so the assert passes even if the tool ignored the filter. Tautological. Ties to the already-logged SRC-03/SRC-30 contract gaps. | **logged → TD-08** (same multi-schema/detailed `list_tables` contract cluster; deepening needs the contract decision TD-08 already gates). |
+| TST-C02 | info | `test_validation.py:361` | Docstring said "22 elements"; assert (and source) is 21. | **fixed** — docstring corrected to 21. |
+| TST-D13 | info | `test_config.py:616` | `test_init_config_idempotent` docstring claimed "reloads (not cached)" but asserts only value-equality (`first == second`) — proves neither. (Also a minor dup of `TestValidateDefaults`.) | **fixed** (docstring → "equal config for equal inputs"); the duplicate-assert consolidation logged → TD-10. |
+| TST-A01 | info | `test_pk_discovery.py:25,737`; `test_fk_candidates.py:27` | Three dead helpers (`_mock_scalar` ×2, `_make_databricks_dialect`) — zero call sites (grep-confirmed). | **fixed** — deleted all three. |
+| TST-A03 | info | `test_pk_discovery.py:431` | `test_uses_provided_schema` reads back the constructor arg; discards `find_candidates()` result. | logged → TD-10 (deepen). |
+| TST-A04 | info | `test_fk_candidates.py:613,657` | `>= 1` asserts where the mock yields exactly one candidate (`== 1` would catch a dup-regression). | logged → TD-10 (deepen). |
+| TST-A05 | info | `test_fk_candidates.py:970` | `test_overlap_transpiled_for_non_mssql` asserts the overlap result, not that transpilation occurred; name over-promises. | logged → TD-10 (refactor-to-intent / rename). |
+| TST-A08 | info | `test_column_stats.py:1045` | `.split("DESCRIBE EXTENDED ")[1].split(" ")[0]` string-surgery couples to SQL spacing; the positive 3-part membership assert already suffices. | logged → TD-10 (refactor-to-intent). |
+| TST-B01 | info | `test_connection.py:23` + `test_query_timeout.py:16` | `_make_mock_engine()` duplicated verbatim across two files (+ a third `_make_mock_dialect` variant). | logged → TD-10 (consolidate to shared helper). |
+| TST-B03 | info | `test_connect_tool.py` (6 tests) | ~20-line 5-collaborator `patch(...)` stack repeated per test — design signal: `connect_database` couples to module-level singletons + Path cache. | logged → TD-10 (extract fixture; design signal is new, test-ergonomic only). |
+| TST-B05 | info | `test_metadata.py:196-252` | A few tests build a dict/dataclass by hand and assert the fields they just set (real behavior is "tested in integration" per their own docstrings). | logged → TD-10 (deepen or drop). |
+| TST-B09 | info | `test_connection.py:787` | `test_connect_propagates_token_provider_error` dual-patches to force an error the real flow raises only via `creator()`; weak disjunction assert. The adjacent `TestTokenFailureAutoDisconnect` drives it properly. | logged → TD-10 (refactor-to-intent). |
+| TST-B10 | info | `test_metadata.py:967-1142` | `TestDescribeExtended` — 11 single-field DTE-extraction tests are near-identical bodies; `test_full_dte_output_parsing` already covers all fields together. Parametrize candidate. | logged → TD-10 (consolidate/parametrize). |
+| TST-C05 | info | `test_async_tools.py` | The 9 hand-rolled `*_uses_to_thread` tests overlap the parametrized `_TOOL_PARAMS` safety-net suite (same 9-tool matrix). | logged → TD-10 (consolidate to one parametrized test). |
+| TST-C06 | info | `test_databricks_dialect.py` (~15 sites) | `create_engine` import-error save/restore try/finally repeated ~15×; `TestDatabricksCaBundle` already solved it with a fixture. | logged → TD-10 (hoist fixture). |
+| TST-C07 | info | `test_validation_edge_cases.py:124` | Several "parse failure = denied" cases assert only `is_safe is False`, not the denial *category* (the load-bearing reason). | logged → TD-10 (deepen). |
+| TST-D07/08 | info | `test_nfr_compliance.py` vs `test_nfr00{1,2}.py`; NFR-004 vs `test_validation.py` | Compliance suite re-implements NFR-001/002 timing + NFR-004 read-only checks already covered by the performance + validation suites (generous SQLite thresholds). | logged → TD-10 (consolidate — compliance references rather than re-implements). |
+| TST-D09/10 | info | `test_pyproject_extras.py:27`; `test_serialization.py:42` | 6 near-identical `test_core_deps_include_*` (parametrize); `TestConvertForSerialization` re-tests `convert()` already owned by `test_type_registry.py`. | logged → TD-10 (consolidate). |
+
+**Verified-OK (looked suspicious, confirmed deliberate — no action):** the engine-kwarg/ODBC-string
+spy tests (TST-B08) and `ca_bundle` regression tests pin the externally observable contract (load-bearing,
+not incidental coupling); the IDENT-01/02 "no SHOW CATALOGS fallback" trio (TST-B06) are three
+*distinct* contracts; the layered Plan-03 vs Phase-14 catalog-required tests (TST-B07) are deliberate
+mocked-helper-vs-real-probe depth; the two `sample_schemas` fixture families (root vs integration
+conftest) are intentionally different shapes; `to_thread` delegation asserts (TST-C04) are genuine.
+
+**Dead skip-stubs noted (TST-D05/D06):** `test_analysis_perf.py` (4 empty `pass` placeholders deferred
+to phases that never landed) and `TestNFR003DocumentationSize` (2 skips for the 007-removed doc-size
+feature). Logged → TD-10 for deletion; left in place this pass (no coverage impact, removal is cleanup).
+
+**Counts:** 0 critical, 6 warning, 16 info = 22 total; dispositions **8 fixed** (TST-D01, A02, D03,
+B02-docstring, C01, C02, D13-docstring, A01) / 1 logged-to-TD-08 (D02) / 13 logged-to-TD-10.
+
+**SC-007 before/after (measured 2026-06-01):**
+
+| Metric | Before US3 (US2 close) | After US3 | Δ |
+|--------|------------------------|-----------|---|
+| Tests passing | 1150 | 1149 | −1 (−2 redundant deleted: A02, D03; +1 added: C01) |
+| Tests skipped | 166 | 166 | 0 |
+| Coverage (total) | 91.92% | 91.92% | 0.00 (≥85% floor held; removed tests were redundant, added test net-positive) |
+
+All four gates green after US3: `pytest` 1149p/166s; `--cov` 91.92% (Required 85.0% reached); `ruff
+check src/` clean; `check_complexity.py` max=15. No `SyntaxWarning` under `-W error::SyntaxWarning`.
+US3 touched only `tests/` — no `src/` change, so the WR-05 contract convergence remains the phase's
+sole shipped-contract change.

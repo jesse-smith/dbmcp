@@ -358,7 +358,7 @@ class TestCrossDialectValidation:
         assert result.reasons[0].category == DenialCategory.STORED_PROCEDURE
 
     def test_mssql_dialect_safe_procedures_count(self):
-        """MssqlDialect().safe_procedures returns frozenset with 22 elements."""
+        """MssqlDialect().safe_procedures returns frozenset with 21 elements."""
         procs = MssqlDialect().safe_procedures
         assert isinstance(procs, frozenset)
         assert len(procs) == 21  # noqa: PLR2004
