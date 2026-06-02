@@ -28,6 +28,24 @@ logger = get_logger(__name__)
 # NFR-001: Metadata queries should complete within 30 seconds
 NFR_001_THRESHOLD_MS = 30000
 
+# TD-12: Databricks raises this marker (SQLSTATE 42704) when a catalog in a
+# SHOW ... IN <catalog> / SHOW TABLES IN <catalog>.<schema> does not exist.
+# Matching the marker — not driver-internal text — keeps the translation precise.
+_NO_SUCH_CATALOG_MARKER = "NO_SUCH_CATALOG_EXCEPTION"
+
+
+def _raise_if_missing_catalog(exc: SQLAlchemyError, catalog: str) -> None:
+    """Re-raise a Databricks 'catalog not found' error as a clean ValueError.
+
+    TD-12: SHOW-path tools would otherwise leak the raw driver
+    ``ServerOperationError`` (internal SQL + ``sqlalche.me`` URL) to the user.
+    A ``ValueError`` is rendered as a clean ``error_message`` envelope by every
+    tool boundary. Non-catalog ``SQLAlchemyError``s are left for the caller to
+    handle (this is a no-op for them).
+    """
+    if _NO_SUCH_CATALOG_MARKER in str(exc):
+        raise ValueError(f"Catalog '{catalog}' not found") from exc
+
 
 class MetadataService:
     """Service for querying database metadata.
@@ -176,9 +194,15 @@ class MetadataService:
         quoted_catalog = self._dialect.quote_identifier(catalog)
 
         with self.engine.connect() as conn:
-            schema_rows = conn.execute(
-                text(f"SHOW SCHEMAS IN {quoted_catalog}")
-            ).fetchall()
+            try:
+                schema_rows = conn.execute(
+                    text(f"SHOW SCHEMAS IN {quoted_catalog}")
+                ).fetchall()
+            except SQLAlchemyError as exc:
+                # TD-12: translate a missing catalog into a clean envelope;
+                # other SQLAlchemyErrors propagate unchanged.
+                _raise_if_missing_catalog(exc, catalog)
+                raise
 
             counts: dict[str, tuple[int, int]] = {}
             try:
@@ -354,10 +378,17 @@ class MetadataService:
         quoted_schema = self._dialect.quote_identifier(schema_name)
 
         with self.engine.connect() as conn:
-            result = conn.execute(
-                text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
-            )
-            for row in result.fetchall():
+            try:
+                result = conn.execute(
+                    text(f"SHOW TABLES IN {quoted_catalog}.{quoted_schema}")
+                )
+                rows = result.fetchall()
+            except SQLAlchemyError as exc:
+                # TD-12: translate a missing catalog into a clean envelope;
+                # other SQLAlchemyErrors propagate unchanged.
+                _raise_if_missing_catalog(exc, catalog)
+                raise
+            for row in rows:
                 # SHOW TABLES returns (database, tableName, isTemporary)
                 table_name = row[1] if len(row) > 1 else row[0]
 
@@ -1153,7 +1184,10 @@ class MetadataService:
                         if len(row) >= 2 and row[1] == table_name:
                             return True
                 return False
-            except SQLAlchemyError:
+            except SQLAlchemyError as exc:
+                # TD-12: a missing catalog is a distinct, user-actionable cause —
+                # surface it instead of masking it as "table not found".
+                _raise_if_missing_catalog(exc, catalog)
                 return False
 
         try:

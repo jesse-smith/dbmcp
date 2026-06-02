@@ -49,13 +49,18 @@ def _check_table_exists(engine, inspector, dialect, resolved, cross_catalog):
         from src.db.metadata import MetadataService
 
         metadata_svc = MetadataService(engine, dialect=dialect)
+        # TD-12: table_exists raises a clean ValueError("Catalog 'X' not found")
+        # when the catalog itself is missing; let it propagate to the tool
+        # boundary rather than mislabeling it as a missing table.
         if metadata_svc.table_exists(
             resolved.table, resolved.schema, catalog=resolved.catalog
         ):
             return None
         return {
             "status": "error",
-            "error_message": f"Table '{resolved.schema}.{resolved.table}' not found",
+            "error_message": (
+                f"Table '{resolved.catalog}.{resolved.schema}.{resolved.table}' not found"
+            ),
         }
 
     if resolved.table in inspector.get_table_names(schema=resolved.schema):
