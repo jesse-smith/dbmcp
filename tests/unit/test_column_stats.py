@@ -808,7 +808,18 @@ class TestDatabricksFastPath:
     def test_build_stats_from_describe_extended_numeric(
         self, mock_connection, dialect, sa_types_inspector
     ):
-        """Build ColumnStatistics from DESCRIBE EXTENDED for numeric column."""
+        """Build ColumnStatistics from DESCRIBE EXTENDED for numeric column.
+
+        TD-11: the fast path issues one COUNT(*) (metadata-cheap on Delta) to
+        populate ``total_rows`` and derive ``null_percentage`` honestly. The
+        precomputed min/max/num_nulls/distinct_count come from DESCRIBE EXTENDED;
+        only the row count needs the extra query.
+        """
+        # COUNT(*) → total_rows. fetchone()[0] mirrors get_basic_stats.
+        count_result = MagicMock()
+        count_result.fetchone.return_value = (1000,)
+        mock_connection.execute.return_value = count_result
+
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
             dialect=dialect.dialect, inspector=sa_types_inspector,
@@ -825,9 +836,38 @@ class TestDatabricksFastPath:
         assert isinstance(result, ColumnStatistics)
         assert result.null_count == 5
         assert result.distinct_count == 995
+        # TD-11: total_rows is the real COUNT(*), and null_percentage is derived
+        # from it (5 / 1000 * 100), no longer self-contradicting null_count.
+        assert result.total_rows == 1000
+        assert result.null_percentage == 0.5
         assert result.numeric_stats is not None
         assert result.numeric_stats.min_value == 1.0
         assert result.numeric_stats.max_value == 1000.0
+        # mean/stddev are intrinsically absent from columnar metadata (Parquet/
+        # Delta footers store min/max/null_count/numRecords, never Σx or Σx²),
+        # so the fast path correctly leaves them None — documented contract.
+        assert result.numeric_stats.mean_value is None
+        assert result.numeric_stats.std_dev is None
+
+    @pytest.mark.dialects('databricks')
+    def test_build_stats_from_describe_extended_zero_rows(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """TD-11: an empty table yields null_percentage 0.0 (no divide-by-zero)."""
+        count_result = MagicMock()
+        count_result.fetchone.return_value = (0,)
+        mock_connection.execute.return_value = count_result
+
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        result = collector._build_stats_from_describe_extended(
+            "id", sa_types.Integer(),
+            {"min": "1", "max": "1", "num_nulls": "0", "distinct_count": "0"},
+        )
+        assert result.total_rows == 0
+        assert result.null_percentage == 0.0
 
 
 class TestTranspilation:
@@ -1245,6 +1285,9 @@ class TestCrossCatalogTypeEngine:
                     ("num_nulls", "5"),
                     ("distinct_count", "995"),
                 ]
+            elif "COUNT(*)" in sql or "COUNT (*)" in sql:
+                # TD-11: fast-path row count → total_rows
+                result.fetchone.return_value = (200,)
             else:
                 # column_exists / DESCRIBE TABLE reflection
                 result.fetchall.return_value = [("amount", "int")]
@@ -1262,9 +1305,11 @@ class TestCrossCatalogTypeEngine:
 
         assert isinstance(stats, ColumnStatistics)
         # Fast-path provenance: distinct_count/null_count come from DESCRIBE
-        # EXTENDED, and total_rows is 0 (the fast path does not compute it).
+        # EXTENDED; total_rows comes from one COUNT(*) (TD-11), and
+        # null_percentage is derived from it (5 / 200 * 100 = 2.5).
         assert stats.distinct_count == 995
         assert stats.null_count == 5
-        assert stats.total_rows == 0
+        assert stats.total_rows == 200
+        assert stats.null_percentage == 2.5
         # data_type now str(TypeEngine) — the converged format (FR-014).
         assert stats.data_type == "INTEGER"

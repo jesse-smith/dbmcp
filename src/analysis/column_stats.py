@@ -536,21 +536,47 @@ class ColumnStatsCollector:
             numeric_stats = NumericStats(
                 min_value=safe_float(desc_stats.get("min")),
                 max_value=safe_float(desc_stats.get("max")),
-                mean_value=None,  # DESCRIBE EXTENDED doesn't provide mean
-                std_dev=None,     # DESCRIBE EXTENDED doesn't provide stddev
+                # mean/stddev are intrinsically absent from columnar metadata:
+                # Parquet/Delta footers store min/max/null_count/numRecords but
+                # never Σx or Σx², so a mean cannot be derived (ANALYZE COMPUTE
+                # STATISTICS doesn't compute them either). Tier-2 would, but that
+                # requires a full aggregate scan — out of scope for the fast path.
+                mean_value=None,
+                std_dev=None,
             )
+
+        # TD-11: DESCRIBE EXTENDED is column-scoped and carries no table row
+        # count, so issue one COUNT(*) — on Delta this is answered from the
+        # transaction-log metadata (not a data scan), preserving the fast path's
+        # value. Derive null_percentage honestly instead of hardcoding 0.0
+        # alongside a populated null_count.
+        total_rows = self._fast_path_row_count()
+        null_percentage = (
+            (null_count / total_rows * 100.0) if total_rows > 0 else 0.0
+        )
 
         return ColumnStatistics(
             column_name=column_name,
             table_name=self.table_name,
             schema_name=self.schema_name,
             data_type=str(type_obj),
-            total_rows=0,  # Not available from DESCRIBE EXTENDED column stats
+            total_rows=total_rows,
             distinct_count=distinct_count,
             null_count=null_count,
-            null_percentage=0.0,  # Can't compute without total_rows
+            null_percentage=null_percentage,
             numeric_stats=numeric_stats,
         )
+
+    def _fast_path_row_count(self) -> int:
+        """Row count for the Databricks fast path via one COUNT(*).
+
+        Metadata-cheap on Delta (answered from the transaction log, not a data
+        scan). Mirrors the COUNT(*) in :meth:`get_basic_stats`.
+        """
+        sql = f"SELECT COUNT(*) AS total_rows FROM {self._qualified_table}"
+        query = text(transpile_query(sql, self._dialect))
+        row = self.connection.execute(query).fetchone()
+        return row[0]
 
     def get_column_statistics(
         self, column_name: str, sample_size: int = 10
@@ -563,6 +589,13 @@ class ColumnStatsCollector:
         precomputed stats are used instead of Tier-2 aggregates. On the
         cross-catalog path the ``data_type`` response field is ``str(TypeEngine)``
         (e.g. ``"INTEGER"``), converged onto the default-catalog format (FR-014).
+
+        Fast-path contract (TD-11): ``total_rows`` is populated via one
+        COUNT(*) (metadata-cheap on Delta) and ``null_percentage`` is derived
+        from it, so they agree with ``null_count``. ``numeric_stats.mean_value``
+        and ``std_dev`` are ``None`` on the fast path by design — they are
+        intrinsically absent from columnar metadata and only the Tier-2 path
+        (MSSQL, or Databricks tables without precomputed stats) computes them.
         """
         if not self.column_exists(column_name):
             raise ValueError(
