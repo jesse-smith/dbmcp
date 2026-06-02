@@ -360,6 +360,7 @@ def _get_column_info_success_mocks():
         "data_type": "INT",
         "total_rows": 100,
         "distinct_count": 100,
+        "distinct_count_approximate": False,
         "null_count": 0,
         "null_percentage": 0.0,
         "numeric_stats": {

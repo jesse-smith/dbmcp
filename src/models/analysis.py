@@ -76,6 +76,11 @@ class ColumnStatistics:
     distinct_count: int
     null_count: int
     null_percentage: float
+    # True when distinct_count is an approximate (HLL) count rather than exact.
+    # The Databricks DESCRIBE EXTENDED fast path returns approximate distinct
+    # counts; the standard COUNT(DISTINCT) path is exact (UE-03). Emitted
+    # unconditionally so an absent flag is never read as "exact".
+    distinct_count_approximate: bool = False
     numeric_stats: NumericStats | None = None
     datetime_stats: DateTimeStats | None = None
     string_stats: StringStats | None = None
@@ -84,6 +89,8 @@ class ColumnStatistics:
         """Convert to JSON-safe dictionary.
 
         Type-specific stats only included when not None.
+        ``distinct_count_approximate`` is always present (honesty: an absent
+        flag would be ambiguous about whether the count is exact).
         """
         result = {
             "column_name": self.column_name,
@@ -92,6 +99,7 @@ class ColumnStatistics:
             "data_type": self.data_type,
             "total_rows": self.total_rows,
             "distinct_count": self.distinct_count,
+            "distinct_count_approximate": self.distinct_count_approximate,
             "null_count": self.null_count,
             "null_percentage": self.null_percentage,
         }

@@ -490,6 +490,8 @@ class TestFullColumnStatistics:
         assert stat.schema_name == "dbo"
         assert stat.total_rows == 1000
         assert stat.distinct_count == 950
+        # UE-03: the Tier-2 path uses exact COUNT(DISTINCT), so the flag is False.
+        assert stat.distinct_count_approximate is False
         assert stat.null_count == 50
         assert stat.null_percentage == 5.0
         assert stat.numeric_stats is not None
@@ -836,6 +838,10 @@ class TestDatabricksFastPath:
         assert isinstance(result, ColumnStatistics)
         assert result.null_count == 5
         assert result.distinct_count == 995
+        # UE-03: the DESCRIBE EXTENDED distinct_count is HLL-approximate, so the
+        # fast path must flag it (a unique key can report fewer distinct than
+        # rows — the phantom-duplicate signal from finding A5).
+        assert result.distinct_count_approximate is True
         # TD-11: total_rows is the real COUNT(*), and null_percentage is derived
         # from it (5 / 1000 * 100), no longer self-contradicting null_count.
         assert result.total_rows == 1000

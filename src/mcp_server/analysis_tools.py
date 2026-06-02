@@ -168,6 +168,7 @@ async def get_column_info(
                 data_type: string
                 total_rows: int
                 distinct_count: int
+                distinct_count_approximate: bool   // true = HLL-approximate (Databricks fast path)
                 null_count: int
                 null_percentage: float
                 numeric_stats: object          // numeric columns only

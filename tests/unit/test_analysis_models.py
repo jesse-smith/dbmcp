@@ -248,12 +248,43 @@ class TestColumnStatistics:
             "data_type": "int",
             "total_rows": 10000,
             "distinct_count": 10000,
+            "distinct_count_approximate": False,
             "null_count": 0,
             "null_percentage": 0.0,
         }
         assert "numeric_stats" not in result
         assert "datetime_stats" not in result
         assert "string_stats" not in result
+
+    def test_distinct_count_approximate_defaults_false_and_always_present(self):
+        """UE-03: the flag defaults to False and is always emitted (honesty)."""
+        stats = ColumnStatistics(
+            column_name="order_id",
+            table_name="orders",
+            schema_name="dbo",
+            data_type="int",
+            total_rows=10000,
+            distinct_count=10000,
+            null_count=0,
+            null_percentage=0.0,
+        )
+        assert stats.distinct_count_approximate is False
+        assert stats.to_dict()["distinct_count_approximate"] is False
+
+    def test_distinct_count_approximate_true_emitted(self):
+        """UE-03: when True (Databricks HLL fast path) the flag is emitted True."""
+        stats = ColumnStatistics(
+            column_name="member_id",
+            table_name="members",
+            schema_name="bmtct",
+            data_type="bigint",
+            total_rows=750000,
+            distinct_count=725800,
+            null_count=0,
+            null_percentage=0.0,
+            distinct_count_approximate=True,
+        )
+        assert stats.to_dict()["distinct_count_approximate"] is True
 
     def test_to_dict_with_numeric_stats(self):
         """Test to_dict includes numeric_stats when present."""

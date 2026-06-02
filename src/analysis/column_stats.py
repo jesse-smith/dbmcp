@@ -530,6 +530,11 @@ class ColumnStatsCollector:
             data_type=str(type_obj),
             total_rows=total_rows,
             distinct_count=distinct_count,
+            # DESCRIBE EXTENDED's distinct_count is an HLL approximation, not an
+            # exact count (UE-03) — a unique key can report fewer distinct values
+            # than rows. Flag it so the caller doesn't read a phantom-duplicate
+            # signal as real.
+            distinct_count_approximate=True,
             null_count=null_count,
             null_percentage=null_percentage,
             numeric_stats=numeric_stats,
@@ -614,6 +619,9 @@ class ColumnStatsCollector:
             data_type=data_type_str,
             total_rows=basic_stats["total_rows"],
             distinct_count=basic_stats["distinct_count"],
+            # Tier-2 uses exact COUNT(DISTINCT) (UE-03) — explicitly not
+            # approximate (default is False; pinned here and under test).
+            distinct_count_approximate=False,
             null_count=basic_stats["null_count"],
             null_percentage=basic_stats["null_percentage"],
             numeric_stats=numeric_stats,
