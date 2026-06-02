@@ -20,8 +20,8 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 | TD-08 | Contract-sensitive correctness edges: `list_tables` multi-schema pagination, cross-catalog detailed columns, count-query ORDER BY (SRC-03/05/30) | mcp_server, db | medium | needs contract decision | feature 012 (US2 sweep) |
 | TD-09 | Clarity/cleanup grab-bag: dead scalar guards, error-tail dedup, identity handlers, stale legacy-log migration, doc drift, etc. (SRC-13/14/16-29) | all | low | many small | feature 012 (US2 sweep) |
 | TD-10 | `tests/` consolidation & deepening backlog: parametrize near-duplicate suites, shared mock-engine helper, deepen a few shallow asserts, delete dead skip-stubs (TST-A03/A04/A05/A08, B01/B03/B05/B09/B10, C05/C06/C07, D05/D06/D07/D08/D09/D10, D13-dup) | tests | low | many small refactors | feature 012 (US3 sweep) |
-| TD-11 | `get_column_info` Databricks fast path reports misleading stats: `total_rows=0`, `null_percentage=0.0` (contradicts a populated `null_count`), and `null` mean/stddev on all numeric columns | analysis | **high** | ~15 LOC + tests | feature 012 (live adversarial validation) |
-| TD-12 | Inconsistent error envelopes on bad catalog: `list_tables`/`list_schemas` leak the raw driver exception; resolver-path tools drop the catalog qualifier from the message | mcp_server, analysis, db | low | ~10 LOC + tests | feature 012 (live adversarial validation) |
+| ~~TD-11~~ | ~~`get_column_info` Databricks fast path reports misleading stats~~ ✅ **RESOLVED** (feature 012, 2026-06-02, commit `824b6eb`) | analysis | **high** | done | feature 012 (live adversarial validation) |
+| ~~TD-12~~ | ~~Inconsistent error envelopes on a nonexistent Databricks catalog~~ ✅ **RESOLVED** (feature 012, 2026-06-02, commit `663b03d`) | mcp_server, analysis, db | low | done | feature 012 (live adversarial validation) |
 
 > ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
 > 2026-06-01)**; struck below in *Closed / superseded*.
@@ -332,7 +332,18 @@ changes to the default-catalog / MSSQL / Inspector paths.
 
 ---
 
-## TD-11 — `get_column_info` Databricks fast path reports misleading stats
+## ~~TD-11~~ — `get_column_info` Databricks fast path reports misleading stats · ✅ RESOLVED (feature 012, 2026-06-02)
+
+> **Resolved:** commit `824b6eb`. The fast path now issues one `COUNT(*)`
+> (metadata-cheap on Delta — answered from the transaction log, *not* a data scan,
+> confirmed live) to populate `total_rows`, and derives `null_percentage` from it so
+> it agrees with `null_count`. **Investigation finding:** the DESCRIBE EXTENDED stats
+> were never *wrong* — the command is column-scoped and simply carries no row count;
+> the code hardcoded `0`. `mean`/`std_dev` stay `None` **by design and correctly**:
+> they are intrinsically absent from columnar metadata (Parquet/Delta footers store
+> min/max/null_count/numRecords, never Σx or Σx²), now documented in the fast-path
+> contract. Coverage gap closed — fast-path tests now assert `total_rows` and
+> `null_percentage`. Detail retained below for provenance.
 
 **Priority:** high · **Effort:** ~15 LOC + test updates · Surfaced by feature 012 live
 adversarial validation (2026-06-02), grounded in source.
@@ -375,7 +386,17 @@ Either way, add fast-path assertions on `total_rows` and `null_percentage` to cl
 
 ---
 
-## TD-12 — Inconsistent error envelopes on a nonexistent catalog (Databricks)
+## ~~TD-12~~ — Inconsistent error envelopes on a nonexistent catalog (Databricks) · ✅ RESOLVED (feature 012, 2026-06-02)
+
+> **Resolved:** commit `663b03d`. A shared `_raise_if_missing_catalog` helper
+> (`src/db/metadata.py`) keys on Databricks' `NO_SUCH_CATALOG_EXCEPTION` marker
+> (SQLSTATE 42704 — *not* fragile driver text, confirmed live) and re-raises a clean
+> `ValueError("Catalog 'X' not found")`, which every tool boundary already renders as a
+> clean `error_message`. Wired into both SHOW-path methods (`_list_schemas_databricks`,
+> `_list_tables_databricks`) and `table_exists`; other `SQLAlchemyError`s propagate
+> unchanged. The resolver-path not-found message now names the catalog
+> (`catalog.schema.table`). The wrong-dialect *execution*-error leak noted below was left
+> as-is (acceptable for an execution-time error; not folded in). Detail retained below.
 
 **Priority:** low · **Effort:** ~10 LOC + tests · Surfaced by feature 012 live adversarial
 validation (2026-06-02). Message-quality only — no functional break.

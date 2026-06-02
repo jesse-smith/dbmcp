@@ -160,6 +160,36 @@ every `TST-NN` finding dispositioned.
 
 ---
 
+## Phase 7: Post-close validation follow-ups (TD-11/TD-12)
+
+**Purpose**: Resolve the two Databricks defects surfaced by the live *adversarial* MCP
+validation run on 2026-06-02 (after Phase 6 closed). Logged first as TD-11/TD-12 (commit
+`4491326`), then fixed here — they are follow-on findings from 012's own validation, kept in
+012's ledger rather than opening a new feature. This reconciles the close-time caveat that the
+"9 tool contracts stable" line (T026) had not caught TD-11.
+
+- [X] T028 TD-11 (high): Databricks `get_column_info` fast path shipped `total_rows=0` +
+  `null_percentage=0.0` next to a populated `null_count` (self-contradictory), a regression
+  exposed by WR-05 (T012–T015) making the fast path fire. Red→green→refactor: fast path now
+  issues one `COUNT(*)` (metadata-cheap on Delta, confirmed live read-only) for `total_rows`
+  and derives `null_percentage`; mean/stddev stay `None` by design (intrinsically absent from
+  columnar metadata) and are now documented in the contract. Closed the coverage gap
+  (`total_rows`/`null_percentage` now asserted on the fast path). `src/analysis/column_stats.py`
+  + `tests/unit/test_column_stats.py`. **Done: commit `824b6eb`; struck from TECH-DEBT.md.**
+- [X] T029 TD-12 (low): clean bad-catalog error envelopes. Shared `_raise_if_missing_catalog`
+  helper keys on the `NO_SUCH_CATALOG_EXCEPTION` marker (SQLSTATE 42704, confirmed live) →
+  clean `ValueError("Catalog 'X' not found")` across both SHOW-path methods + `table_exists`;
+  resolver-path message now names the catalog. Other `SQLAlchemyError`s propagate unchanged.
+  `src/db/metadata.py`, `src/mcp_server/analysis_tools.py` + `test_metadata.py`,
+  `test_analysis_tools_helpers.py`. **Done: commit `663b03d`; struck from TECH-DEBT.md.**
+- [ ] T030 Four gates re-run green (1155p/168s, cov 91.94%, ruff `src/` clean, complexity
+  max=15 — **done**); live re-probe of `dbmcp-test` against the warehouse after `/mcp` reload
+  to confirm real `total_rows`/consistent `null_percentage`/null mean+stddev (TD-11) and clean
+  `Catalog 'X' not found` envelopes (TD-12); MSSQL Tier-2 path unaffected. **Gates done;
+  live probe pending `/mcp` reload.**
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies
