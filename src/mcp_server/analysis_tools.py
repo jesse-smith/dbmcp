@@ -419,6 +419,7 @@ async def find_fk_candidates(
             total_found: int                   // on success only
             was_limited: bool                  // on success only
             search_scope: string               // on success only
+            type_incompatible_skipped: int     // only when > 0 (type-incompatible targets skipped)
             error_message: string              // on error only
 
     Error conditions:
@@ -475,7 +476,7 @@ async def find_fk_candidates(
                 limit=limit,
             )
 
-            return {
+            response = {
                 "status": "success",
                 "source": {
                     "column_name": column_name,
@@ -488,6 +489,13 @@ async def find_fk_candidates(
                 "was_limited": fk_result.was_limited,
                 "search_scope": fk_result.search_scope,
             }
+            # Surface type-incompatible filtering only when it happened (UE-01),
+            # so the caller knows columns were dropped vs absent.
+            if fk_result.type_incompatible_skipped > 0:
+                response["type_incompatible_skipped"] = (
+                    fk_result.type_incompatible_skipped
+                )
+            return response
 
     try:
         return encode_response(await asyncio.to_thread(_sync_work))

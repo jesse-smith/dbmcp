@@ -641,6 +641,7 @@ class TestDatabricksThreePartHappyPath:
         fake_fk_result.total_found = 0
         fake_fk_result.was_limited = False
         fake_fk_result.search_scope = "scope"
+        fake_fk_result.type_incompatible_skipped = 0
 
         with (
             factory,
@@ -766,6 +767,7 @@ class TestCrossCatalogWiring:
         fake_fk_result.total_found = 0
         fake_fk_result.was_limited = False
         fake_fk_result.search_scope = "scope"
+        fake_fk_result.type_incompatible_skipped = 0
 
         with (
             factory,
@@ -864,6 +866,7 @@ class TestCrossCatalogWiring:
         fake_fk_result.total_found = 0
         fake_fk_result.was_limited = False
         fake_fk_result.search_scope = "scope"
+        fake_fk_result.type_incompatible_skipped = 0
 
         with (
             factory,

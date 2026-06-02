@@ -493,6 +493,9 @@ def _find_fk_candidates_success_mocks():
     mock_fk_result.total_found = 1
     mock_fk_result.was_limited = False
     mock_fk_result.search_scope = "dbo schema, PK candidates only"
+    # Positive so the conditional `type_incompatible_skipped` field is emitted
+    # (UE-01) — exercises the documented success-path key in the staleness guard.
+    mock_fk_result.type_incompatible_skipped = 2
     mock_search.find_candidates.return_value = mock_fk_result
 
     # Mock engine and connection context manager

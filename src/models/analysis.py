@@ -194,12 +194,23 @@ class FKCandidateResult:
     total_found: int
     was_limited: bool
     search_scope: str
+    # Count of target columns skipped because their type category was provably
+    # incompatible with the source (UE-01). Emitted only when > 0 so the LLM
+    # caller knows filtering happened (avoids "why did my column disappear?").
+    type_incompatible_skipped: int = 0
 
     def to_dict(self) -> dict:
-        """Convert to JSON-safe dictionary."""
-        return {
+        """Convert to JSON-safe dictionary.
+
+        ``type_incompatible_skipped`` is included only when > 0 (matches the
+        optional-field pattern used by FKCandidateData).
+        """
+        result = {
             "candidates": [c.to_dict() for c in self.candidates],
             "total_found": self.total_found,
             "was_limited": self.was_limited,
             "search_scope": self.search_scope,
         }
+        if self.type_incompatible_skipped > 0:
+            result["type_incompatible_skipped"] = self.type_incompatible_skipped
+        return result

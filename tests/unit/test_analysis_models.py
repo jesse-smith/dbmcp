@@ -540,3 +540,22 @@ class TestFKCandidateResult:
         assert result["search_scope"] == "schema: dbo, pk_candidates_only: true"
         assert len(result["candidates"]) == 1
         assert isinstance(result["candidates"][0], dict)
+
+    def test_type_incompatible_skipped_defaults_to_zero_and_omitted(self):
+        """UE-01: the field defaults to 0 and is omitted from to_dict when 0."""
+        result = FKCandidateResult(
+            candidates=[], total_found=0, was_limited=False, search_scope="schema: dbo"
+        )
+        assert result.type_incompatible_skipped == 0
+        assert "type_incompatible_skipped" not in result.to_dict()
+
+    def test_type_incompatible_skipped_emitted_when_positive(self):
+        """UE-01: when > 0 the count is surfaced so the caller knows filtering ran."""
+        result = FKCandidateResult(
+            candidates=[],
+            total_found=0,
+            was_limited=False,
+            search_scope="schema: dbo",
+            type_incompatible_skipped=3,
+        )
+        assert result.to_dict()["type_incompatible_skipped"] == 3

@@ -21,6 +21,7 @@ from src.analysis._sql import (
     CatalogAwareReflector,
     quote_tsql_identifier,
     transpile_query,
+    type_category,
 )
 from src.models.analysis import (
     ColumnStatistics,
@@ -84,18 +85,6 @@ class ColumnStatsCollector:
     - Cross-dialect support via sqlglot transpilation
     - Databricks DESCRIBE EXTENDED fast path
     """
-
-    # SQL Server string-based type sets (fallback when Inspector unavailable)
-    _NUMERIC_TYPES_STR = {
-        "int", "bigint", "smallint", "tinyint", "decimal", "numeric",
-        "float", "real", "money", "smallmoney",
-    }
-    _DATETIME_TYPES_STR = {
-        "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset", "time",
-    }
-    _STRING_TYPES_STR = {
-        "char", "varchar", "text", "nchar", "nvarchar", "ntext",
-    }
 
     def __init__(
         self,
@@ -276,31 +265,10 @@ class ColumnStatsCollector:
     def _get_type_category(self, data_type: "sa_types.TypeEngine | str") -> str:
         """Classify a type into analysis categories.
 
-        Accepts either a SQLAlchemy TypeEngine object (isinstance-based) or
-        a data type string (set-based fallback for backward compat).
+        Thin delegator to the shared :func:`src.analysis._sql.type_category`
+        (one categorizer, two callers — column stats and FK candidate search).
         """
-        if isinstance(data_type, sa_types.TypeEngine):
-            if isinstance(data_type, (sa_types.Integer, sa_types.Numeric, sa_types.Float)):
-                return "numeric"
-            # MSSQL MONEY/SMALLMONEY don't inherit from Numeric
-            type_name = type(data_type).__name__.upper()
-            if type_name in ("MONEY", "SMALLMONEY"):
-                return "numeric"
-            if isinstance(data_type, (sa_types.DateTime, sa_types.Date, sa_types.Time)):
-                return "datetime"
-            if isinstance(data_type, (sa_types.String, sa_types.Text)):
-                return "string"
-            return "other"
-        # String-based fallback
-        data_type_lower = data_type.lower()
-        if data_type_lower in self._NUMERIC_TYPES_STR:
-            return "numeric"
-        elif data_type_lower in self._DATETIME_TYPES_STR:
-            return "datetime"
-        elif data_type_lower in self._STRING_TYPES_STR:
-            return "string"
-        else:
-            return "other"
+        return type_category(data_type)
 
     def get_basic_stats(self, column_name: str) -> dict:
         """Collect basic statistics for a column."""
