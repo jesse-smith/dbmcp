@@ -323,11 +323,18 @@ src/` clean, complexity ≤15 (`scripts/check_complexity.py`), coverage 92.06% (
 - **UE-03 follow-up** (`find_pk_candidates` force-exact / consult `distinct_count_approximate`) →
   TECH-DEBT as a separate finding.
 
-**Live re-validation:** pending `/mcp` reload of the dev-mirror (the `connect_database` tool
-re-opens the DB session only, not a code reload). Checks: UE-04 modulo returns N rows on
-`bmtct.cerner_dm.demographics`; UE-01 `find_fk_candidates(include_overlap=True)` on the A4/A11
-type-mismatch cases returns candidates with no DB error + a `type_incompatible_skipped` count;
-UE-03 `get_column_info` shows `distinct_count_approximate: true` on Databricks, `false` on MSSQL.
+**Live re-validation (2026-06-02, after `/mcp` reload of the dev-mirror — all PASS):**
+- **UE-04 PASS** — `get_sample_data(modulo, sample_size=5)` on `bmtct.cerner_dm.demographics`
+  returned **5 rows** (Phase A: 0), `sampling_method: modulo` (the `DIV` fix carried it; the
+  defensive TOP fallback did not need to fire).
+- **UE-01 PASS** — `find_fk_candidates(ClonedFromID, include_overlap=True)` on MSSQL `PerformedActs`
+  returned **267 candidates with no DB error** (Phase A: `Error converting nvarchar to bigint`) and
+  **`type_incompatible_skipped: 1`** — the NVARCHAR target that previously crashed the whole call is
+  now skipped and surfaced.
+- **UE-03 PASS** — `get_column_info`: Databricks `cerner_dm.demographics.person_id` →
+  `distinct_count: 190132` (< 190,782 rows) with **`distinct_count_approximate: true`** (the A5/A6
+  phantom-duplicate signal, now labeled); MSSQL `dbo.PerformedActs.PerformedActID` →
+  `distinct_count: 1391510` (= row count, exact) with **`distinct_count_approximate: false`**.
 
 ## Executor prompt appendix (blindness audit)
 
