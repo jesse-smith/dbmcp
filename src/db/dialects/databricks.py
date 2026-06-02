@@ -146,13 +146,18 @@ class DatabricksDialect:
                 f"ORDER BY RAND() LIMIT {sample_size}"
             )
         if method == SamplingMethod.MODULO:
+            # ``DIV`` is Spark integer division. Plain ``/`` is *float* division
+            # on Databricks (``_total / n`` -> DOUBLE), which made the predicate
+            # ``_rn % (_total / n) = 0`` essentially never true for integer
+            # ``_rn`` -> 0 rows silently (UE-04). MSSQL's ``/`` is already integer
+            # division, so this divergence is intentional.
             return f"""
             SELECT {column_sql} FROM (
                 SELECT *, ROW_NUMBER() OVER (ORDER BY 1) AS _rn,
                        COUNT(*) OVER () AS _total
                 FROM {full_table_name}
             ) _sampled
-            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
+            WHERE _rn % CASE WHEN _total DIV {sample_size} < 1 THEN 1 ELSE _total DIV {sample_size} END = 0
             LIMIT {sample_size}
             """
         raise ValueError(f"Unknown sampling method: {method}")

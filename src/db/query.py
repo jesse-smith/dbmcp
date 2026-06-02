@@ -131,13 +131,24 @@ class QueryService:
                 result = conn.execute(text(query))
                 self._process_rows(result, rows, truncated_columns)
 
-                # TABLESAMPLE can return 0 rows on large tables with small sample sizes
-                # because SQL Server samples at the 8KB page level, not individual rows.
-                # Fall back to TOP when this happens.
-                if not rows and sampling_method == SamplingMethod.TABLESAMPLE:
+                # Two sampling methods can legitimately return 0 rows on a
+                # populated table; in both cases fall back to TOP so the caller
+                # never sees a silent-empty result.
+                #   - TABLESAMPLE: SQL Server samples at the 8KB page level, not
+                #     individual rows, so small samples of large tables miss.
+                #   - MODULO: defense-in-depth against a backend whose integer
+                #     division mis-divides (the UE-04 float-division class of
+                #     bug); the dialect builders now emit integer division, so
+                #     this should not fire, but a silent-empty must never reach
+                #     the caller.
+                if not rows and sampling_method in (
+                    SamplingMethod.TABLESAMPLE,
+                    SamplingMethod.MODULO,
+                ):
                     logger.warning(
-                        f"TABLESAMPLE returned 0 rows for {schema_name}.{table_name} "
-                        f"with sample_size={sample_size}; falling back to TOP"
+                        f"{sampling_method.value} returned 0 rows for "
+                        f"{schema_name}.{table_name} with sample_size={sample_size}; "
+                        f"falling back to TOP"
                     )
                     fallback_query = self._build_top_query(full_table_name, column_sql, sample_size)
                     fallback_result = conn.execute(text(fallback_query))
