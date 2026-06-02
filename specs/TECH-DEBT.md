@@ -20,6 +20,8 @@ move it to a feature spec (or fold it into a hardening pass) and strike it here.
 | TD-08 | Contract-sensitive correctness edges: `list_tables` multi-schema pagination, cross-catalog detailed columns, count-query ORDER BY (SRC-03/05/30) | mcp_server, db | medium | needs contract decision | feature 012 (US2 sweep) |
 | TD-09 | Clarity/cleanup grab-bag: dead scalar guards, error-tail dedup, identity handlers, stale legacy-log migration, doc drift, etc. (SRC-13/14/16-29) | all | low | many small | feature 012 (US2 sweep) |
 | TD-10 | `tests/` consolidation & deepening backlog: parametrize near-duplicate suites, shared mock-engine helper, deepen a few shallow asserts, delete dead skip-stubs (TST-A03/A04/A05/A08, B01/B03/B05/B09/B10, C05/C06/C07, D05/D06/D07/D08/D09/D10, D13-dup) | tests | low | many small refactors | feature 012 (US3 sweep) |
+| TD-11 | `get_column_info` Databricks fast path reports misleading stats: `total_rows=0`, `null_percentage=0.0` (contradicts a populated `null_count`), and `null` mean/stddev on all numeric columns | analysis | **high** | ~15 LOC + tests | feature 012 (live adversarial validation) |
+| TD-12 | Inconsistent error envelopes on bad catalog: `list_tables`/`list_schemas` leak the raw driver exception; resolver-path tools drop the catalog qualifier from the message | mcp_server, analysis, db | low | ~10 LOC + tests | feature 012 (live adversarial validation) |
 
 > ~~TD-01, TD-02, TD-03~~ — **all resolved in feature 012 (Hardening & Cleanup Pass,
 > 2026-06-01)**; struck below in *Closed / superseded*.
@@ -327,6 +329,76 @@ the next time you edit `src/analysis/column_stats.py`, `src/analysis/_sql.py`, o
 **Out of scope for TD-03:** re-litigating CR-01/WR-03/WR-04 (fixed); the pre-existing
 `src/metrics.py` `Generator` import-location ruff warning (tracked separately); behavioral
 changes to the default-catalog / MSSQL / Inspector paths.
+
+---
+
+## TD-11 — `get_column_info` Databricks fast path reports misleading stats
+
+**Priority:** high · **Effort:** ~15 LOC + test updates · Surfaced by feature 012 live
+adversarial validation (2026-06-02), grounded in source.
+
+On Databricks, `get_column_statistics` (`src/analysis/column_stats.py:583-588`) takes the
+`DESCRIBE EXTENDED` fast path for **every** table where precomputed column stats exist —
+both default-catalog and cross-catalog. `_build_stats_from_describe_extended`
+(`column_stats.py:543-553`) then hardcodes three fields the DESCRIBE output cannot supply:
+
+- `total_rows=0` (line 548) — factually wrong; e.g. `cerner_dm.demographics` has 190,782 rows.
+- `null_percentage=0.0` (line 551) — **self-contradictory** with the populated `null_count`
+  it returns alongside (observed `null_count: 7722` next to `null_percentage: 0.0`). A
+  consumer reasonably reads this as "no nulls." This is actively misleading, not merely
+  incomplete.
+- `mean_value=None`, `std_dev=None` (lines 539-540) — silently dropped on all numeric
+  columns; the MSSQL / Tier-2 path populates both.
+
+Reproduced on both the default-catalog (`cerner_dm.demographics`) and cross-catalog
+(`samples.tpch.customer`) branches, so it is **all-Databricks**, not a cross-catalog
+artifact. MSSQL is unaffected (its Tier-2 aggregate path returns correct values throughout).
+
+**Lineage (important):** this is a *new side-effect of the feature-012 WR-05 fix*, not a
+re-log of the old WR-05. Pre-012, the fast path was dead code cross-catalog (it never fired
+because the type resolved to a string). The 012 WR-05 fix made the fast path *fire*; the
+hardcoded `0`/`0.0`/`None` placeholders inside it then became externally observable.
+
+**Coverage gap:** `test_build_stats_from_describe_extended_numeric`
+(`tests/unit/test_column_stats.py`) asserts `null_count` but **never** `total_rows` or
+`null_percentage` — so the contradiction is both shipped and test-blind.
+
+**Fix options (pick one — externally observable, so it's a contract decision):**
+1. Have the fast path issue one `COUNT(*)` to populate `total_rows` and derive
+   `null_percentage` honestly (sacrifices the "zero extra queries" property; cheapest correct).
+2. If the fast path must stay query-free, emit `total_rows=null` and `null_percentage=null`
+   so the response reads as "unknown" rather than "zero." Lower-effort, preserves intent.
+   For mean/stddev, `null` is already defensible (DESCRIBE genuinely lacks them) but should
+   be documented in the tool contract rather than left implicit.
+
+Either way, add fast-path assertions on `total_rows` and `null_percentage` to close the gap.
+
+---
+
+## TD-12 — Inconsistent error envelopes on a nonexistent catalog (Databricks)
+
+**Priority:** low · **Effort:** ~10 LOC + tests · Surfaced by feature 012 live adversarial
+validation (2026-06-02). Message-quality only — no functional break.
+
+Two related envelope-hygiene defects on the Databricks bad-catalog path:
+
+- **Raw driver leak (SHOW-path tools).** `list_tables` and `list_schemas` issue
+  `SHOW … IN <catalog>` directly; a nonexistent catalog surfaces the **raw
+  `databricks.sql.exc.ServerOperationError`** including the internal SQL
+  (`SHOW TABLES IN \`x\`.\`tpch\``) and the `sqlalche.me/e/20/4xp6` URL, instead of the
+  clean `error_message` envelope the rest of the tools produce.
+- **Dropped catalog qualifier (resolver-path tools).** `get_table_schema` and
+  `get_column_info` go through `resolve_and_check_table_exists`, which returns a clean
+  envelope — but it says `Table 'tpch.customer' not found` when the *catalog* is what's
+  missing, hiding the real cause.
+
+The same raw-leak pattern (`sqlalche.me` URL + pyodbc/driver text) also appears on
+wrong-dialect *execution* errors (e.g. `LIMIT` on MSSQL via `execute_query`) — arguably more
+acceptable there since it's an execution-time error, but worth folding into the same wrap.
+
+**Action:** wrap the `SHOW`-path driver exception in the standard `status: error` envelope
+with a `Catalog '<x>' not found` message; and have the resolver-path message name the
+catalog when one was supplied. One shared "catalog not found" template across both paths.
 
 ---
 

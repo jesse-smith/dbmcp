@@ -84,6 +84,21 @@ populated, and the GSD `milestone.complete` SDK once auto-extracted code-review 
 per-feature COMPLETE headers) as something to **reconcile deliberately at completion**, and
 **always human-review any auto-generated summary** before trusting it.
 
+## L-08 — Parse-time denylisting cannot see inside named stored procedures
+
+Feature 012 adversarial validation confirmed the `execute_query` denylist is robust against
+the cases a parser *can* see — stacked statements, comment-hidden DML, MERGE/SELECT INTO/DCL,
+and `sp_executesql` (the arbitrary-SQL exec primitive, which is explicitly denied). But a
+generic `EXEC <proc>` (e.g. `sp_who2`) is allowed, and a named proc that performs DML/DDL
+internally would bypass statement-level parsing because the parser cannot inspect a compiled
+proc body. This is an **inherent limit of parse-time denylisting**, not a fixable hole — the
+explicit `sp_executesql` rule shows the dynamic-SQL vector was already considered and closed.
+
+**Implication:** statement-level denylisting is defense-in-depth, not a complete sandbox.
+Where true read-only guarantees are required (untrusted callers, compliance), enforce at the
+**connection/role layer** (a read-only DB principal), not only in the parser. Treat the
+denylist as the first gate, not the last.
+
 ---
 
 ## Verified-good patterns (low-risk, keep doing)
