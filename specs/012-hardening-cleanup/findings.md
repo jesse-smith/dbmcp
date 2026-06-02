@@ -209,7 +209,7 @@ so the safe, coverage-neutral wins are **fixed** here; larger parametrize/consol
 
 | ID | Sev | Location | Finding | Disposition |
 |----|-----|----------|---------|-------------|
-| TST-D01 | warning | `test_type_registry.py:57` | `assert result is not 1` — real `SyntaxWarning` ("is" with literal) + semantically wrong identity check (only "works" via small-int caching). The next line `type(result) is bool` is the actual coverage. | **fixed** — removed the line (commit below). Suite re-run under `-W error::SyntaxWarning` clean. |
+| TST-D01 | warning | `test_type_registry.py:57` | `assert result is not 1` — real `SyntaxWarning` ("is" with literal) + semantically wrong identity check (only "works" via small-int caching). The next line `type(result) is bool` is the actual coverage. | **fixed** — removed the line (commit `28cbd68`). Suite re-run under `-W error::SyntaxWarning` clean. |
 | TST-A02 | warning | `test_fk_candidates.py:823-846` | `test_mssql_uses_sys_indexes` = strict subset of `test_collects_pk_constraint` (:238); identical `MagicMock` `side_effect` means the real sys.indexes path is never hit → 0 added coverage. | **fixed** — deleted with a provenance comment; superset test retained. |
 | TST-D03 | warning | `test_nfr_compliance.py:379-394` | `test_nfr_compliance_summary` is `print(...); assert True` — a pure doc-only tautology. | **fixed** — replaced with a module comment carrying the NFR→test map. |
 | TST-B02 | warning | `test_connect_tool.py:160` | `test_databricks_connection_name_routes_through_connect_with_config` docstring said "routes to connect_with_url" but body asserts `connect_with_config`. Also ~95% dup of `test_connection_name_valid_calls_connect_with_config` (:65) — but the two pin different config types, so kept distinct. | **fixed** (docstring) — corrected the contradiction; consolidation logged → TD-10. |
@@ -246,6 +246,9 @@ feature). Logged → TD-10 for deletion; left in place this pass (no coverage im
 
 **Counts:** 0 critical, 6 warning, 16 info = 22 total; dispositions **8 fixed** (TST-D01, A02, D03,
 B02-docstring, C01, C02, D13-docstring, A01) / 1 logged-to-TD-08 (D02) / 13 logged-to-TD-10.
+**All 8 fixes landed in commit `28cbd68`** (the test named in each row is the change site); the
+two logged groups cite their TECH-DEBT IDs (TD-08, TD-10). This satisfies the SC-002 close-time
+invariant — every `fixed` row → commit+test, every `logged` row → a registry ID.
 
 **SC-007 before/after (measured 2026-06-01):**
 
