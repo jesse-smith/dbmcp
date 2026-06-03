@@ -389,3 +389,277 @@ Format: tool path → result vs oracle. dbmcp-test unless marked (raw).
   INTERSECT against nvarchar SystemProfiles.ID); agent went manual via self-LEFT-JOIN →
   self-FK to PerformedActID, 99.39% match. **Correct.** *Same find_fk_candidates type-mismatch
   defect as A4 — now confirmed cross-dialect (Databricks + MSSQL).*
+
+---
+
+# Phase B — open-ended tasks (against fixed code)
+
+Phase A was trap-probe (designed around known sharp edges). **Phase B is open-ended realistic
+work**, and 2 of 3 tasks deliberately re-exercise the now-fixed tools (UE-01 `find_fk_candidates`,
+UE-03 `get_column_info` distinct) to answer the post-fix question: *do they now earn their place vs
+raw SQL, or merely stop crashing?* Same four-role bias isolation; A/B (⚖) judged unlabeled; no PHI
+(counts/structure only).
+
+**Final task set (B4 dropped by user decision — B1+B2+B3 is already a long run):**
+
+| Task | Dialect | Scope guard | Tool under test | Ground truth | ⚖ |
+|------|---------|-------------|-----------------|--------------|---|
+| B1 | Databricks | 2 schemas only (no catalog search) | discovery loop + 3 fixed tools | `mv_micro_labs` ref | yes |
+| B2 | Databricks | v500 only; ~6–8 `*_ID` cols; `*_CD` collapsed; breadth>depth | find_pk + find_fk @ 602M×5,476 | **none** (plausibility + spot-check) | no |
+| B3 | MSSQL | views read-only, not as source | schema-exploration suite | user's SSRS queries (asterisk) | yes (asterisk) |
+
+## B1 ⚖ — Micro-labs cross-source unification (scoped to `cerner_src.v500` + `caboodle_src.warehouse_fullaccess`)
+
+**Task (verbatim to executor):** *"I need microbiology lab results extracted into a single coherent
+table for downstream use. The source data lives in two schemas: `cerner_src.v500` and
+`caboodle_src.warehouse_fullaccess` (Cerner and Epic respectively). The relevant data may be spread
+across multiple tables or at multiple grains — I need one row per result, each with: an order id,
+test name, panel name, collection date, and patient MRN. Check the results for problematic values
+(nulls, sentinels, anything that would break a downstream consumer). Deliver: (1) the SQL query that
+produces the unified table, and (2) a short writeup of what you found — where the data lived, how you
+reconciled the two sources and the grains, and the data-quality issues. Confine all exploration to
+those two schemas. Show the tool calls you used."*
+
+**Scope rationale:** hard-confined to the two raw schemas — keeps the executor off the user's
+finished artifact (`bmtct.ml_infections_ref.mv_micro_labs`) AND its curated intermediates
+(`bmtct.ml_infections_src.mv_{cerner,epic}_micro_labs`), forcing genuine raw-table work.
+
+**Oracle (independent, `databricks` MCP — recorded 2026-06-03; reference, not exact-match key):**
+- **Final reference artifact** `bmtct.ml_infections_ref.mv_micro_labs`: **238,978 rows** (Epic
+  137,918 / Cerner 101,060); grain = one row per result (distinct culture_id 160,856 < rows → multi
+  result per order); 0 null mrn/collection_date/test_name; 1,369 distinct MRNs. *(MV itself is out of
+  scope — used only as the orchestrator's gold reference.)*
+- **Cerner raw path** (`cerner_src.v500`): `MIC_IC_ORDERS` → LEFT JOIN `ORDERS` (status) → filtered
+  by EXISTS in `MIC_TASK_LOG`; latest report via `MIC_TASK_LOG` window → `MIC_REPORT_RESPONSE`
+  (RESPONSE_TEXT); organisms via `MIC_TASK_LOG` → `CODE_VALUE`; test/source/site/status decode via
+  `CODE_VALUE` (×5); LOINC via `concept_ident_mic_rpt`. MRN: MV used
+  `bmtct.bmtct_datamodels.mv_patient_crosswalk` (**out of scope** — a confined executor must instead
+  source MRN from `v500.person_alias`, a legitimate harder path / gotcha).
+- **Epic raw path** (`caboodle_src.warehouse_fullaccess`): `LabComponentResultFact` → INNER JOIN
+  `LabTestFact` (specimen, `Section IN ('MICROBIOLOGY','MOLECULAR MICROBIOLOGY')`) → `LabComponentDim`
+  (panel=`commonname`, test=`Name`) → `PatientDim` (MRN; filters `isvalid=1`, `iscurrent=1`,
+  `crf.count=1`, `_hassourcecerner=0`).
+- **Scoring:** judge scores coherence/correctness against this reference path + grain + DQ, allowing
+  open-ended column-shape variation (e.g. derived `panel`, `culture_id` vs "order id"). The
+  cross-schema MRN sourcing (crosswalk out of scope) is the key open-ended bridge to watch.
+
+## B2 — `clinical_event` reverse-engineering (bounded; `cerner_src.v500`)
+
+**Task (verbatim to executor):** *"`clinical_event` (catalog `cerner_src`, schema `v500`) is a large
+fact-like table, but we don't have its relationships documented. Produce a relationship map: (1)
+identify its primary key; (2) identify the columns that are foreign-key candidates; (3) for the most
+important structural relationships — bound this to the ~6–8 highest-value FK columns, e.g. the
+entity/`*_ID` references, NOT the dozens of code (`*_CD`) lookup columns, which you can treat
+collectively as 'code lookups against the shared code table' without enumerating each — find the
+likely target table in `cerner_src.v500` and infer the cardinality (one-to-one / many-to-one /
+one-to-many). Confine target search to `cerner_src.v500`. Time-box: prefer breadth over exhaustive
+verification — a ranked map with confidence levels beats a perfect answer on two columns. Show the
+tool calls you used."*
+
+**Bounds rationale:** clinical_event has 90 columns incl. ~40 `*_CD` lookups that nearly all point at
+the universal `code_value` table; unbounded, the agent would chase 50+ candidates × 5,476 tables.
+Caps: ~6–8 `*_ID` cols, `*_CD` collapsed, target universe = v500, breadth>depth.
+
+**No gold answer (user has no ground truth).** Scored on plausibility + tool-utility-vs-raw-SQL, with
+orchestrator spot-checks below.
+
+**Oracle (partial, `databricks` MCP, recorded 2026-06-03 — PK exact; FK via 1M-row TABLESAMPLE):**
+- **Rows 602,381,343; PK `CLINICAL_EVENT_ID`** = 602,381,343 distinct (clean single-col PK).
+- **`PERSON_ID` → person.PERSON_ID** 100% resolve (many-to-one).
+- **`ENCNTR_ID` → encounter.ENCNTR_ID** 100% resolve (many-to-one).
+- **`ORDER_ID` → orders.ORDER_ID** 100% of *non-zero*, but **~87% are `0` sentinel** (most clinical
+  events aren't order-linked — key gotcha; "resolves" only after excluding 0).
+- **`PERFORMED_PRSNL_ID` → prsnl.PERSON_ID** 99.995% of non-zero (**prsnl PK is `PERSON_ID`, not
+  `PRSNL_ID`** — Cerner quirk; a tool/agent assuming `PRSNL_ID` target-col name will miss it).
+- **`PARENT_EVENT_ID`** self-referential to `clinical_event.EVENT_ID` (hierarchy; ~78% point to a
+  different event, rest self/zero).
+- **`EVENT_ID`, `SRC_EVENT_ID`** event-grouping refs (self/within-domain). **~40 `*_CD` → code_value**
+  (the collapse class). All 8 expected targets (person, encounter, orders, prsnl, code_value,
+  order_action, encntr_alias, ce_blob) confirmed present in v500.
+
+## B3 ⚖ — SSRS observations report (MSSQL; views read-only, not as source)
+
+**Task (verbatim to executor):** *"I'm writing an SSRS report pulling all observations for a given
+patient, along with the user who signed off on each observation. Requirements: observations should be
+grouped by their parent observation where one exists; prior versions of an observation must be
+excluded (current version only); one row per observation, with patient MRN, observation date,
+observation name, observation value, and the user who locked the record after observation entry (if
+the record was locked). Also give me a summary interpreting what you found in the schema. Database:
+`StemSoftClinicTest`. Do not use the pre-built views as your query source — they are extremely slow;
+you may read them only to understand the schema/relationships. Show the tool calls you used."*
+
+**Gotchas (surfaced by requirements, NOT leaked as hints):** observations = `PerformedActs`;
+PerformedActs is SCD-II (prior-version exclusion needed); parent-observation grouping is itself
+another observation; many tables are "base table" candidates; templates are XML; locked-by user is a
+separate join. "Don't use naive views as source, may read for structure" is verbatim per user.
+
+**Oracle (MSSQL via dbmcp-test `execute_query` raw — asterisk: same-server, different code path;
+recorded 2026-06-03 after `kinit`):** The schema is a **class-table-inheritance (CTI) entity model**,
+not a flat observations table. Canonical path:
+
+- **Observation = `PerformedActs`** (base, 1,391,510 rows; PK `PerformedActID` identity). **SCD-II via
+  `ClonedFromID`** (self-ref to prior version; A11 confirmed 99.4% resolve). *Current-version filter:*
+  a row is the current version iff **no other row's `ClonedFromID` points to it** (i.e.
+  `PerformedActID NOT IN (SELECT ClonedFromID WHERE ClonedFromID IS NOT NULL)`) — the prior-version
+  exclusion the task requires.
+- **1:1 inheritance chain:** `PerformedActs` → `PerformedActs_Observation` (1.39M, 1:1 on
+  `PerformedActID`; carries `Name` = observation name, `ResultStatus`, `AbnormalFlags`) → typed value
+  subtables, each 1:1 on `PerformedActID`: **`_TextObservation`** (1.27M), **`_QuantitativeObservation`**
+  (62,857), **`_CVObservation`** (28,013, coded), `_DateTimeRangeObservation`, `_EnumObservation`,
+  `_BooleanObservation`, `_TextBattery` (27,844, the panel/grouping result). *Gotcha:* "observation
+  value" lives in a **different subtable per type** — the agent must UNION/COALESCE across them, not
+  read one column. ("many tables are candidates for a base table.")
+- **Observation date:** `PerformedActs.ActivityTime_StartDateTime` (also Effective/Created/Modified
+  ranges — the *_HasTime/_StartDateTime/_EndDateTime triplets are another gotcha; ActivityTime is the
+  clinically-correct one).
+- **Parent-observation grouping:** via **`BaseEntityPerformedActs`** (1,391,478 rows: `PerformedActID →
+  PerformedActs`, `ParentID → BaseEntities.EntityID`). Observations attach to a parent **`BaseEntities`**
+  (the form/group entity). Grouping "by parent observation where it exists" = group by that
+  `ParentID`/EntityID. (Batteries: `_TextBattery` rows are themselves parent observations of their
+  member observations — "groupings are just another observation.")
+- **Patient MRN (gotcha — not a column):** subjects are `BaseEntities_Subject` (3,524, EntityID inherits
+  BaseEntities). MRN is an **entity identifier**: `BaseEntityIdentifiers` (`ParentID` = subject EntityID,
+  `IdentifierID`) → **`Identifiers`** (`IdentifierValue`, `IdentifierCodeID`) → filter
+  **`IdentifierCodeID = 3017399`** (`CV_IdentifierCode.Code='MRN'`; 3,495 patients have one). The
+  denormalized `A_*_CRIS` report tables expose a flat `MRN` column but are out-of-scope naive sources.
+- **User who locked the record (gotcha):** **`BaseEntityStates`** (form-state transition history:
+  `SourceID → BaseEntities.EntityID`, `FormStateID → CVs_FormState`, `UserID → Users.ID` [54 users:
+  First/LastName/AccountName], `ExistenceTime_StartDateTime` = when, `Reason`). *Locked* =
+  `FormStateID IN (1000023 'Complete'→"Locked", 1000024 'Approved'→"Locked - Approved")` per
+  `CV_FormState` (IsEditable=false rows). The locking user = the `BaseEntityStates` row that moved the
+  observation's entity into a locked form-state; **nullable** ("if record was locked"). Observations
+  link to their state-bearing entity via the `BaseEntityPerformedActs.ParentID`/`BaseEntities` spine.
+- **Naive views:** `CV_*` views decode coded values (used above for the oracle); the task forbids using
+  the slow pre-built report views *as the query source* but allows reading them for structure.
+
+**Scoring:** judge scores against this path for the four gotchas — (1) SCD-II current-version filter,
+(2) parent grouping via BaseEntityPerformedActs/BaseEntities, (3) per-type value subtable union, (4)
+locked-by-user via BaseEntityStates+CVs_FormState — plus MRN-as-identifier. Query-shape variation
+allowed. Reference: user has analogous SSRS queries (asterisk on oracle independence).
+
+> **Run-readiness (2026-06-03):** **B1 + B2 + B3 oracles ALL COMPLETE.** MSSQL reachable after `kinit`
+> (conn `437307010365`, transient). No executors spawned yet (paused per user before run).
+
+## Phase B — RUN OUTCOMES (executed 2026-06-03, against fixed code)
+
+**Method:** 5 blind executors (B1 ⚖ ×2 arms, B2 ×1, B3 ⚖ ×2 arms), each given persona + verbatim
+task + exactly one toolset, blind to the eval/oracle/gotchas. Then 3 unlabeled judges (arms relabeled
+Submission A/B in mixed order, judges blind to which arm was tool-under-test vs raw SQL; orchestrator
+held the de-anon map and did the tool-utility synthesis). dbmcp-test ran the UE-fixed code throughout.
+
+**De-anonymization (orchestrator-private during judging):**
+- B1: A = `databricks` raw-SQL arm · B = dbmcp-test arm.
+- B3: A = dbmcp-test arm · B = MSSQL raw-via-`execute_query` arm.
+- B2: single submission = dbmcp-test arm.
+
+### Scorecard
+
+| Task | dbmcp-test arm | raw-SQL arm | Judge verdict (vs oracle) |
+|------|----------------|-------------|---------------------------|
+| **B1** ⚖ | **WON decisively** — found BOTH sources (Cerner 111,307 + Epic 71,273) | **LOST** — declared "Cerner has no usable micro data / empty scaffolding," delivered Epic-only; **factually wrong**, missed ~101K Cerner results | tool arm correct on the decisive source-coverage axis |
+| **B2** | **5/5 all axes** | (no ⚖) | cleared both traps; honest confidence calibration |
+| **B3** ⚖ | **WON 5.0 vs 3.0** — used `ClonedFromID` current-version filter; grappled with the clone/locked-copy lock subtlety | **LOST** — used `IsArchived=0` (wrong: only 10 rows archived → excludes ~0 prior versions); missed lock subtlety | tool arm correct on the decisive prior-version axis |
+
+> ⚠ **The scorecard does NOT establish tool causation.** "Tool arm won" is a per-instance outcome
+> (n=1/arm), not evidence the tools *caused* the better answers. The transcript-level post-hoc below
+> ("token cost + reasoning-trajectory analysis") shows both decisive wins came from steps available to
+> *both* arms, and that the tool arms carried a real round-trip token cost. Read that section before
+> quoting this table.
+
+### Reading the results (honest confounds)
+
+- **Headline: in both ⚖ tasks the dbmcp-test arm produced the more correct answer, and B2 was flawless.**
+  No tool output misled an executor in Phase B (contrast Phase A, where tools returned null/empty/wrong
+  and SQL-fluent agents routed around them). The UE fixes held: B1/B2 exercised `find_fk_candidates`
+  (UE-01) and `get_column_info` distinct (UE-03) at scale with no crash and no misleading output; the
+  modulo fix (UE-04) wasn't directly exercised.
+- **Confound (stated plainly): n=1 per arm.** Each ⚖ cell is a single executor transcript, so the
+  head-to-head outcome blends *tool effect* with *executor reasoning variance*. The wins are real but
+  are **not** clean evidence that the tools *caused* the better answer — a different raw-SQL executor
+  might have found Cerner micro (B1) or used `ClonedFromID` (B3). What IS clean: (a) the tools did not
+  mislead, (b) B2's correctness + honesty under the fixed `find_fk_candidates`, (c) the tool arm never
+  lost.
+- **Why the raw arms lost (mechanism, not tool-credit):** B1-raw stopped one join short — it found
+  `ce_microbiology` (51,361 rows) but never joined it back to `clinical_event` + `code_value` +
+  `person_alias`, then generalized "empty scaffolding" from the genuinely-empty `dw_*`/`edw_f_*` stubs.
+  B3-raw actively reasoned *against* the correct `ClonedFromID` filter ("clones aren't necessarily prior
+  versions; use IsArchived") and self-documented the tell ("only 10 archived… filter changes little").
+  Both are reasoning errors the structured toolset's defaults happened to steer the other arm away from.
+- **B2 prsnl quirk validated UE-adjacent design:** the executor's first `get_sample_data` assuming
+  `PRSNL_ID` errored and *revealed* the real PK is `PERSON_ID` — a tool error that was diagnostic rather
+  than misleading. No new finding; logged as a positive.
+
+### New findings / dispositions
+
+- **No new UE-class defects.** Phase B surfaced no misleading-output bug in the fixed tools. The three
+  UE fixes are corroborated as effective under realistic open-ended load.
+- **B1 cross-schema MRN bridge** (oracle's flagged open bridge): the tool arm correctly sourced MRN from
+  `v500.person_alias` (alias type 2448) when the MV's usual crosswalk was out of scope — the confined
+  harder path worked. No tool gap.
+- **Observation (not a defect):** neither B1 arm matched the reference row totals exactly (tool arm
+  182,580 vs ref 238,978, mainly from excluding Epic `MOLECULAR MICROBIOLOGY`; raw arm 358,016 Epic-only).
+  Open-ended scope variance, expected for a no-exact-match task; judge scored path/grain/DQ, not row count.
+
+### Post-hoc: token cost + reasoning-trajectory analysis (transcript-level, 2026-06-03)
+
+Prompted by the observation that the tool arms used *more* tokens (B1 ≈ even 109k/105k; B3 130k vs 94k,
++39%) — does the toolset help, tax, or shape reasoning? Parsed the 5 executor transcripts for token
+**decomposition** (not just totals) and traced the **decisive fork** in each ⚖ task.
+
+**Token decomposition (per arm):**
+
+| Arm | total | asst turns | tool calls | out tok | TR chars/call | raw `execute_query` calls |
+|-----|-------|-----------|-----------|---------|---------------|---------------------------|
+| B1-dbmcp | 108,986 | 42 | 30 | 12,267 | 2,882 | 20 |
+| B1-raw | 105,477 | 37 | 25 | 6,106 | **3,465** | 25 (only tool) |
+| B3-dbmcp | 130,328 | 96 | 65 | 18,087 | 1,159 | 35 |
+| B3-raw | 93,690 | 56 | 35 | 14,078 | 994 | 35 (only tool) |
+
+- **NOT an envelope tax.** Tool-result chars/call were comparable; in B1 the raw arm's payloads were
+  *larger* (3,465 vs 2,882) — raw SELECTs return data rows, structured calls return lean metadata. The
+  "verbose wrapper" mechanism is not what inflated tokens.
+- **Cost mechanism = atomic-discovery round-trips, not payload.** B3-dbmcp ran ≈ the *same* number of raw
+  `execute_query` calls as B3-raw (35 ≈ 35) and layered ~30 single-object structured calls on top
+  (`list_tables` ×13, `get_table_schema` ×15). Because the discovery tools are **one-object-per-call**,
+  exploring N tables = N round-trips, each re-reading a growing context (B3-dbmcp cache-read 7.6M vs
+  3.6M). A SQL-fluent agent batches that into a couple of `INFORMATION_SCHEMA`/`SHOW` queries. **This is
+  a real efficiency knock against the structured discovery tools specifically (`list_tables` /
+  `get_table_schema` / `get_sample_data`) for the SQL-fluent audience.** B1 masked it only because the
+  raw arm's fat data-SELECTs offset the dbmcp arm's extra metadata calls.
+
+**Decisive-fork trace (does the toolset cause the better answer?):**
+- **B3 (`ClonedFromID` vs `IsArchived`):** BOTH arms read the off-limits view via the *same* raw
+  `sys.sql_modules` query. B3-raw stopped at the view's **archived branch** (`FormStateID=1001208 AND
+  IsArchived=1`) and anchored on `IsArchived` (even argued *against* `ClonedFromID`). B3-dbmcp read
+  **further into the same view** to its primary branch (`WHERE PA.ClonedFromID IS NULL`), then verified
+  empirically. **Decisive step used a tool common to both arms** — winner read more + verified harder.
+- **B1 ("Cerner empty" miss):** B1-dbmcp's winning pivot was a *domain-knowledge* statement at turn 3,
+  **before any differentiating tool output** ("v500 Millennium micro lives in `clinical_event` + extension
+  tables; EVENT_ID is the join key"). B1-raw saw the same `EVENT_ID` columns in `ce_microbiology`, judged
+  it not worth the code-value joins, **never looked at `clinical_event`**, and generalized "empty" from the
+  genuinely-empty `dw_*` stubs. The pivot was prior knowledge, not a tool affordance.
+
+**Verdict on the three hypotheses:**
+- **H-envelope-tax (tools inflate via verbose output): REFUTED.** Payloads comparable / raw larger.
+- **H-roundtrip-cost (atomic discovery tools cost extra turns): SUPPORTED.** +39% on B3 traced to ~30
+  single-object discovery calls layered atop identical raw-SQL work. Real cost for SQL-fluent users.
+- **H-tool-improved-quality (tools uniquely enabled the wins): NOT SUPPORTED.** Both decisive insights
+  came from steps available to both arms (shared raw view-read; pre-tool domain knowledge). No transcript
+  shows a *structured-tool output* delivering information raw SQL couldn't, that flipped a conclusion.
+- **Confound, stated precisely:** in B3 the extra tokens and the better answer are the *same variable* —
+  investigation depth (B3-dbmcp investigated ~1.85×). Weak/indirect evidence that atomic tools *nudge* a
+  multi-turn list→describe→sample→query rhythm (→ more depth → better answer), but with n=1/arm this is
+  indistinguishable from one instance simply being more diligent. **No clean tool-credit story survives.**
+
+**Sharpened conclusion:** the most defensible reading is *not* "tools helped." It is: **the structured
+discovery tools did not mislead and did not uniquely help, and they carry a measurable round-trip token
+cost for SQL-fluent agents.** The genuine value case for the toolset remains the Phase-A finding (tools
+must not return null/empty/wrong — a tool that forces a confirmatory query is net-slower than the query),
+plus the UE fixes that removed the misleading outputs. The accelerator case for SQL-fluent users is, on
+this evidence, unproven and somewhat counter-indicated on token cost.
+
+> **Phase B COMPLETE (2026-06-03).** Tool-under-test arm won or tied every task; B2 flawless; no
+> misleading output; no new defects. **Token/fork post-hoc:** envelope-tax refuted; atomic-discovery
+> round-trip cost confirmed (B3 +39%); tool-improved-quality unsupported (decisive forks used shared
+> steps); wins confounded with investigation depth (n=1/arm). UE-01/03/04 fixes corroborated under
+> realistic load. Utility eval (Phase A + B) concluded.
