@@ -20,6 +20,7 @@ from src.analysis._sql import (
     CatalogAwareReflector,
     quote_tsql_identifier,
     transpile_query,
+    type_category,
 )
 from src.analysis.pk_discovery import PKDiscovery
 from src.models.analysis import FKCandidateData, FKCandidateResult
@@ -668,6 +669,8 @@ class FKCandidateSearch:
 
         # Step 2-4: For each target table, find candidates
         all_candidates: list[FKCandidateData] = []
+        type_incompatible_skipped = 0
+        src_cat = type_category(self.source_data_type)
 
         for tgt_schema, tgt_table in tables:
             columns = self.get_candidate_columns(
@@ -677,46 +680,17 @@ class FKCandidateSearch:
             )
 
             for col_info in columns:
-                # Gather structural metadata
-                metadata = self.get_column_metadata(
-                    target_schema=tgt_schema,
-                    target_table=tgt_table,
-                    target_column=col_info["column_name"],
-                    target_data_type=col_info["data_type"],
-                    target_is_nullable=col_info["is_nullable"],
+                candidate = self._evaluate_candidate(
+                    src_cat, tgt_schema, tgt_table, col_info, include_overlap
                 )
-
-                # Optional overlap
-                overlap_count = None
-                overlap_percentage = None
-                if include_overlap:
-                    overlap = self.compute_overlap(
-                        target_schema=tgt_schema,
-                        target_table=tgt_table,
-                        target_column=col_info["column_name"],
-                    )
-                    overlap_count = overlap["overlap_count"]
-                    overlap_percentage = overlap["overlap_percentage"]
-
-                all_candidates.append(FKCandidateData(
-                    source_column=self.source_column,
-                    source_table=self.source_table,
-                    source_schema=self.source_schema,
-                    source_data_type=self.source_data_type,
-                    target_column=col_info["column_name"],
-                    target_table=tgt_table,
-                    target_schema=tgt_schema,
-                    target_data_type=col_info["data_type"],
-                    target_is_primary_key=metadata["target_is_primary_key"],
-                    target_is_unique=metadata["target_is_unique"],
-                    target_is_nullable=metadata["target_is_nullable"],
-                    target_has_index=metadata["target_has_index"],
-                    overlap_count=overlap_count,
-                    overlap_percentage=overlap_percentage,
-                ))
+                if candidate is None:
+                    type_incompatible_skipped += 1
+                else:
+                    all_candidates.append(candidate)
 
         # Step 5: Apply limit
         result = self.apply_limit(all_candidates, limit=limit)
+        result.type_incompatible_skipped = type_incompatible_skipped
 
         # Set search scope
         result.search_scope = self.build_search_scope(
@@ -727,3 +701,60 @@ class FKCandidateSearch:
         )
 
         return result
+
+    def _evaluate_candidate(
+        self,
+        src_cat: str,
+        tgt_schema: str,
+        tgt_table: str,
+        col_info: dict,
+        include_overlap: bool,
+    ) -> "FKCandidateData | None":
+        """Build one FK candidate, or ``None`` if type-incompatible (skip).
+
+        Skips when the source and target type categories differ AND neither is
+        ``"other"`` (UE-01). A category mismatch (e.g. numeric source vs string
+        target) is provably not an FK and, under ``include_overlap``, would make
+        the ``INTERSECT`` overlap query a hard DB error. ``"other"`` is a
+        conservative wildcard so exotic types (uniqueidentifier, binary) are
+        never false-negatived.
+        """
+        tgt_cat = type_category(col_info["data_type"])
+        if src_cat != tgt_cat and "other" not in (src_cat, tgt_cat):
+            return None
+
+        metadata = self.get_column_metadata(
+            target_schema=tgt_schema,
+            target_table=tgt_table,
+            target_column=col_info["column_name"],
+            target_data_type=col_info["data_type"],
+            target_is_nullable=col_info["is_nullable"],
+        )
+
+        overlap_count = None
+        overlap_percentage = None
+        if include_overlap:
+            overlap = self.compute_overlap(
+                target_schema=tgt_schema,
+                target_table=tgt_table,
+                target_column=col_info["column_name"],
+            )
+            overlap_count = overlap["overlap_count"]
+            overlap_percentage = overlap["overlap_percentage"]
+
+        return FKCandidateData(
+            source_column=self.source_column,
+            source_table=self.source_table,
+            source_schema=self.source_schema,
+            source_data_type=self.source_data_type,
+            target_column=col_info["column_name"],
+            target_table=tgt_table,
+            target_schema=tgt_schema,
+            target_data_type=col_info["data_type"],
+            target_is_primary_key=metadata["target_is_primary_key"],
+            target_is_unique=metadata["target_is_unique"],
+            target_is_nullable=metadata["target_is_nullable"],
+            target_has_index=metadata["target_has_index"],
+            overlap_count=overlap_count,
+            overlap_percentage=overlap_percentage,
+        )

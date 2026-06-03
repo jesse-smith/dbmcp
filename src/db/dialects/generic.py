@@ -102,13 +102,20 @@ class GenericDialect:
             )
         if method == SamplingMethod.MODULO:
             order_by = "ROWID" if self._sqlglot_dialect == "sqlite" else "1"
+            # Generic output is executed WITHOUT transpilation, so the divisor
+            # must be ANSI-portable integer division. Plain ``/`` is float
+            # division on Postgres/MySQL (-> the predicate is never true, 0 rows
+            # silently, UE-04); ``DIV`` isn't portable (Postgres lacks it) and
+            # ``FLOOR`` returns float on some backends. ``CAST(... AS INTEGER)``
+            # truncates toward zero across postgres/mysql/sqlite.
+            divisor = f"CAST(_total / {sample_size} AS INTEGER)"
             return f"""
             SELECT {column_sql} FROM (
                 SELECT *, ROW_NUMBER() OVER (ORDER BY {order_by}) AS _rn,
                        COUNT(*) OVER () AS _total
                 FROM {full_table_name}
             ) _sampled
-            WHERE _rn % CASE WHEN _total / {sample_size} < 1 THEN 1 ELSE _total / {sample_size} END = 0
+            WHERE _rn % CASE WHEN {divisor} < 1 THEN 1 ELSE {divisor} END = 0
             LIMIT {sample_size}
             """
         raise ValueError(f"Unknown sampling method: {method}")

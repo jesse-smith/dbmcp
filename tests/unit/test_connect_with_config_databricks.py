@@ -711,3 +711,58 @@ def test_named_config_explicit_beats_env(monkeypatch):
 
     ConnectionManager().connect_with_config(cfg, DatabricksDialect())
     assert captured_connect_args.get("_tls_trusted_ca_file") == "/cfg/ca.pem"
+
+
+# ---------------------------------------------------------------------------
+# TD-02 (012/D-02): URL-mode catalog-enrichment probe inherits ca_bundle
+# ---------------------------------------------------------------------------
+
+
+def test_connect_with_url_databricks_probe_inherits_ca_bundle(monkeypatch):
+    """TD-02: a catalog-less Databricks URL carrying ?ca_bundle= triggers the
+    IDENT-01 enrichment helper, which builds a probe engine to run SHOW CATALOGS.
+    That probe engine MUST receive ca_bundle from the inbound URL — otherwise the
+    probe fails on corp-MITM TLS networks and the user loses the actionable
+    catalog list (config path already forwards it; URL path dropped it).
+
+    Asserts at the dialect-kwargs level: the *probe* create_engine call (the one
+    with catalog='system', made by _require_databricks_catalog) must carry the
+    ca_bundle parsed from the URL query string.
+    """
+    from src.db.connection import ConnectionError as DBConnectionError
+
+    probe_calls: list[dict] = []
+
+    def fake_create_engine(self, **kwargs):
+        # Real-engine attempt: arrives as sqlalchemy_url=. Parse it, find no
+        # catalog, raise ValueError to route into the enrichment helper.
+        if "sqlalchemy_url" in kwargs:
+            url_kwargs = self._kwargs_from_url(kwargs["sqlalchemy_url"], kwargs)
+            if not url_kwargs.get("catalog"):
+                raise ValueError("Databricks catalog is required")
+            return _make_engine_spy()
+        # Probe attempt: keyword args incl. catalog='system'. Record it.
+        probe_calls.append(dict(kwargs))
+        return _make_engine_spy_with_catalogs(["main", "hive_metastore"])
+
+    monkeypatch.setattr(DatabricksDialect, "create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        DatabricksDialect, "list_catalogs",
+        lambda self, engine: ["main", "hive_metastore"],
+    )
+    _patch_no_test_connection(monkeypatch)
+
+    url = (
+        "databricks://token:tok@dbc-test.cloud.databricks.com/"
+        "?http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc&ca_bundle=%2Fcorp%2Fca.pem"
+    )
+    with pytest.raises(DBConnectionError):
+        ConnectionManager().connect_with_url(url, DatabricksDialect())
+
+    assert probe_calls, "enrichment probe create_engine was never called"
+    probe = probe_calls[0]
+    assert probe.get("catalog") == "system", "expected the system-catalog probe call"
+    assert probe.get("ca_bundle") == "/corp/ca.pem", (
+        "probe engine did not inherit ca_bundle from the inbound URL "
+        "(TD-02: corp-MITM probe would fail and drop the catalog list)"
+    )

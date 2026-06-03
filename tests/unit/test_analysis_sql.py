@@ -260,6 +260,22 @@ class TestCatalogAwareReflectorTables:
         ]
         assert reflector.list_tables(catalog="elsewhere", schema="dbo") == []
 
+    def test_unexpected_row_shape_fails_fast(self, dialect):
+        """IN-01: SHOW TABLES IN documents (database, tableName, isTemporary).
+        A row lacking the table-name column (width < 2) must fail fast with a
+        clear error rather than silently returning row[0] — a *database* name —
+        as if it were a table name (the old `row[1] if len(row) > 1 else row[0]`
+        fallback masked the contract violation).
+        """
+        conn = _discriminating_connection(
+            "`cerner_src`.`dbo`",
+            [("dbo", "orders", False), ("just_one_col",)],
+        )
+        reflector = CatalogAwareReflector(conn, dialect.dialect)
+
+        with pytest.raises(ValueError, match="SHOW TABLES"):
+            reflector.list_tables(catalog="cerner_src", schema="dbo")
+
 
 @pytest.mark.dialects("databricks")
 class TestCatalogAwareReflectorStateless:

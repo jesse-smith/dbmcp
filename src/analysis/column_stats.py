@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy import types as sa_types
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.analysis._sql import (
     CatalogAwareReflector,
     quote_tsql_identifier,
     transpile_query,
+    type_category,
 )
 from src.models.analysis import (
     ColumnStatistics,
@@ -34,6 +36,43 @@ if TYPE_CHECKING:
     from src.db.dialects.protocol import DialectStrategy
 
 
+def _databricks_type_string_to_engine(type_string: str) -> sa_types.TypeEngine:
+    """Convert a Databricks DESCRIBE-TABLE type token to a SQLAlchemy TypeEngine.
+
+    WR-05 (Option B): the cross-catalog reflector yields raw DESCRIBE-TABLE type
+    strings (e.g. ``"int"``, ``"string"``, ``"decimal(10,2)"``). Returning a
+    ``TypeEngine`` lets the ``isinstance(..., TypeEngine)`` fast-path gate fire
+    cross-catalog. Reuses the Databricks dialect's own ``GET_COLUMNS_TYPE_MAP``
+    (DRY — no hand-rolled type table), special-casing ``decimal`` to preserve
+    precision/scale, and falling back to ``NullType()`` for any unmapped token
+    (symmetric with the default-catalog Inspector path, which also returns
+    ``NullType()`` for unknowns — both still TypeEngines, so they take the fast
+    path and land in the "other" category).
+
+    The ``databricks.sqlalchemy`` import is local so non-Databricks paths never
+    import the package.
+    """
+    from databricks.sqlalchemy._parse import (
+        GET_COLUMNS_TYPE_MAP,
+        parse_numeric_type_precision_and_scale,
+    )
+
+    # DESCRIBE tokens are lowercase ("decimal(10,2)"); the map is keyed on the
+    # leading word ("decimal").
+    token = type_string.strip().lower()
+    base = token.split("(", 1)[0].strip()
+    mapped = GET_COLUMNS_TYPE_MAP.get(base)
+    if mapped is None:
+        return sa_types.NullType()
+    if base == "decimal":
+        # parse_numeric_type_precision_and_scale needs an uppercase
+        # DECIMAL(p,s); a bare "decimal" (no precision) → plain Numeric.
+        if "(" in token:
+            return parse_numeric_type_precision_and_scale(token.upper())
+        return sa_types.Numeric()
+    return mapped()
+
+
 class ColumnStatsCollector:
     """Collect per-column statistical profiles for a table.
 
@@ -46,18 +85,6 @@ class ColumnStatsCollector:
     - Cross-dialect support via sqlglot transpilation
     - Databricks DESCRIBE EXTENDED fast path
     """
-
-    # SQL Server string-based type sets (fallback when Inspector unavailable)
-    _NUMERIC_TYPES_STR = {
-        "int", "bigint", "smallint", "tinyint", "decimal", "numeric",
-        "float", "real", "money", "smallmoney",
-    }
-    _DATETIME_TYPES_STR = {
-        "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset", "time",
-    }
-    _STRING_TYPES_STR = {
-        "char", "varchar", "text", "nchar", "nvarchar", "ntext",
-    }
 
     def __init__(
         self,
@@ -196,13 +223,20 @@ class ColumnStatsCollector:
     ) -> "sa_types.TypeEngine | str":
         """Get the data type for a column.
 
-        Returns TypeEngine when Inspector available, else data_type string.
+        Returns a ``TypeEngine`` on the Inspector path AND on the cross-catalog
+        Databricks path (WR-05: the cross-catalog DESCRIBE-TABLE type string is
+        converted to a ``TypeEngine`` so the fast-path ``isinstance`` gate fires
+        — see :func:`_databricks_type_string_to_engine`). Only the
+        INFORMATION_SCHEMA fallback (no Inspector, non-cross-catalog) returns a
+        bare string.
         """
         if self._is_cross_catalog_databricks:
             for c in self._reflect_catalog_columns():
                 if c["name"] == column_name:
-                    return c["data_type"]
-            return "unknown"
+                    return _databricks_type_string_to_engine(c["data_type"])
+            # Symmetric with the Inspector path: unknown column → NullType()
+            # (still a TypeEngine, so the gate behaves predictably).
+            return sa_types.NullType()
         if self._inspector is not None:
             columns = self._inspector.get_columns(self.table_name, schema=self.schema_name)
             for c in columns:
@@ -231,31 +265,10 @@ class ColumnStatsCollector:
     def _get_type_category(self, data_type: "sa_types.TypeEngine | str") -> str:
         """Classify a type into analysis categories.
 
-        Accepts either a SQLAlchemy TypeEngine object (isinstance-based) or
-        a data type string (set-based fallback for backward compat).
+        Thin delegator to the shared :func:`src.analysis._sql.type_category`
+        (one categorizer, two callers — column stats and FK candidate search).
         """
-        if isinstance(data_type, sa_types.TypeEngine):
-            if isinstance(data_type, (sa_types.Integer, sa_types.Numeric, sa_types.Float)):
-                return "numeric"
-            # MSSQL MONEY/SMALLMONEY don't inherit from Numeric
-            type_name = type(data_type).__name__.upper()
-            if type_name in ("MONEY", "SMALLMONEY"):
-                return "numeric"
-            if isinstance(data_type, (sa_types.DateTime, sa_types.Date, sa_types.Time)):
-                return "datetime"
-            if isinstance(data_type, (sa_types.String, sa_types.Text)):
-                return "string"
-            return "other"
-        # String-based fallback
-        data_type_lower = data_type.lower()
-        if data_type_lower in self._NUMERIC_TYPES_STR:
-            return "numeric"
-        elif data_type_lower in self._DATETIME_TYPES_STR:
-            return "datetime"
-        elif data_type_lower in self._STRING_TYPES_STR:
-            return "string"
-        else:
-            return "other"
+        return type_category(data_type)
 
     def get_basic_stats(self, column_name: str) -> dict:
         """Collect basic statistics for a column."""
@@ -270,11 +283,13 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: a no-GROUP-BY aggregate always returns exactly one full-width
+        # row, so index directly and trust the contract. The former
+        # `row[N] if row else 0` guards were misleading — they guarded None but
+        # still blindly indexed row[1]/row[2], so a short row would IndexError
+        # anyway.
         row = result.fetchone()
-
-        total_rows = row[0] if row else 0
-        distinct_count = row[1] if row else 0
-        null_count = row[2] if row else 0
+        total_rows, distinct_count, null_count = row[0], row[1], row[2]
 
         null_percentage = (null_count / total_rows * 100.0) if total_rows > 0 else 0.0
 
@@ -300,15 +315,10 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: the aggregate always returns one full-width row; the all-NULL
+        # case is (None, None, None, None) — a truthy tuple handled directly
+        # below. The former `if not row` early return was dead code.
         row = result.fetchone()
-
-        if not row:
-            return NumericStats(
-                min_value=None,
-                max_value=None,
-                mean_value=None,
-                std_dev=None,
-            )
 
         return NumericStats(
             min_value=row[0],
@@ -350,9 +360,13 @@ class ColumnStatsCollector:
         query = text(transpile_query(sql, self._dialect))
 
         result = self.connection.execute(query)
+        # WR-02: full-width single-row aggregate. The meaningful guard is
+        # `row[0] is None` (all-NULL column → no min/max date); the former
+        # `not row` disjunct was dead (a no-GROUP-BY aggregate never returns
+        # an empty result).
         row = result.fetchone()
 
-        if not row or row[0] is None:
+        if row[0] is None:
             return DateTimeStats(
                 min_date=None,
                 max_date=None,
@@ -384,11 +398,14 @@ class ColumnStatsCollector:
         length_query = text(transpile_query(length_sql, self._dialect))
 
         length_result = self.connection.execute(length_query)
+        # WR-02: full-width single-row aggregate; all-NULL column yields
+        # (None, None, None). Index directly, drop the misleading guards.
         length_row = length_result.fetchone()
-
-        min_length = length_row[0] if length_row else None
-        max_length = length_row[1] if length_row else None
-        avg_length = length_row[2] if length_row else None
+        min_length, max_length, avg_length = (
+            length_row[0],
+            length_row[1],
+            length_row[2],
+        )
 
         # Get top frequent values
         sample_sql = f"""
@@ -436,7 +453,12 @@ class ColumnStatsCollector:
         try:
             result = self.connection.execute(text(sql))
             rows = result.fetchall()
-        except Exception:
+        except SQLAlchemyError:
+            # WR-01: narrow from bare `except Exception`. "DESCRIBE EXTENDED
+            # unsupported / no stats" surfaces as a SQLAlchemyError subclass
+            # (e.g. ProgrammingError) and legitimately degrades to Tier-2.
+            # Non-SQLAlchemy errors (auth/network/injection-induced) now
+            # propagate instead of being silently masked.
             return None
 
         stat_keys = {"min", "max", "num_nulls", "distinct_count", "avg_col_len", "max_col_len"}
@@ -482,26 +504,72 @@ class ColumnStatsCollector:
             numeric_stats = NumericStats(
                 min_value=safe_float(desc_stats.get("min")),
                 max_value=safe_float(desc_stats.get("max")),
-                mean_value=None,  # DESCRIBE EXTENDED doesn't provide mean
-                std_dev=None,     # DESCRIBE EXTENDED doesn't provide stddev
+                # mean/stddev are intrinsically absent from columnar metadata:
+                # Parquet/Delta footers store min/max/null_count/numRecords but
+                # never Σx or Σx², so a mean cannot be derived (ANALYZE COMPUTE
+                # STATISTICS doesn't compute them either). Tier-2 would, but that
+                # requires a full aggregate scan — out of scope for the fast path.
+                mean_value=None,
+                std_dev=None,
             )
+
+        # TD-11: DESCRIBE EXTENDED is column-scoped and carries no table row
+        # count, so issue one COUNT(*) — on Delta this is answered from the
+        # transaction-log metadata (not a data scan), preserving the fast path's
+        # value. Derive null_percentage honestly instead of hardcoding 0.0
+        # alongside a populated null_count.
+        total_rows = self._fast_path_row_count()
+        null_percentage = (
+            (null_count / total_rows * 100.0) if total_rows > 0 else 0.0
+        )
 
         return ColumnStatistics(
             column_name=column_name,
             table_name=self.table_name,
             schema_name=self.schema_name,
             data_type=str(type_obj),
-            total_rows=0,  # Not available from DESCRIBE EXTENDED column stats
+            total_rows=total_rows,
             distinct_count=distinct_count,
+            # DESCRIBE EXTENDED's distinct_count is an HLL approximation, not an
+            # exact count (UE-03) — a unique key can report fewer distinct values
+            # than rows. Flag it so the caller doesn't read a phantom-duplicate
+            # signal as real.
+            distinct_count_approximate=True,
             null_count=null_count,
-            null_percentage=0.0,  # Can't compute without total_rows
+            null_percentage=null_percentage,
             numeric_stats=numeric_stats,
         )
+
+    def _fast_path_row_count(self) -> int:
+        """Row count for the Databricks fast path via one COUNT(*).
+
+        Metadata-cheap on Delta (answered from the transaction log, not a data
+        scan). Mirrors the COUNT(*) in :meth:`get_basic_stats`.
+        """
+        sql = f"SELECT COUNT(*) AS total_rows FROM {self._qualified_table}"
+        query = text(transpile_query(sql, self._dialect))
+        row = self.connection.execute(query).fetchone()
+        return row[0]
 
     def get_column_statistics(
         self, column_name: str, sample_size: int = 10
     ) -> ColumnStatistics:
-        """Collect complete statistical profile for a single column."""
+        """Collect complete statistical profile for a single column.
+
+        On Databricks the DESCRIBE EXTENDED fast path fires for BOTH the
+        default-catalog and the cross-catalog branch (WR-05): the type resolves
+        to a ``TypeEngine`` in both cases, so the ``isinstance`` gate passes and
+        precomputed stats are used instead of Tier-2 aggregates. On the
+        cross-catalog path the ``data_type`` response field is ``str(TypeEngine)``
+        (e.g. ``"INTEGER"``), converged onto the default-catalog format (FR-014).
+
+        Fast-path contract (TD-11): ``total_rows`` is populated via one
+        COUNT(*) (metadata-cheap on Delta) and ``null_percentage`` is derived
+        from it, so they agree with ``null_count``. ``numeric_stats.mean_value``
+        and ``std_dev`` are ``None`` on the fast path by design — they are
+        intrinsically absent from columnar metadata and only the Tier-2 path
+        (MSSQL, or Databricks tables without precomputed stats) computes them.
+        """
         if not self.column_exists(column_name):
             raise ValueError(
                 f"Column '{column_name}' not found in table "
@@ -551,6 +619,9 @@ class ColumnStatsCollector:
             data_type=data_type_str,
             total_rows=basic_stats["total_rows"],
             distinct_count=basic_stats["distinct_count"],
+            # Tier-2 uses exact COUNT(DISTINCT) (UE-03) — explicitly not
+            # approximate (default is False; pinned here and under test).
+            distinct_count_approximate=False,
             null_count=basic_stats["null_count"],
             null_percentage=basic_stats["null_percentage"],
             numeric_stats=numeric_stats,
@@ -605,7 +676,13 @@ class ColumnStatsCollector:
         column_pattern: str | None = None,
         sample_size: int = 10,
     ) -> list[ColumnStatistics]:
-        """Collect statistics for multiple columns with optional filtering."""
+        """Collect statistics for multiple columns with optional filtering.
+
+        The Databricks DESCRIBE EXTENDED fast path fires for both default-catalog
+        and cross-catalog columns (WR-05): ``get_column_data_type`` returns a
+        ``TypeEngine`` on both branches, so the per-column ``isinstance`` gate
+        below passes cross-catalog and precomputed stats are used.
+        """
         columns_to_analyze = self._resolve_columns_to_analyze(columns, column_pattern)
 
         # Databricks fast path: probe first column to decide bulk strategy

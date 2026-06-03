@@ -119,6 +119,27 @@ class TestBasicStats:
         assert stats["null_count"] == 0
         assert stats["null_percentage"] == 0.0
 
+    def test_basic_stats_trusts_full_width_aggregate_row(
+        self, stats_collector, mock_connection
+    ):
+        """WR-02: a no-GROUP-BY aggregate always returns exactly one full-width
+        (3-column) row. get_basic_stats reads row[0..2] directly, trusting that
+        contract rather than relying on the removed `row[N] if row else 0`
+        guards (which guarded None but still blindly indexed row[1]/row[2]).
+
+        Pins the intent: every element of the single returned row maps straight
+        to its stat with no defensive fallback masking a malformed shape.
+        """
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = (1234, 1200, 34)
+        mock_connection.execute.return_value = mock_result
+
+        stats = stats_collector.get_basic_stats("col")
+
+        assert stats["total_rows"] == 1234
+        assert stats["distinct_count"] == 1200
+        assert stats["null_count"] == 34
+
 
 class TestNumericStats:
     """Test numeric statistics collection."""
@@ -469,6 +490,8 @@ class TestFullColumnStatistics:
         assert stat.schema_name == "dbo"
         assert stat.total_rows == 1000
         assert stat.distinct_count == 950
+        # UE-03: the Tier-2 path uses exact COUNT(DISTINCT), so the flag is False.
+        assert stat.distinct_count_approximate is False
         assert stat.null_count == 50
         assert stat.null_percentage == 5.0
         assert stat.numeric_stats is not None
@@ -709,6 +732,53 @@ class TestDatabricksFastPath:
         stats = collector._try_describe_extended_stats("id")
         assert stats is None
 
+    @pytest.mark.dialects('databricks')
+    def test_fast_path_sqlalchemy_error_degrades_to_none(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """WR-01: a SQLAlchemyError (e.g. ProgrammingError for 'DESCRIBE EXTENDED
+        unsupported') still degrades gracefully to None -> Tier-2 fallback.
+
+        This is the case the narrowed handler MUST keep catching: an unsupported-
+        syntax / no-stats condition surfaces as a SQLAlchemyError subclass, and
+        the fast path is legitimately absent.
+        """
+        from sqlalchemy.exc import ProgrammingError
+
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        mock_connection.execute.side_effect = ProgrammingError(
+            "DESCRIBE EXTENDED ... unsupported", {}, Exception("orig")
+        )
+
+        stats = collector._try_describe_extended_stats("id")
+        assert stats is None
+
+    @pytest.mark.dialects('databricks')
+    def test_fast_path_non_sqlalchemy_error_propagates(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """WR-01: a non-SQLAlchemy infra/programming error (auth failure, network
+        error, injection-induced Python error) MUST propagate rather than being
+        silently swallowed to None.
+
+        Before the fix, the bare `except Exception: return None` masked all of
+        these, treating an auth failure identically to 'stats unavailable'. After
+        narrowing to SQLAlchemyError, anything outside that hierarchy escapes.
+        """
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        mock_connection.execute.side_effect = PermissionError(
+            "token expired / auth failure"
+        )
+
+        with pytest.raises(PermissionError):
+            collector._try_describe_extended_stats("id")
+
     @pytest.mark.dialects('mssql', 'generic')
     def test_fast_path_skipped_for_non_databricks(
         self, mock_connection, dialect, sa_types_inspector
@@ -740,7 +810,18 @@ class TestDatabricksFastPath:
     def test_build_stats_from_describe_extended_numeric(
         self, mock_connection, dialect, sa_types_inspector
     ):
-        """Build ColumnStatistics from DESCRIBE EXTENDED for numeric column."""
+        """Build ColumnStatistics from DESCRIBE EXTENDED for numeric column.
+
+        TD-11: the fast path issues one COUNT(*) (metadata-cheap on Delta) to
+        populate ``total_rows`` and derive ``null_percentage`` honestly. The
+        precomputed min/max/num_nulls/distinct_count come from DESCRIBE EXTENDED;
+        only the row count needs the extra query.
+        """
+        # COUNT(*) → total_rows. fetchone()[0] mirrors get_basic_stats.
+        count_result = MagicMock()
+        count_result.fetchone.return_value = (1000,)
+        mock_connection.execute.return_value = count_result
+
         collector = ColumnStatsCollector(
             mock_connection, "dbo", "t",
             dialect=dialect.dialect, inspector=sa_types_inspector,
@@ -757,9 +838,42 @@ class TestDatabricksFastPath:
         assert isinstance(result, ColumnStatistics)
         assert result.null_count == 5
         assert result.distinct_count == 995
+        # UE-03: the DESCRIBE EXTENDED distinct_count is HLL-approximate, so the
+        # fast path must flag it (a unique key can report fewer distinct than
+        # rows — the phantom-duplicate signal from finding A5).
+        assert result.distinct_count_approximate is True
+        # TD-11: total_rows is the real COUNT(*), and null_percentage is derived
+        # from it (5 / 1000 * 100), no longer self-contradicting null_count.
+        assert result.total_rows == 1000
+        assert result.null_percentage == 0.5
         assert result.numeric_stats is not None
         assert result.numeric_stats.min_value == 1.0
         assert result.numeric_stats.max_value == 1000.0
+        # mean/stddev are intrinsically absent from columnar metadata (Parquet/
+        # Delta footers store min/max/null_count/numRecords, never Σx or Σx²),
+        # so the fast path correctly leaves them None — documented contract.
+        assert result.numeric_stats.mean_value is None
+        assert result.numeric_stats.std_dev is None
+
+    @pytest.mark.dialects('databricks')
+    def test_build_stats_from_describe_extended_zero_rows(
+        self, mock_connection, dialect, sa_types_inspector
+    ):
+        """TD-11: an empty table yields null_percentage 0.0 (no divide-by-zero)."""
+        count_result = MagicMock()
+        count_result.fetchone.return_value = (0,)
+        mock_connection.execute.return_value = count_result
+
+        collector = ColumnStatsCollector(
+            mock_connection, "dbo", "t",
+            dialect=dialect.dialect, inspector=sa_types_inspector,
+        )
+        result = collector._build_stats_from_describe_extended(
+            "id", sa_types.Integer(),
+            {"min": "1", "max": "1", "num_nulls": "0", "distinct_count": "0"},
+        )
+        assert result.total_rows == 0
+        assert result.null_percentage == 0.0
 
 
 class TestTranspilation:
@@ -1050,3 +1164,158 @@ class TestCrossCatalogColumnStats:
         # 2-part name, no catalog segment.
         assert f"`{self.SCHEMA}`.`{self.TABLE}`" in captured["sql"]
         assert self._three_part not in captured["sql"]
+
+
+class TestCrossCatalogTypeEngine:
+    """WR-05 Option B: cross-catalog get_column_data_type returns a TypeEngine.
+
+    Before the fix the cross-catalog branch returned the raw DESCRIBE-TABLE
+    *string* (e.g. "int"), so the isinstance(type_info, TypeEngine) gate in
+    get_columns_info/get_column_statistics was always False and the Databricks
+    DESCRIBE EXTENDED fast path never fired cross-catalog. After the fix it
+    returns a TypeEngine so the gate passes and precomputed stats are used.
+    """
+
+    CATALOG = "cerner_src"
+    SCHEMA = "dbo"
+    TABLE = "orders"
+
+    def _collector_with_catalog_columns(self, dialect, columns):
+        """A cross-catalog collector whose reflected columns are `columns`
+        (list of {"name", "data_type"} dicts), with no inspector."""
+        conn = Mock(spec=Connection)
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+        assert collector._is_cross_catalog_databricks is True
+        # Stub reflection so we control the DESCRIBE-TABLE type strings.
+        collector._reflect_catalog_columns = lambda: columns
+        return collector
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_known_type_returns_type_engine(self, dialect):
+        """A known DESCRIBE token (e.g. 'int') resolves to a TypeEngine so the
+        fast-path isinstance gate fires cross-catalog."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amount", "data_type": "int"}]
+        )
+
+        result = collector.get_column_data_type("amount")
+
+        assert isinstance(result, sa_types.TypeEngine), (
+            f"cross-catalog type must be a TypeEngine (gate-firing), got {result!r}"
+        )
+        assert isinstance(result, sa_types.Integer)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_string_type_returns_type_engine(self, dialect):
+        """'string' DESCRIBE token resolves to a String TypeEngine."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "name", "data_type": "string"}]
+        )
+
+        result = collector.get_column_data_type("name")
+
+        assert isinstance(result, sa_types.TypeEngine)
+        assert isinstance(result, sa_types.String)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_decimal_preserves_precision(self, dialect):
+        """A 'decimal(10,2)' DESCRIBE token resolves to Numeric(10, 2)."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "price", "data_type": "decimal(10,2)"}]
+        )
+
+        result = collector.get_column_data_type("price")
+
+        assert isinstance(result, sa_types.Numeric)
+        assert result.precision == 10
+        assert result.scale == 2
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_bare_decimal_falls_back_to_numeric(self, dialect):
+        """A bare 'decimal' token (no precision) resolves to a plain Numeric
+        TypeEngine rather than raising (the dialect's parse fn needs a
+        precision; we guard that case)."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amt", "data_type": "decimal"}]
+        )
+
+        result = collector.get_column_data_type("amt")
+
+        assert isinstance(result, sa_types.Numeric)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_unknown_type_returns_nulltype(self, dialect):
+        """An unmapped DESCRIBE token resolves to NullType() (still a TypeEngine,
+        so it takes the fast path and lands in the 'other' category) — symmetric
+        with the default-catalog Inspector path's NullType() for unknowns."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "weird", "data_type": "some_future_type"}]
+        )
+
+        result = collector.get_column_data_type("weird")
+
+        assert isinstance(result, sa_types.NullType)
+        assert isinstance(result, sa_types.TypeEngine)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_missing_column_returns_nulltype(self, dialect):
+        """A column absent from the reflected set resolves to NullType() (not a
+        raw 'unknown' string) so the gate still behaves predictably."""
+        collector = self._collector_with_catalog_columns(
+            dialect, [{"name": "amount", "data_type": "int"}]
+        )
+
+        result = collector.get_column_data_type("does_not_exist")
+
+        assert isinstance(result, sa_types.NullType)
+
+    @pytest.mark.dialects('databricks')
+    def test_cross_catalog_full_stats_uses_fast_path(self, dialect):
+        """End-to-end: get_column_statistics on a cross-catalog column now fires
+        the DESCRIBE EXTENDED fast path (type gate passes) and returns the same
+        ColumnStatistics shape Tier-2 produced — sourced from precomputed stats."""
+        from src.models.analysis import ColumnStatistics
+
+        def _execute(stmt, *args, **kwargs):
+            sql = str(getattr(stmt, "text", stmt))
+            result = MagicMock()
+            if "DESCRIBE EXTENDED" in sql:
+                result.fetchall.return_value = [
+                    ("col_name", "amount"),
+                    ("data_type", "int"),
+                    ("min", "1"),
+                    ("max", "1000"),
+                    ("num_nulls", "5"),
+                    ("distinct_count", "995"),
+                ]
+            elif "COUNT(*)" in sql or "COUNT (*)" in sql:
+                # TD-11: fast-path row count → total_rows
+                result.fetchone.return_value = (200,)
+            else:
+                # column_exists / DESCRIBE TABLE reflection
+                result.fetchall.return_value = [("amount", "int")]
+                result.fetchone.return_value = (100, 80, 5)
+            return result
+
+        conn = Mock(spec=Connection)
+        conn.execute.side_effect = _execute
+        collector = ColumnStatsCollector(
+            conn, self.SCHEMA, self.TABLE,
+            dialect=dialect.dialect, catalog=self.CATALOG,
+        )
+
+        stats = collector.get_column_statistics("amount")
+
+        assert isinstance(stats, ColumnStatistics)
+        # Fast-path provenance: distinct_count/null_count come from DESCRIBE
+        # EXTENDED; total_rows comes from one COUNT(*) (TD-11), and
+        # null_percentage is derived from it (5 / 200 * 100 = 2.5).
+        assert stats.distinct_count == 995
+        assert stats.null_count == 5
+        assert stats.total_rows == 200
+        assert stats.null_percentage == 2.5
+        # data_type now str(TypeEngine) — the converged format (FR-014).
+        assert stats.data_type == "INTEGER"

@@ -4,11 +4,81 @@ from typing import TYPE_CHECKING
 
 import sqlglot
 from sqlalchemy import text
+from sqlalchemy import types as sa_types
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
     from src.db.dialects.protocol import DialectStrategy
+
+
+# Cross-dialect type-name sets for the string-classification path. Names are
+# matched after lowercasing and stripping any ``(...)`` parameter suffix, so
+# ``DECIMAL(10,2)`` -> ``decimal`` and ``VARCHAR(50)`` -> ``varchar``. Covers
+# MSSQL (INFORMATION_SCHEMA names), Databricks (STRING/DOUBLE/TIMESTAMP/LONG),
+# and SQLAlchemy ``str(type)`` reprs so the FK type-compat filter classifies
+# every dialect it can hit (UE-01), not just MSSQL.
+_NUMERIC_TYPES_STR = frozenset({
+    # MSSQL
+    "int", "bigint", "smallint", "tinyint", "decimal", "numeric",
+    "float", "real", "money", "smallmoney",
+    # Databricks / generic / SQLAlchemy reprs
+    "integer", "double", "double precision", "long", "byte", "short",
+})
+_DATETIME_TYPES_STR = frozenset({
+    # MSSQL
+    "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset", "time",
+    # Databricks / generic
+    "timestamp", "timestamp_ntz",
+})
+_STRING_TYPES_STR = frozenset({
+    # MSSQL
+    "char", "varchar", "text", "nchar", "nvarchar", "ntext",
+    # Databricks / generic
+    "string", "character varying", "character",
+})
+
+
+def type_category(data_type: "sa_types.TypeEngine | str") -> str:
+    """Classify a type into a coarse analysis category.
+
+    Returns one of ``"numeric"``, ``"datetime"``, ``"string"``, or ``"other"``.
+
+    Accepts either a SQLAlchemy ``TypeEngine`` (isinstance-based, dialect-neutral)
+    or a raw dialect type string (set-based, normalized for case and ``(...)``
+    parameters). Used by column statistics (which branch fires depends on whether
+    an Inspector resolved a ``TypeEngine``) and by the FK candidate search, where
+    a category mismatch with neither side ``"other"`` proves a non-FK pairing and
+    is skipped before the overlap INTERSECT runs (UE-01).
+
+    Args:
+        data_type: A SQLAlchemy type object or a dialect type-name string.
+
+    Returns:
+        The coarse category string.
+    """
+    if isinstance(data_type, sa_types.TypeEngine):
+        if isinstance(data_type, (sa_types.Integer, sa_types.Numeric, sa_types.Float)):
+            return "numeric"
+        # MSSQL MONEY/SMALLMONEY don't inherit from Numeric.
+        type_name = type(data_type).__name__.upper()
+        if type_name in ("MONEY", "SMALLMONEY"):
+            return "numeric"
+        if isinstance(data_type, (sa_types.DateTime, sa_types.Date, sa_types.Time)):
+            return "datetime"
+        if isinstance(data_type, (sa_types.String, sa_types.Text)):
+            return "string"
+        return "other"
+
+    # String path: lowercase and strip any "(...)" parameter suffix.
+    normalized = data_type.split("(", 1)[0].strip().lower()
+    if normalized in _NUMERIC_TYPES_STR:
+        return "numeric"
+    if normalized in _DATETIME_TYPES_STR:
+        return "datetime"
+    if normalized in _STRING_TYPES_STR:
+        return "string"
+    return "other"
 
 
 def quote_tsql_identifier(identifier: str) -> str:
@@ -175,4 +245,17 @@ class CatalogAwareReflector:
         result = self.connection.execute(text(f"SHOW TABLES IN {qualified}"))
         rows = result.fetchall()
 
-        return [row[1] if len(row) > 1 else row[0] for row in rows]
+        # IN-01: SHOW TABLES returns (database, tableName, isTemporary); the
+        # table name is row[1]. Fail fast on any row lacking that column rather
+        # than silently falling back to row[0] (a *database* name) — that
+        # fallback masked a contract violation the docstring says never occurs.
+        table_names: list[str] = []
+        for row in rows:
+            if len(row) < 2:
+                raise ValueError(
+                    "SHOW TABLES returned an unexpected row shape "
+                    f"(width {len(row)}): expected (database, tableName, "
+                    f"isTemporary). Row: {row!r}"
+                )
+            table_names.append(row[1])
+        return table_names

@@ -613,7 +613,7 @@ class TestSingleton:
         assert get_config().defaults.row_limit == 500
 
     def test_init_config_idempotent(self, tmp_path, monkeypatch):
-        """Second call to init_config reloads (not cached)."""
+        """Two init_config() calls with the same inputs yield an equal config."""
         import src.config as config_mod
         monkeypatch.setattr(config_mod, "_config", None)
         monkeypatch.chdir(tmp_path)

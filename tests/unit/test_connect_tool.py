@@ -158,7 +158,7 @@ class TestConnectDatabaseByUrl:
         mock_cm.connect_with_url.assert_called_once()
 
     async def test_databricks_connection_name_routes_through_connect_with_config(self):
-        """DatabricksConnectionConfig via connection_name routes to connect_with_url."""
+        """DatabricksConnectionConfig via connection_name routes through connect_with_config."""
         from src.config import AppConfig, DatabricksConnectionConfig
         from src.models.schema import Connection
 

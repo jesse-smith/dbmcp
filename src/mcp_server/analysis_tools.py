@@ -49,13 +49,18 @@ def _check_table_exists(engine, inspector, dialect, resolved, cross_catalog):
         from src.db.metadata import MetadataService
 
         metadata_svc = MetadataService(engine, dialect=dialect)
+        # TD-12: table_exists raises a clean ValueError("Catalog 'X' not found")
+        # when the catalog itself is missing; let it propagate to the tool
+        # boundary rather than mislabeling it as a missing table.
         if metadata_svc.table_exists(
             resolved.table, resolved.schema, catalog=resolved.catalog
         ):
             return None
         return {
             "status": "error",
-            "error_message": f"Table '{resolved.schema}.{resolved.table}' not found",
+            "error_message": (
+                f"Table '{resolved.catalog}.{resolved.schema}.{resolved.table}' not found"
+            ),
         }
 
     if resolved.table in inspector.get_table_names(schema=resolved.schema):
@@ -163,6 +168,7 @@ async def get_column_info(
                 data_type: string
                 total_rows: int
                 distinct_count: int
+                distinct_count_approximate: bool   // true = HLL-approximate (Databricks fast path)
                 null_count: int
                 null_percentage: float
                 numeric_stats: object          // numeric columns only
@@ -414,6 +420,7 @@ async def find_fk_candidates(
             total_found: int                   // on success only
             was_limited: bool                  // on success only
             search_scope: string               // on success only
+            type_incompatible_skipped: int     // only when > 0 (type-incompatible targets skipped)
             error_message: string              // on error only
 
     Error conditions:
@@ -470,7 +477,7 @@ async def find_fk_candidates(
                 limit=limit,
             )
 
-            return {
+            response = {
                 "status": "success",
                 "source": {
                     "column_name": column_name,
@@ -483,6 +490,13 @@ async def find_fk_candidates(
                 "was_limited": fk_result.was_limited,
                 "search_scope": fk_result.search_scope,
             }
+            # Surface type-incompatible filtering only when it happened (UE-01),
+            # so the caller knows columns were dropped vs absent.
+            if fk_result.type_incompatible_skipped > 0:
+                response["type_incompatible_skipped"] = (
+                    fk_result.type_incompatible_skipped
+                )
+            return response
 
     try:
         return encode_response(await asyncio.to_thread(_sync_work))

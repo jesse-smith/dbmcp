@@ -69,6 +69,16 @@ class TestQuoteIdentifier:
         dialect = MssqlDialect()
         assert dialect.quote_identifier("schema.table") == "[schema.table]"
 
+    def test_embedded_closing_bracket_is_escaped(self):
+        """A `]` in the name is doubled, blocking bracket break-out injection.
+
+        Security-critical: mirrors the Databricks backtick-escape test (CR-01).
+        Without doubling, ``ev]il`` would close the quote early and let the rest
+        be parsed as SQL.
+        """
+        dialect = MssqlDialect()
+        assert dialect.quote_identifier("ev]il") == "[ev]]il]"
+
 
 class TestCreateEngine:
     """Verify engine creation with different auth methods."""
@@ -546,3 +556,18 @@ class TestMssqlDialectSampleQueries:
         assert "TOP (5)" in sql
         assert "ROW_NUMBER() OVER" in sql
         assert "ORDER BY (SELECT NULL)" in sql
+
+    def test_build_sample_query_modulo_uses_bare_integer_division(self):
+        """UE-04 lock: T-SQL ``/`` is already integer division on integer
+        operands, so MSSQL's modulo divisor is intentionally a bare ``/`` —
+        NOT ``DIV`` (a Spark-ism) or ``CAST``. This guards against an
+        over-broad fix sweeping MSSQL into the Databricks/generic change.
+        """
+        from src.models.schema import SamplingMethod
+        dialect = MssqlDialect()
+        sql = dialect.build_sample_query(
+            SamplingMethod.MODULO, "[dbo].[T]", "*", 5
+        )
+        assert "_total / 5" in sql
+        assert "DIV" not in sql
+        assert "CAST(" not in sql

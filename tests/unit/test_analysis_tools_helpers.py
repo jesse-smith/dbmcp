@@ -10,6 +10,8 @@ branches in the CI ``not integration and not slow`` selection — no live DB.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # Import server first to fully initialize the module graph and resolve the
 # analysis_tools <-> server circular import before reaching for the private
 # helpers (mirrors the pattern in test_async_tools.py).
@@ -128,7 +130,11 @@ class TestCheckTableExists:
         )
 
     def test_cross_catalog_missing_returns_error(self):
-        """Cross-catalog: MetadataService.table_exists False -> error dict."""
+        """Cross-catalog: MetadataService.table_exists False -> error dict.
+
+        TD-12: the message names the catalog so a missing table is qualified by
+        its full catalog.schema.table identity (no ambiguity about which catalog
+        was searched)."""
         resolved = ResolvedIdentifier(catalog="analytics", schema="sales", table="t")
         dialect = MagicMock()
         dialect.name = "databricks"
@@ -145,8 +151,30 @@ class TestCheckTableExists:
 
         assert result == {
             "status": "error",
-            "error_message": "Table 'sales.t' not found",
+            "error_message": "Table 'analytics.sales.t' not found",
         }
+
+    def test_cross_catalog_missing_catalog_propagates_valueerror(self):
+        """TD-12: when the catalog itself is missing, table_exists raises a clean
+        ValueError (naming the catalog) which _check_table_exists must let
+        propagate to the tool boundary rather than swallowing into a generic
+        'table not found'."""
+        resolved = ResolvedIdentifier(catalog="analytics", schema="sales", table="t")
+        dialect = MagicMock()
+        dialect.name = "databricks"
+
+        with patch("src.db.metadata.MetadataService") as mock_svc_cls:
+            mock_svc_cls.return_value.table_exists.side_effect = ValueError(
+                "Catalog 'analytics' not found"
+            )
+            with pytest.raises(ValueError, match="Catalog 'analytics' not found"):
+                _check_table_exists(
+                    engine=MagicMock(),
+                    inspector=MagicMock(),
+                    dialect=dialect,
+                    resolved=resolved,
+                    cross_catalog=True,
+                )
 
 
 class TestReflectSourceColumn:

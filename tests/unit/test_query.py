@@ -195,9 +195,16 @@ class TestQueryService:
         assert sample.sampling_method == SamplingMethod.TOP
 
     def test_modulo_query_generation(self, mock_engine):
-        """Test modulo-based sampling query is generated."""
+        """Test modulo-based sampling query is generated.
+
+        Returns a populated row so the modulo path stands on its own; the 0-row
+        fallback to TOP is covered separately by
+        ``test_modulo_zero_rows_falls_back_to_top``.
+        """
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda x: iter([])
+        mock_row = MagicMock()
+        mock_row._mapping = {"ID": 1}
+        mock_result.__iter__ = lambda x: iter([mock_row])
 
         mock_conn = MagicMock()
         mock_conn.execute.return_value = mock_result
@@ -211,7 +218,39 @@ class TestQueryService:
             sampling_method=SamplingMethod.MODULO,
         )
 
+        # One execute (no fallback) and the method is preserved.
+        assert mock_conn.execute.call_count == 1
         assert sample.sampling_method == SamplingMethod.MODULO
+
+    def test_modulo_zero_rows_falls_back_to_top(self, mock_engine):
+        """UE-04 defense-in-depth: if a modulo sample returns 0 rows on a
+        populated table (e.g. a backend that mis-divides), get_sample_data must
+        run a second TOP query and report ``sampling_method == TOP`` rather than
+        silently returning an empty sample.
+        """
+        empty_result = MagicMock()
+        empty_result.__iter__ = lambda x: iter([])
+        top_result = MagicMock()
+        top_row = MagicMock()
+        top_row._mapping = {"ID": 1}
+        top_result.__iter__ = lambda x: iter([top_row])
+
+        mock_conn = MagicMock()
+        # First execute (modulo) -> empty; second execute (TOP fallback) -> rows.
+        mock_conn.execute.side_effect = [empty_result, top_result]
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        service = QueryService(mock_engine)
+        sample = service.get_sample_data(
+            table_name="SequentialTable",
+            schema_name="dbo",
+            sample_size=10,
+            sampling_method=SamplingMethod.MODULO,
+        )
+
+        assert mock_conn.execute.call_count == 2
+        assert sample.sampling_method == SamplingMethod.TOP
+        assert len(sample.rows) == 1
 
     def test_null_values_handled(self, mock_engine):
         """Test NULL values are handled correctly."""

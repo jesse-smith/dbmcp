@@ -138,3 +138,20 @@ class TestGenericDialectSampleQueries:
         assert "ROW_NUMBER() OVER" in sql
         assert "ORDER BY ROWID" in sql
         assert "LIMIT 5" in sql
+
+    def test_build_sample_query_modulo_uses_integer_division(self):
+        """UE-04: generic output is executed without transpilation, so the
+        divisor must be ANSI-portable integer division. ``DIV`` is not portable
+        (Postgres lacks it) and ``FLOOR`` returns float on some backends —
+        ``CAST(... AS INTEGER)`` works across postgres/mysql/sqlite.
+        """
+        from src.models.schema import SamplingMethod
+        sql = GenericDialect().build_sample_query(
+            SamplingMethod.MODULO, '"public"."t"', "*", 5
+        )
+        # The divisor is integer division via CAST...
+        assert "CAST(_total / 5 AS INTEGER)" in sql
+        # ...and no bare, unwrapped float-division divisor survives in the
+        # predicate (would appear as ``_total / 5 <`` or ``_total / 5 END``).
+        assert "_total / 5 <" not in sql
+        assert "_total / 5 END" not in sql

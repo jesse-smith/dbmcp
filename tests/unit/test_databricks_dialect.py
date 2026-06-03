@@ -700,6 +700,20 @@ class TestDatabricksDialectSampleQueries:
         assert "LIMIT 5" in sql
         assert "TOP (" not in sql
 
+    def test_build_sample_query_modulo_uses_integer_division(self):
+        """UE-04: Databricks ``/`` is float division, so the modulo predicate
+        ``_rn % (_total / n) = 0`` was essentially never true and silently
+        returned 0 rows. The divisor must use Spark integer division ``DIV``.
+        """
+        from src.models.schema import SamplingMethod
+        sql = self._make().build_sample_query(
+            SamplingMethod.MODULO, "`main`.`t`", "*", 5
+        )
+        # Integer division operator present...
+        assert "DIV" in sql
+        # ...and the float-division divisor is gone (no bare ``_total / 5``).
+        assert "_total / 5" not in sql
+
 
 class TestDatabricksDialectListCatalogs:
     """Tests for DatabricksDialect.list_catalogs (D-08)."""

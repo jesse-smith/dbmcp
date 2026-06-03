@@ -22,13 +22,6 @@ def _mock_result(rows):
     return mock
 
 
-def _mock_scalar(value):
-    """Create a mock execute result that returns a scalar value."""
-    mock = MagicMock()
-    mock.scalar.return_value = value
-    return mock
-
-
 # ---------------------------------------------------------------------------
 # Constraint-backed PK detection
 # ---------------------------------------------------------------------------
@@ -732,13 +725,6 @@ class _CatalogDiscriminatingConnection:
 
         # Anything else (uniqueness probes, DESCRIBE, etc.): no rows.
         return _mock_result([])
-
-
-def _make_databricks_dialect():
-    """Minimal Databricks dialect stub (name + backtick quoting + transpile)."""
-    dialect = MagicMock()
-    type(dialect).name = type("P", (), {"__get__": lambda *_: "databricks"})()
-    return dialect
 
 
 class TestCrossCatalogPK:

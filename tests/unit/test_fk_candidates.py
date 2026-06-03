@@ -24,13 +24,6 @@ def _mock_result(rows):
     return mock
 
 
-def _mock_scalar(value):
-    """Create a mock execute result that returns a scalar value."""
-    mock = MagicMock()
-    mock.scalar.return_value = value
-    return mock
-
-
 def _make_pk_candidate(column_name, data_type="int", constraint_type="PRIMARY KEY"):
     """Create a PKCandidate for testing."""
     return PKCandidate(
@@ -820,30 +813,11 @@ class TestInspectorTableDiscovery:
 class TestDialectAwareMetadata:
     """Tests for dialect-aware constraint and index metadata."""
 
-    def test_mssql_uses_sys_indexes(self):
-        """MSSQL uses sys.indexes for has_index check."""
-        conn = MagicMock()
-        conn.execute.side_effect = [
-            _mock_result([("PRIMARY KEY",)]),  # constraint check
-            _mock_result([("idx_pk",)]),        # index check (sys.indexes)
-        ]
-
-        search = FKCandidateSearch(
-            connection=conn,
-            source_schema="dbo",
-            source_table="Orders",
-            source_column="customer_id",
-            source_data_type="int",
-        )
-        metadata = search.get_column_metadata(
-            target_schema="dbo",
-            target_table="Customers",
-            target_column="id",
-            target_data_type="int",
-            target_is_nullable=False,
-        )
-
-        assert metadata["target_has_index"] is True
+    # Removed test_mssql_uses_sys_indexes (TST-A02): it drove the same MagicMock
+    # side_effect as TestColumnMetadata.test_collects_pk_constraint and asserted a
+    # strict subset (target_has_index only). Because the connection is a bare mock,
+    # it never exercised the real sys.indexes SQL, so it added no coverage over the
+    # superset test. The generic-dialect index path below remains distinct.
 
     @pytest.mark.dialects('generic')
     def test_generic_uses_inspector_get_indexes(self, dialect):
@@ -1345,3 +1319,127 @@ class TestWR03NullabilityAgreement:
                 f"FK/PK disagree on is_nullable for {col}"
             )
         assert pk_nullable == {"patient_id": True, "ssn": False}
+
+
+# ---------------------------------------------------------------------------
+# Type-compatibility filter (UE-01)
+# ---------------------------------------------------------------------------
+
+class TestTypeCompatibilityFilter:
+    """find_candidates skips type-incompatible target columns before overlap.
+
+    UE-01: compute_overlap runs ``SELECT src INTERSECT SELECT tgt``, which is a
+    hard DB error when src/tgt types are incompatible (e.g. int vs nvarchar, or
+    a DATE target). A category mismatch (with neither side "other") is provably
+    not an FK, so it must be skipped before the overlap query — and surfaced via
+    type_incompatible_skipped.
+    """
+
+    def _make_search(self, source_data_type, dialect=None):
+        return FKCandidateSearch(
+            connection=MagicMock(),
+            source_schema="dbo",
+            source_table="Orders",
+            source_column="customer_id",
+            source_data_type=source_data_type,
+            dialect=dialect,
+        )
+
+    def _stub_one_table_two_columns(self, search, numeric_type, string_type):
+        """Stub resolution so one target table yields one numeric + one string column."""
+        search.get_target_tables = MagicMock(return_value=[("dbo", "Targets")])
+        search.get_candidate_columns = MagicMock(return_value=[
+            {"column_name": "num_col", "data_type": numeric_type, "is_nullable": False},
+            {"column_name": "str_col", "data_type": string_type, "is_nullable": True},
+        ])
+        search.get_column_metadata = MagicMock(return_value={
+            "target_is_primary_key": False,
+            "target_is_unique": False,
+            "target_is_nullable": False,
+            "target_has_index": False,
+        })
+
+    def test_incompatible_target_skipped_and_overlap_not_called(self):
+        """Numeric source vs string target: skipped, overlap never runs."""
+        search = self._make_search("int")
+        self._stub_one_table_two_columns(search, "int", "nvarchar")
+        search.compute_overlap = MagicMock(return_value={
+            "overlap_count": 1, "overlap_percentage": 100.0,
+        })
+
+        result = search.find_candidates(
+            pk_candidates_only=False, include_overlap=True,
+        )
+
+        # Only the numeric (compatible) column survives.
+        assert len(result.candidates) == 1
+        assert result.candidates[0].target_column == "num_col"
+        assert result.type_incompatible_skipped == 1
+        # Overlap ran for the compatible column only — never for the string one.
+        assert search.compute_overlap.call_count == 1
+        called_cols = [
+            kw.get("target_column") for _a, kw in search.compute_overlap.call_args_list
+        ]
+        assert "str_col" not in called_cols
+
+    @pytest.mark.parametrize(
+        "src,num,strg",
+        [
+            ("int", "int", "nvarchar"),          # MSSQL
+            ("BIGINT", "BIGINT", "STRING"),      # Databricks
+            ("INTEGER", "INTEGER", "VARCHAR"),   # generic
+        ],
+    )
+    def test_cross_dialect_numeric_string_incompatible(self, src, num, strg):
+        """Numeric/string mismatch is detected across dialect type spellings."""
+        search = self._make_search(src)
+        self._stub_one_table_two_columns(search, num, strg)
+        search.compute_overlap = MagicMock(return_value={
+            "overlap_count": 0, "overlap_percentage": 0.0,
+        })
+
+        result = search.find_candidates(
+            pk_candidates_only=False, include_overlap=True,
+        )
+
+        assert {c.target_column for c in result.candidates} == {"num_col"}
+        assert result.type_incompatible_skipped == 1
+
+    def test_other_category_is_wildcard_kept(self):
+        """A target of category 'other' (e.g. uniqueidentifier) is not skipped."""
+        search = self._make_search("int")
+        search.get_target_tables = MagicMock(return_value=[("dbo", "Targets")])
+        search.get_candidate_columns = MagicMock(return_value=[
+            {"column_name": "guid_col", "data_type": "uniqueidentifier", "is_nullable": False},
+        ])
+        search.get_column_metadata = MagicMock(return_value={
+            "target_is_primary_key": True,
+            "target_is_unique": True,
+            "target_is_nullable": False,
+            "target_has_index": True,
+        })
+
+        result = search.find_candidates(pk_candidates_only=True, include_overlap=False)
+
+        # 'other' is a conservative wildcard — kept, not false-negatived.
+        assert {c.target_column for c in result.candidates} == {"guid_col"}
+        assert result.type_incompatible_skipped == 0
+
+    def test_compatible_same_category_kept(self):
+        """Two numeric types (int source, bigint target) are compatible."""
+        search = self._make_search("int")
+        search.get_target_tables = MagicMock(return_value=[("dbo", "Targets")])
+        search.get_candidate_columns = MagicMock(return_value=[
+            {"column_name": "big_col", "data_type": "bigint", "is_nullable": False},
+        ])
+        search.get_column_metadata = MagicMock(return_value={
+            "target_is_primary_key": True,
+            "target_is_unique": True,
+            "target_is_nullable": False,
+            "target_has_index": True,
+        })
+
+        result = search.find_candidates(pk_candidates_only=True, include_overlap=False)
+
+        assert {c.target_column for c in result.candidates} == {"big_col"}
+        assert result.type_incompatible_skipped == 0

@@ -130,6 +130,29 @@ class TestSampleDataIntegration:
         # This is a basic check that the feature works
         assert isinstance(sample.truncated_columns, list)
 
+    def test_modulo_sampling_returns_rows(self, sqlite_connection):
+        """UE-04 end-to-end guard: modulo sampling must return rows on a
+        populated table. The unit tests lock the integer-division SQL shape;
+        sqlite can't reproduce the Databricks float-division bug, but this
+        proves the generic ``CAST(... AS INTEGER)`` divisor executes and yields
+        rows (the live Databricks ``DIV`` proof is recorded in the ledger).
+        """
+        service = QueryService(sqlite_connection)
+
+        sample = service.get_sample_data(
+            table_name="customers",
+            schema_name="main",
+            sample_size=3,
+            sampling_method=SamplingMethod.MODULO,
+        )
+
+        # Must return rows (not the silent-empty of the float-division bug).
+        assert len(sample.rows) > 0
+        assert len(sample.rows) <= 3
+        # On a populated table the modulo path stands on its own; the TOP
+        # fallback should not have fired.
+        assert sample.sampling_method == SamplingMethod.MODULO
+
     def test_empty_table_handling(self, sqlite_connection):
         """Test handling of empty table (no rows)."""
         from sqlalchemy import text

@@ -638,6 +638,39 @@ class TestCatalogListSchemas:
         assert "`analytics`" in first_sql
         assert len(schemas) == 2  # noqa: PLR2004
 
+    def test_list_schemas_missing_catalog_raises_clean_valueerror(self, test_engine):
+        """TD-12: a nonexistent catalog on SHOW SCHEMAS IN surfaces as a clean
+        ValueError naming the catalog, not the raw driver ServerOperationError
+        (which leaks the internal SQL and the sqlalche.me URL)."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError(
+            "[NO_SUCH_CATALOG_EXCEPTION] Catalog 'analytics' was not found. SQLSTATE: 42704"
+        )
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            with pytest.raises(ValueError, match="Catalog 'analytics' not found"):
+                service.list_schemas(connection_id="test", catalog="analytics")
+
+    def test_list_schemas_other_sqlerror_propagates_unwrapped(self, test_engine):
+        """TD-12: only the catalog-missing signature is translated; an unrelated
+        SQLAlchemyError must still propagate as-is (not masked as a catalog error)."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError("connection reset by peer")
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            with pytest.raises(SQLAlchemyError, match="connection reset"):
+                service.list_schemas(connection_id="test", catalog="analytics")
+
     def test_list_schemas_populates_table_and_view_counts(self, test_engine):
         """Databricks list_schemas joins information_schema.tables for counts."""
         dialect = _make_databricks_dialect()
@@ -711,8 +744,11 @@ class TestCatalogListSchemas:
         # catch this and call SHOW CATALOGS next; we wire that up so the *old*
         # code path would silently succeed. The new (post-IDENT-02) contract is
         # that the SQLAlchemyError propagates instead — no second call is made.
+        # NB: uses a *generic* error (not the NO_SUCH_CATALOG marker) so this
+        # stays a SQLAlchemyError-propagation check distinct from TD-12's
+        # catalog-missing→ValueError translation (covered separately).
         mock_conn.execute.side_effect = [
-            SQLAlchemyError("NO_SUCH_CATALOG_EXCEPTION"),
+            SQLAlchemyError("transient backend failure"),
             catalogs_result,
         ]
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
@@ -846,6 +882,23 @@ class TestCatalogListTables:
         assert "SHOW TABLES IN" in executed_sql
         assert "`analytics`" in executed_sql
         assert "`default`" in executed_sql
+
+    def test_list_tables_missing_catalog_raises_clean_valueerror(self, test_engine):
+        """TD-12: a nonexistent catalog on SHOW TABLES IN surfaces as a clean
+        ValueError naming the catalog, not the raw driver ServerOperationError."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError(
+            "[NO_SUCH_CATALOG_EXCEPTION] Catalog 'analytics' was not found. SQLSTATE: 42704"
+        )
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            with pytest.raises(ValueError, match="Catalog 'analytics' not found"):
+                service.list_tables(schema_name="default", catalog="analytics")
 
     def test_list_tables_without_catalog_uses_inspector(self, test_engine):
         """list_tables without catalog uses existing Inspector path."""
@@ -1462,6 +1515,26 @@ class TestTableExistsCatalog:
             )
 
         assert result is False
+
+    def test_table_exists_databricks_missing_catalog_raises_valueerror(self, test_engine):
+        """TD-12: a missing catalog must surface as a clean ValueError naming the
+        catalog, not be swallowed to False (which would mislabel the cause as a
+        missing table downstream)."""
+        dialect = _make_databricks_dialect()
+        service = MetadataService(test_engine, dialect=dialect)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = SQLAlchemyError(
+            "[NO_SUCH_CATALOG_EXCEPTION] Catalog 'bmtct' was not found. SQLSTATE: 42704"
+        )
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(service.engine, "connect", return_value=mock_conn):
+            with pytest.raises(ValueError, match="Catalog 'bmtct' not found"):
+                service.table_exists(
+                    "caboodle_tests", schema_name="playground", catalog="bmtct"
+                )
 
     def test_table_exists_non_databricks_ignores_catalog(self, test_engine):
         """Non-Databricks path still uses the inspector and ignores catalog."""

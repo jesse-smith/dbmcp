@@ -373,22 +373,10 @@ class TestNFR005CredentialSecurity:
 # Compliance Summary Report
 # =============================================================================
 
-class TestComplianceSummary:
-    """Generate compliance summary for test report."""
-
-    def test_nfr_compliance_summary(self):
-        """Generate NFR compliance summary."""
-        # This test always passes and serves as documentation
-        summary = """
-        NFR Compliance Suite Summary:
-
-        NFR-001: Metadata Performance    - Validated via TestNFR001MetadataPerformance
-        NFR-002: Sample Data Performance - Validated via TestNFR002SampleDataPerformance
-        NFR-003: Documentation Size      - Validated via TestNFR003DocumentationSize
-        NFR-004: Read-Only Enforcement   - Validated via TestNFR004ReadOnlyEnforcement
-        NFR-005: Credential Security     - Validated via TestNFR005CredentialSecurity
-
-        Full performance validation requires tests/performance/ suite.
-        """
-        print(summary)
-        assert True
+# NFR coverage map (formerly an `assert True` doc-only test, TST-D03):
+#   NFR-001 Metadata Performance    -> TestNFR001MetadataPerformance
+#   NFR-002 Sample Data Performance -> TestNFR002SampleDataPerformance
+#   NFR-004 Read-Only Enforcement   -> TestNFR004ReadOnlyEnforcement
+#   NFR-005 Credential Security     -> TestNFR005CredentialSecurity
+# (NFR-003 Documentation Size was removed with feature 007.)
+# Full performance validation lives in tests/performance/.

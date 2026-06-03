@@ -248,12 +248,43 @@ class TestColumnStatistics:
             "data_type": "int",
             "total_rows": 10000,
             "distinct_count": 10000,
+            "distinct_count_approximate": False,
             "null_count": 0,
             "null_percentage": 0.0,
         }
         assert "numeric_stats" not in result
         assert "datetime_stats" not in result
         assert "string_stats" not in result
+
+    def test_distinct_count_approximate_defaults_false_and_always_present(self):
+        """UE-03: the flag defaults to False and is always emitted (honesty)."""
+        stats = ColumnStatistics(
+            column_name="order_id",
+            table_name="orders",
+            schema_name="dbo",
+            data_type="int",
+            total_rows=10000,
+            distinct_count=10000,
+            null_count=0,
+            null_percentage=0.0,
+        )
+        assert stats.distinct_count_approximate is False
+        assert stats.to_dict()["distinct_count_approximate"] is False
+
+    def test_distinct_count_approximate_true_emitted(self):
+        """UE-03: when True (Databricks HLL fast path) the flag is emitted True."""
+        stats = ColumnStatistics(
+            column_name="member_id",
+            table_name="members",
+            schema_name="bmtct",
+            data_type="bigint",
+            total_rows=750000,
+            distinct_count=725800,
+            null_count=0,
+            null_percentage=0.0,
+            distinct_count_approximate=True,
+        )
+        assert stats.to_dict()["distinct_count_approximate"] is True
 
     def test_to_dict_with_numeric_stats(self):
         """Test to_dict includes numeric_stats when present."""
@@ -540,3 +571,22 @@ class TestFKCandidateResult:
         assert result["search_scope"] == "schema: dbo, pk_candidates_only: true"
         assert len(result["candidates"]) == 1
         assert isinstance(result["candidates"][0], dict)
+
+    def test_type_incompatible_skipped_defaults_to_zero_and_omitted(self):
+        """UE-01: the field defaults to 0 and is omitted from to_dict when 0."""
+        result = FKCandidateResult(
+            candidates=[], total_found=0, was_limited=False, search_scope="schema: dbo"
+        )
+        assert result.type_incompatible_skipped == 0
+        assert "type_incompatible_skipped" not in result.to_dict()
+
+    def test_type_incompatible_skipped_emitted_when_positive(self):
+        """UE-01: when > 0 the count is surfaced so the caller knows filtering ran."""
+        result = FKCandidateResult(
+            candidates=[],
+            total_found=0,
+            was_limited=False,
+            search_scope="schema: dbo",
+            type_incompatible_skipped=3,
+        )
+        assert result.to_dict()["type_incompatible_skipped"] == 3
