@@ -16,6 +16,7 @@ Central registry of all features and their current status.
 | 009 | Concern Handling | (GSD v1.1 — archived) | Complete | 2026-03-10 | GSD milestone v1.1 (phases 3–7). Cleared 10 v1.0 audit concerns; TOML config; 70% coverage floor. Archive: `docs/archive/gsd-planning/` |
 | 010 | Multi-Dialect Support | (GSD v2.0 — archived) | Complete | 2026-05-06 | GSD milestone v2.0 (phases 8–13.1). DialectStrategy: MSSQL/Databricks/Generic; 85% floor. Archive: `docs/archive/gsd-planning/` |
 | 011 | Databricks Identifier Fixes | (GSD v2.1 — archived) | Complete | 2026-05-31 | GSD milestone v2.1 (phases 14–15.1). Unified resolver, catalog-required connect, cross-catalog targeting (CR-02). Archive: `docs/archive/gsd-planning/` |
+| 012 | Hardening & Cleanup Pass | `012-hardening-cleanup` | Complete | 2026-06-03 | TD-01/02/03 + TD-11/12 fixes; full src/ + tests/ review sweeps; UE-01/03/04 fixes; adversarial utility eval (Phase A+B) in `specs/utility-eval/` |
 
 > **Migration note (2026-06-01):** rows 008–011 summarize four milestones built under the
 > GSD orchestrator before the project returned to spec-kit. Their feature dirs are condensed

@@ -1,5 +1,7 @@
 # Implementation Plan: Hardening & Cleanup Pass
 
+> **STATUS: COMPLETE** | Merged: 2026-06-03 | Branch: `012-hardening-cleanup`
+
 **Branch**: `012-hardening-cleanup` | **Date**: 2026-06-01 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/012-hardening-cleanup/spec.md`

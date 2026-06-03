@@ -1,5 +1,7 @@
 # Feature Specification: Hardening & Cleanup Pass
 
+> **STATUS: COMPLETE** | Merged: 2026-06-03 | Branch: `012-hardening-cleanup`
+
 **Feature Branch**: `012-hardening-cleanup`
 
 **Created**: 2026-06-01

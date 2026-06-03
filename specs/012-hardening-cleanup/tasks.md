@@ -4,6 +4,8 @@ description: "Task list for 012 Hardening & Cleanup Pass"
 
 # Tasks: Hardening & Cleanup Pass
 
+> **STATUS: COMPLETE** | Merged: 2026-06-03 | Branch: `012-hardening-cleanup`
+
 **Input**: Design documents from `/specs/012-hardening-cleanup/`
 
 **Prerequisites**: plan.md, spec.md, research.md (D-01…D-07), data-model.md, quickstart.md
