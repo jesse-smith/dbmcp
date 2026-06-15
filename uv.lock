@@ -654,7 +654,7 @@ requires-dist = [
     { name = "notebook", specifier = ">=7.5.7" },
     { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.50" },
-    { name = "sqlglot", specifier = ">=30.9.0,<31.0.0" },
+    { name = "sqlglot", specifier = ">=30.11.0,<31.0.0" },
     { name = "toon-format", git = "https://github.com/toon-format/toon-python.git?rev=v0.9.0-beta.1" },
 ]
 
@@ -2662,11 +2662,11 @@ wheels = [
 
 [[package]]
 name = "sqlglot"
-version = "30.9.0"
+version = "30.11.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/04/1d/b1380b3ee8fb63c50d7507e956a1228ddefff1a2601d79806c998ef6547b/sqlglot-30.9.0.tar.gz", hash = "sha256:20bed04b6482bf13560206cae517f451f46c321e04956ad71271ed1f12ce8802", size = 5885862, upload-time = "2026-06-04T15:33:52.268Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/de/1542b04dcac0f85706fb8ce1ce7d2abcc230cdf10ea9e3aa7345393e5a90/sqlglot-30.11.0.tar.gz", hash = "sha256:1a23c6e2adb41da61fda46b1848d2fa26341d447fc0f0cd5ca21160362100991", size = 5893125, upload-time = "2026-06-11T17:11:37.845Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/4c/41b222c130950a077e1a0ba311df84a29b818db7c136ecc1aafbfad42e26/sqlglot-30.9.0-py3-none-any.whl", hash = "sha256:59b5f74f4d391e32e6980e8cd23cca8d47beac3c0140b711ead9ed05a824a8b5", size = 695762, upload-time = "2026-06-04T15:33:49.526Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/86/53edf106e8cd3c883ccd0c6b470bf00ddf877a86e667665343b2d597329d/sqlglot-30.11.0-py3-none-any.whl", hash = "sha256:cffdee57d1f2f5472dc9f13087e618cf795841172b7d5ef78b63a051a52d2710", size = 698721, upload-time = "2026-06-11T17:11:35.737Z" },
 ]
 
 [[package]]
